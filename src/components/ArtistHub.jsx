@@ -58,6 +58,8 @@ export default function ArtistHub({ slug }) {
   const [theme, setTheme] = useState("");
   const [msg, setMsg] = useState("");
   const [careerBusy, setCareerBusy] = useState(false);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [schedulePreview, setSchedulePreview] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -182,12 +184,77 @@ export default function ArtistHub({ slug }) {
             ? `Conseil prêt (heuristiques) — ${json.career.warning}`
             : "Agent carrière : recommandation à jour",
       );
+      await loadSchedulePreview();
     } catch (e) {
       setError(e.message);
     } finally {
       setCareerBusy(false);
     }
   }
+
+  async function loadSchedulePreview() {
+    try {
+      const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "schedule-preview" }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) setSchedulePreview(json.preview || null);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function runSchedulePromo() {
+    setScheduleBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const keys = loadKeys();
+      if (!keys.tiktokAccessToken?.trim() && !keys.socialWebhookUrl?.trim()) {
+        throw new Error("Configure TikTok et/ou un webhook social dans Paramètres.");
+      }
+      const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "run-schedule", keys }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Exécution agenda KO");
+      if (json.tiktokTokens) {
+        const { saveKeys } = await import("../lib/keys.js");
+        saveKeys({ ...loadKeys(), ...json.tiktokTokens });
+      }
+      if (json.career) {
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                career: json.career,
+                stats: prev.stats ? { ...prev.stats, career: json.career } : prev.stats,
+              }
+            : prev,
+        );
+      }
+      if (json.skipped && !json.ok) {
+        setMsg(json.message || (json.blockers || []).join(" · ") || "Rien à publier");
+      } else if (json.ok) {
+        setMsg(`Promo agenda : ${json.status} — clip poussé TikTok/webhook`);
+      } else {
+        setError(json.message || `Publication ${json.status || "échouée"}`);
+      }
+      await loadSchedulePreview();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setScheduleBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (data?.career) loadSchedulePreview();
+  }, [data?.career?.updatedAt, slug]);
 
   const profile = data?.profile || {};
   const stats = data?.stats || {};
@@ -203,7 +270,14 @@ export default function ArtistHub({ slug }) {
   const changeLabel = formatPct(streams.periodChangePct);
   const today = new Date().toISOString().slice(0, 10);
   const dueToday = Array.isArray(career?.schedule)
-    ? career.schedule.filter((item) => item.date === today || item.status === "active")
+    ? career.schedule.filter(
+        (item) =>
+          item.status !== "done" &&
+          (item.date === today || item.status === "active"),
+      )
+    : [];
+  const recentRuns = Array.isArray(career?.scheduleRuns)
+    ? career.scheduleRuns.slice(0, 5)
     : [];
 
   return (
@@ -389,9 +463,39 @@ export default function ArtistHub({ slug }) {
 
             {dueToday.length > 0 && (
               <div class="space-y-2 border border-primary/30 bg-primary/5 p-4">
-                <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-primary">
-                  <CalendarDays size={12} /> À faire aujourd’hui
-                </p>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-primary">
+                    <CalendarDays size={12} /> À faire aujourd’hui
+                  </p>
+                  {dueToday.some((i) => i.type === "promote") && (
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-xs gap-1"
+                      disabled={scheduleBusy || busy}
+                      onClick={runSchedulePromo}
+                      title={
+                        schedulePreview?.blockers?.length
+                          ? schedulePreview.blockers.join(" · ")
+                          : "Publier le clip focus sur TikTok / webhook"
+                      }
+                    >
+                      {scheduleBusy ? (
+                        <span class="loading loading-spinner loading-xs" />
+                      ) : (
+                        <Sparkles size={12} />
+                      )}
+                      Publier promo
+                    </button>
+                  )}
+                </div>
+                {schedulePreview?.blockers?.length > 0 && (
+                  <p class="text-xs text-warning">{schedulePreview.blockers.join(" · ")}</p>
+                )}
+                {schedulePreview?.canRun && (
+                  <p class="text-xs text-success">
+                    Clip MP4 prêt — la promo peut partir maintenant.
+                  </p>
+                )}
                 <ul class="space-y-2">
                   {dueToday.map((item) => (
                     <li
@@ -525,21 +629,26 @@ export default function ArtistHub({ slug }) {
                         <li
                           key={`${item.date}-${item.type}-${item.title}`}
                           class={`flex flex-wrap gap-2 border-l-2 py-1 pl-3 text-sm ${
-                            item.status === "active"
-                              ? "border-primary text-base-content"
-                              : "border-base-content/15 text-base-content/65"
+                            item.status === "done"
+                              ? "border-success/50 text-base-content/45 line-through"
+                              : item.status === "active"
+                                ? "border-primary text-base-content"
+                                : "border-base-content/15 text-base-content/65"
                           }`}
                         >
-                          <span class="w-24 shrink-0 text-xs tabular-nums text-base-content/45">
+                          <span class="w-24 shrink-0 text-xs tabular-nums text-base-content/45 no-underline">
                             {item.date}
                           </span>
                           <span class="min-w-0 flex-1">
                             <span class="font-medium">{item.title}</span>
+                            {item.status === "done" && (
+                              <span class="ml-1 text-xs text-success no-underline">fait</span>
+                            )}
                             {item.detail ? (
                               <span class="text-base-content/50"> — {item.detail}</span>
                             ) : null}
                           </span>
-                          {item.href && (
+                          {item.href && item.status !== "done" && (
                             <a
                               class="btn btn-ghost btn-xs gap-1"
                               href={item.href}
@@ -549,6 +658,27 @@ export default function ArtistHub({ slug }) {
                               Ouvrir <ExternalLink size={10} />
                             </a>
                           )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {recentRuns.length > 0 && (
+                  <div class="space-y-1">
+                    <p class="text-xs uppercase tracking-wider text-base-content/45">
+                      Dernières publications agenda
+                    </p>
+                    <ul class="space-y-1 text-xs text-base-content/55">
+                      {recentRuns.map((run) => (
+                        <li key={`${run.key}-${run.at}`}>
+                          {run.at ? new Date(run.at).toLocaleString("fr-FR") : "—"}
+                          {" · "}
+                          {run.title || run.type}
+                          {" · "}
+                          <span class={run.ok ? "text-success" : "text-warning"}>
+                            {run.status || (run.ok ? "ok" : "ko")}
+                          </span>
                         </li>
                       ))}
                     </ul>

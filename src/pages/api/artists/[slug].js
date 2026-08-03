@@ -5,6 +5,7 @@ import {
   computeArtistStats,
   adviseArtistCareer,
 } from "../../../server/artists.js";
+import { previewCareerSchedule, runCareerSchedule } from "../../../server/careerSchedule.js";
 
 export const prerender = false;
 
@@ -55,6 +56,19 @@ export async function POST({ params, request }) {
       const result = await adviseArtistCareer(slug, {
         keys: body.keys || {},
         force: Boolean(body.force),
+      });
+      return json(result);
+    }
+
+    if (action === "schedule-preview") {
+      const preview = await previewCareerSchedule(slug);
+      return json({ preview });
+    }
+
+    if (action === "run-schedule") {
+      const result = await runCareerSchedule(slug, {
+        keys: body.keys || {},
+        dryRun: Boolean(body.dryRun),
       });
       return json(result);
     }
