@@ -1,5 +1,7 @@
 import { json, error, readBody } from "../../server/http.js";
 import { geminiText, resolveGeminiTextModel } from "../../server/gemini.js";
+import { isOllamaProvider } from "../../server/llm.js";
+import { testOllama } from "../../server/ollama.js";
 import { fetchDeezerCharts } from "../../server/deezer.js";
 import { getSpotifyAccess } from "../../server/spotify.js";
 import { onceCredits, onceMe } from "../../server/once.js";
@@ -9,6 +11,7 @@ export async function POST({ request }) {
   try {
     const { keys = {} } = await readBody(request);
     const results = {
+      llm: { ok: false, message: "Non testé" },
       gemini: { ok: false, message: "Non testé" },
       veo: { ok: false, message: "Non testé" },
       deezer: { ok: false, message: "Non testé" },
@@ -17,6 +20,20 @@ export async function POST({ request }) {
       replicate: { ok: false, message: "Non testé" },
       turso: { ok: false, message: "Non testé" },
     };
+
+    if (isOllamaProvider(keys)) {
+      try {
+        const info = await testOllama(keys);
+        results.llm = {
+          ok: true,
+          message: `Ollama OK · ${info.model} @ ${info.base} (${info.models.length} modèle(s))`,
+        };
+      } catch (e) {
+        results.llm = { ok: false, message: e.message };
+      }
+    } else {
+      results.llm = { ok: false, message: "Provider = Gemini (voir ligne gemini)" };
+    }
 
     if (keys.geminiApiKey?.trim()) {
       try {
@@ -35,8 +52,15 @@ export async function POST({ request }) {
               message: `Texte OK (${model}) · Image NON dispo en free tier (billing requis)`,
             }
           : { ok: true, message: `Texte + Image OK (${model})` };
+
+        if (!isOllamaProvider(keys)) {
+          results.llm = { ok: true, message: `Gemini texte OK (${model})` };
+        }
       } catch (e) {
         results.gemini = { ok: false, message: e.message };
+        if (!isOllamaProvider(keys)) {
+          results.llm = { ok: false, message: e.message };
+        }
       }
 
       // Probe Veo : démarre une op courte (texte) pour vérifier l’accès paid preview
@@ -69,7 +93,12 @@ export async function POST({ request }) {
         };
       }
     } else {
-      results.gemini = { ok: false, message: "Clé absente" };
+      results.gemini = {
+        ok: false,
+        message: isOllamaProvider(keys)
+          ? "Clé absente (optionnel si Ollama — requis pour images Gemini / Veo)"
+          : "Clé absente",
+      };
       results.veo = { ok: false, message: "Clé Gemini absente" };
     }
 

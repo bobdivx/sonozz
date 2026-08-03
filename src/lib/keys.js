@@ -3,11 +3,41 @@ export const KEY_FIELDS = [
     group: "IA",
     items: [
       {
+        id: "llmProvider",
+        label: "Provider texte (LLM)",
+        help: "Ollama = local, 0 token cloud. Gemini reste utile pour images / Veo / écoute audio.",
+        required: false,
+        inputType: "select",
+        options: [
+          { value: "gemini", label: "Gemini (cloud)" },
+          { value: "ollama", label: "Ollama (local)" },
+        ],
+      },
+      {
+        id: "ollamaBaseUrl",
+        label: "URL Ollama",
+        placeholder: "http://127.0.0.1:11434",
+        help: "Doit être joignable depuis le serveur Astro (souvent localhost en dev).",
+        required: false,
+        inputType: "url",
+        when: { llmProvider: "ollama" },
+        url: "https://ollama.com/",
+      },
+      {
+        id: "ollamaModel",
+        label: "Modèle Ollama",
+        placeholder: "llama3.2",
+        help: "Ex. llama3.2, mistral, qwen2.5 — `ollama pull <modèle>` puis Tester.",
+        required: false,
+        inputType: "text",
+        when: { llmProvider: "ollama" },
+      },
+      {
         id: "geminiApiKey",
         label: "Gemini API Key",
         placeholder: "AIza...",
-        help: "Obligatoire — tendances, artiste, paroles, jaquettes, shorts Veo 3 (billing vidéo)",
-        required: true,
+        help: "Requis si provider = Gemini. Aussi pour images Gemini, Veo et analyse audio.",
+        required: false,
         url: "https://aistudio.google.com/apikey",
       },
       {
@@ -17,6 +47,7 @@ export const KEY_FIELDS = [
         help: "1.5 / 2.0 sont retirés par Google — 2.5-flash-lite recommandé (free tier)",
         required: false,
         inputType: "select",
+        when: { llmProvider: "gemini" },
         options: [
           { value: "gemini-2.5-flash-lite", label: "2.5 Flash Lite (free, recommandé)" },
           { value: "gemini-2.5-flash", label: "2.5 Flash (free)" },
@@ -195,10 +226,15 @@ const RETIRED_GEMINI_MODELS = new Set([
 ]);
 
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_MODEL = "llama3.2";
 
 export const EMPTY_KEYS = () => {
   const base = Object.fromEntries(KEY_FIELDS.flatMap((g) => g.items.map((i) => [i.id, ""])));
+  base.llmProvider = "gemini";
   base.geminiModel = DEFAULT_GEMINI_MODEL;
+  base.ollamaBaseUrl = DEFAULT_OLLAMA_BASE;
+  base.ollamaModel = DEFAULT_OLLAMA_MODEL;
   base.tiktokPrivacyLevel = "SELF_ONLY";
   base.tiktokPostMode = "direct";
   return base;
@@ -206,8 +242,17 @@ export const EMPTY_KEYS = () => {
 
 function migrateKeys(keys) {
   const next = { ...keys };
+  if (!next.llmProvider?.trim() || !["gemini", "ollama"].includes(next.llmProvider.trim())) {
+    next.llmProvider = "gemini";
+  }
   if (!next.geminiModel?.trim() || RETIRED_GEMINI_MODELS.has(next.geminiModel.trim())) {
     next.geminiModel = DEFAULT_GEMINI_MODEL;
+  }
+  if (!next.ollamaBaseUrl?.trim()) {
+    next.ollamaBaseUrl = DEFAULT_OLLAMA_BASE;
+  }
+  if (!next.ollamaModel?.trim()) {
+    next.ollamaModel = DEFAULT_OLLAMA_MODEL;
   }
   if (!next.tiktokPrivacyLevel?.trim()) {
     next.tiktokPrivacyLevel = "SELF_ONLY";
@@ -249,7 +294,19 @@ export function saveKeys(keys) {
 }
 
 export function keysReady(keys) {
+  if (String(keys?.llmProvider || "gemini").trim() === "ollama") {
+    return Boolean(keys?.ollamaModel?.trim());
+  }
   return Boolean(keys?.geminiApiKey?.trim());
+}
+
+/** Affiche un champ si `when` matche les clés actuelles. */
+export function fieldVisible(field, keys) {
+  if (!field?.when) return true;
+  return Object.entries(field.when).every(([id, value]) => {
+    const current = keys?.[id]?.trim() || (id === "llmProvider" ? "gemini" : "");
+    return current === value;
+  });
 }
 
 export function maskSecret(value) {

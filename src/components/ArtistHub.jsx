@@ -2,15 +2,35 @@ import { useEffect, useState } from "preact/hooks";
 import {
   AudioLines,
   BarChart3,
+  Bot,
+  CalendarDays,
   ExternalLink,
   Headphones,
   Music2,
   Plus,
   RefreshCw,
+  Sparkles,
   UserRound,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import { loadKeys } from "../lib/keys.js";
+
+const VERDICT_LABEL = {
+  produce: "Produire",
+  wait: "Attendre",
+  promote: "Promouvoir",
+  pivot: "Corriger",
+  publish: "Unison",
+};
+
+function verdictClass(verdict) {
+  if (verdict === "produce") return "badge-success";
+  if (verdict === "wait") return "badge-warning";
+  if (verdict === "promote") return "badge-info";
+  if (verdict === "pivot") return "badge-error";
+  if (verdict === "publish") return "badge-primary";
+  return "badge-ghost";
+}
 
 function formatStreams(n) {
   if (n == null || Number.isNaN(Number(n))) return "—";
@@ -37,6 +57,7 @@ export default function ArtistHub({ slug }) {
   const [error, setError] = useState("");
   const [theme, setTheme] = useState("");
   const [msg, setMsg] = useState("");
+  const [careerBusy, setCareerBusy] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -46,6 +67,8 @@ export default function ArtistHub({ slug }) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Artiste introuvable");
       setData(json.artist);
+      const suggested = json.artist?.career?.nextSingle?.theme;
+      if (suggested && !theme.trim()) setTheme(suggested);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -59,6 +82,7 @@ export default function ArtistHub({ slug }) {
 
   async function refreshStats() {
     setBusy(true);
+    setCareerBusy(true);
     setMsg("");
     setError("");
     try {
@@ -66,35 +90,55 @@ export default function ArtistHub({ slug }) {
       const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "refresh-stats", keys }),
+        body: JSON.stringify({ action: "refresh-stats", keys, advise: true }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Stats KO");
-      setData((prev) => (prev ? { ...prev, stats: json.stats } : prev));
-      setMsg(
-        json.onceSynced
-          ? "Stats + statut ONCE / streams synchronisés"
-          : "Stats catalogue OK — ajoute un token ONCE dans Réglages pour sync streams",
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              stats: json.stats,
+              career: json.career || prev.career,
+            }
+          : prev,
       );
-      await load();
+      if (json.career?.nextSingle?.theme) {
+        setTheme(json.career.nextSingle.theme);
+      }
+      const unison = json.stats?.unisonReady || 0;
+      setMsg(
+        [
+          json.onceSynced
+            ? "Stats + statut ONCE / streams synchronisés"
+            : "Stats catalogue OK — ajoute un token ONCE dans Réglages pour sync streams",
+          json.career ? "· conseil carrière mis à jour" : "",
+          unison > 0 ? `· ${unison} prêt(s) Unison` : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
     } catch (e) {
       setError(e.message);
     } finally {
       setBusy(false);
+      setCareerBusy(false);
     }
   }
 
-  async function createTrack() {
+  async function createTrack(themeOverride) {
     setBusy(true);
     setError("");
     setMsg("");
     try {
+      const themeValue =
+        typeof themeOverride === "string" ? themeOverride.trim() : theme.trim();
       const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "new-track",
-          theme: theme.trim(),
+          theme: themeValue,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -106,8 +150,48 @@ export default function ArtistHub({ slug }) {
     }
   }
 
+  async function runCareerAdvice(force = false) {
+    setCareerBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const keys = loadKeys();
+      const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "career-advice", keys, force }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Agent carrière KO");
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              career: json.career,
+              stats: json.stats ? { ...prev.stats, ...json.stats } : prev.stats,
+            }
+          : prev,
+      );
+      if (json.career?.nextSingle?.theme) {
+        setTheme(json.career.nextSingle.theme);
+      }
+      setMsg(
+        json.cached
+          ? "Conseil carrière (cache < 6 h) — force pour recalculer"
+          : json.career?.warning
+            ? `Conseil prêt (heuristiques) — ${json.career.warning}`
+            : "Agent carrière : recommandation à jour",
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCareerBusy(false);
+    }
+  }
+
   const profile = data?.profile || {};
   const stats = data?.stats || {};
+  const career = data?.career || stats.career || null;
   const releases = data?.releases || [];
   const streams = stats.streams || {};
   const deliveryMap = stats.delivery || {};
@@ -117,6 +201,10 @@ export default function ArtistHub({ slug }) {
     spotifyForArtists: "https://artists.spotify.com/",
   };
   const changeLabel = formatPct(streams.periodChangePct);
+  const today = new Date().toISOString().slice(0, 10);
+  const dueToday = Array.isArray(career?.schedule)
+    ? career.schedule.filter((item) => item.date === today || item.status === "active")
+    : [];
 
   return (
     <AppShell active="artistes">
@@ -197,12 +285,13 @@ export default function ArtistHub({ slug }) {
                 <RefreshCw size={14} /> Rafraîchir
               </button>
             </div>
-            <div class="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+            <div class="grid gap-3 sm:grid-cols-2 md:grid-cols-5">
               {[
                 ["Morceaux", stats.tracks ?? releases.length],
                 ["Avec audio", stats.withAudio ?? 0],
                 ["Soumis ONCE", stats.submitted ?? 0],
                 ["Live Spotify", stats.liveOnSpotify ?? "—"],
+                ["Prêt Unison", stats.unisonReady ?? 0],
               ].map(([label, value]) => (
                 <div key={label} class="border border-base-content/10 bg-base-200/40 px-4 py-3">
                   <p class="text-xs uppercase tracking-wider text-base-content/45">{label}</p>
@@ -263,6 +352,256 @@ export default function ArtistHub({ slug }) {
           </section>
 
           <section class="space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <h2 class="font-display flex items-center gap-2 text-2xl font-bold">
+                <Bot size={22} /> Agent carrière
+              </h2>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="btn btn-outline btn-sm gap-1"
+                  disabled={careerBusy || busy}
+                  onClick={() => runCareerAdvice(false)}
+                >
+                  {careerBusy ? (
+                    <span class="loading loading-spinner loading-sm" />
+                  ) : (
+                    <Sparkles size={14} />
+                  )}
+                  Conseiller
+                </button>
+                {career && (
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    disabled={careerBusy || busy}
+                    onClick={() => runCareerAdvice(true)}
+                  >
+                    Recalculer
+                  </button>
+                )}
+              </div>
+            </div>
+            <p class="text-sm text-base-content/65">
+              Analytics → Unison / promo / prochain single + agenda. Webhook ONCE = maj auto à chaque
+              changement de statut store.
+            </p>
+
+            {dueToday.length > 0 && (
+              <div class="space-y-2 border border-primary/30 bg-primary/5 p-4">
+                <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-primary">
+                  <CalendarDays size={12} /> À faire aujourd’hui
+                </p>
+                <ul class="space-y-2">
+                  {dueToday.map((item) => (
+                    <li
+                      key={`due-${item.date}-${item.type}-${item.title}`}
+                      class="flex flex-wrap items-center gap-2 text-sm"
+                    >
+                      <span class="font-medium">{item.title}</span>
+                      {item.detail && (
+                        <span class="text-base-content/55">— {item.detail}</span>
+                      )}
+                      {item.href && (
+                        <a
+                          class="btn btn-primary btn-xs gap-1"
+                          href={item.href}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Ouvrir <ExternalLink size={10} />
+                        </a>
+                      )}
+                      {item.type === "produce" && career?.nextSingle?.theme && (
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-xs gap-1"
+                          disabled={busy}
+                          onClick={() => createTrack(career.nextSingle.theme)}
+                        >
+                          Studio
+                        </button>
+                      )}
+                      {item.type === "promote" && career?.releaseFocus?.id && (
+                        <a
+                          class="btn btn-outline btn-xs"
+                          href={`/?project=${career.releaseFocus.id}&step=7`}
+                        >
+                          Clip
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {!career ? (
+              <p class="text-sm text-base-content/50">
+                Lance l’agent (ou Rafraîchir les stats) pour analyser le catalogue ONCE.
+              </p>
+            ) : (
+              <div class="space-y-4 border border-base-content/10 bg-base-200/30 p-4">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class={`badge ${verdictClass(career.verdict)}`}>
+                    {VERDICT_LABEL[career.verdict] || career.verdict}
+                  </span>
+                  {career.source && (
+                    <span class="text-xs text-base-content/45">{career.source}</span>
+                  )}
+                  {career.updatedAt && (
+                    <span class="text-xs text-base-content/40">
+                      {new Date(career.updatedAt).toLocaleString("fr-FR")}
+                    </span>
+                  )}
+                </div>
+                <p class="text-sm text-base-content/80">{career.summary}</p>
+
+                {(career.releaseFocus?.isrc ||
+                  career.releaseFocus?.upc ||
+                  career.releaseFocus?.publishingStatus) && (
+                  <p class="text-xs text-base-content/55">
+                    {career.releaseFocus.upc
+                      ? `UPC ${career.releaseFocus.upc}`
+                      : "UPC pending"}
+                    {" · "}
+                    {career.releaseFocus.isrc
+                      ? `ISRC ${career.releaseFocus.isrc}`
+                      : "ISRC pending"}
+                  </p>
+                )}
+
+                {career.nextSingle && (
+                  <div class="space-y-1">
+                    <p class="text-xs uppercase tracking-wider text-base-content/45">
+                      Prochain single
+                    </p>
+                    {career.nextSingle.titleHint && (
+                      <p class="font-display text-lg font-semibold">{career.nextSingle.titleHint}</p>
+                    )}
+                    <p class="text-sm">{career.nextSingle.theme}</p>
+                    {career.nextSingle.angle && (
+                      <p class="text-xs text-base-content/55">{career.nextSingle.angle}</p>
+                    )}
+                    {career.nextSingle.why && (
+                      <p class="text-xs text-base-content/45">{career.nextSingle.why}</p>
+                    )}
+                  </div>
+                )}
+
+                {Array.isArray(career.actions) && career.actions.length > 0 && (
+                  <ol class="space-y-2 text-sm">
+                    {career.actions.map((a) => (
+                      <li key={`${a.priority}-${a.label}`} class="flex flex-wrap items-baseline gap-2">
+                        <span class="text-base-content/40">{a.priority}.</span>
+                        <span class="min-w-0 flex-1">
+                          <span class="font-medium">{a.label}</span>
+                          {a.detail ? (
+                            <span class="text-base-content/55"> — {a.detail}</span>
+                          ) : null}
+                        </span>
+                        {a.href && (
+                          <a
+                            class="btn btn-ghost btn-xs gap-1"
+                            href={a.href}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            ONCE <ExternalLink size={10} />
+                          </a>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+
+                {Array.isArray(career.schedule) && career.schedule.length > 0 && (
+                  <div class="space-y-2">
+                    <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-base-content/45">
+                      <CalendarDays size={12} /> Agenda
+                    </p>
+                    <ul class="space-y-1.5">
+                      {career.schedule.map((item) => (
+                        <li
+                          key={`${item.date}-${item.type}-${item.title}`}
+                          class={`flex flex-wrap gap-2 border-l-2 py-1 pl-3 text-sm ${
+                            item.status === "active"
+                              ? "border-primary text-base-content"
+                              : "border-base-content/15 text-base-content/65"
+                          }`}
+                        >
+                          <span class="w-24 shrink-0 text-xs tabular-nums text-base-content/45">
+                            {item.date}
+                          </span>
+                          <span class="min-w-0 flex-1">
+                            <span class="font-medium">{item.title}</span>
+                            {item.detail ? (
+                              <span class="text-base-content/50"> — {item.detail}</span>
+                            ) : null}
+                          </span>
+                          {item.href && (
+                            <a
+                              class="btn btn-ghost btn-xs gap-1"
+                              href={item.href}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Ouvrir <ExternalLink size={10} />
+                            </a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {career.cadence?.note && (
+                  <p class="text-xs text-base-content/45">{career.cadence.note}</p>
+                )}
+                {career.releaseFocus?.title && (
+                  <p class="text-xs text-base-content/50">
+                    Focus : {career.releaseFocus.title}
+                    {career.releaseFocus.reason ? ` (${career.releaseFocus.reason})` : ""}
+                  </p>
+                )}
+
+                <div class="flex flex-wrap gap-2">
+                  {(career.verdict === "publish" ||
+                    career.actions?.some((a) => a.type === "publish_unison" && a.href)) &&
+                    (career.releaseFocus?.dashboardUrl ||
+                      career.actions?.find((a) => a.href)?.href) && (
+                      <a
+                        class="btn btn-primary btn-sm gap-2"
+                        href={
+                          career.releaseFocus?.dashboardUrl ||
+                          career.actions.find((a) => a.href)?.href
+                        }
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Soumettre Unison sur ONCE <ExternalLink size={12} />
+                      </a>
+                    )}
+                  {career.verdict === "produce" && career.nextSingle?.theme && (
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-sm gap-2"
+                      disabled={busy}
+                      onClick={() => {
+                        const t = career.nextSingle.theme;
+                        setTheme(t);
+                        createTrack(t);
+                      }}
+                    >
+                      <AudioLines size={14} /> Lancer ce single dans le studio
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section class="space-y-4">
             <h2 class="font-display flex items-center gap-2 text-2xl font-bold">
               <Plus size={22} /> Nouveau morceau
             </h2>
@@ -276,7 +615,12 @@ export default function ArtistHub({ slug }) {
                 value={theme}
                 onInput={(e) => setTheme(e.currentTarget.value)}
               />
-              <button type="button" class="btn btn-primary gap-2" disabled={busy} onClick={createTrack}>
+              <button
+                type="button"
+                class="btn btn-primary gap-2"
+                disabled={busy}
+                onClick={() => createTrack()}
+              >
                 {busy ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={16} />}
                 Créer dans le studio
               </button>
@@ -318,6 +662,19 @@ export default function ArtistHub({ slug }) {
                         {r.releaseId ? ` · ONCE ${r.releaseId}` : ""}
                         {r.hasAudio ? " · audio" : ""}
                       </p>
+                      {delivery?.identifiers && (
+                        <p class="mt-1 text-xs text-base-content/45">
+                          UPC {delivery.identifiers.upcPending ? "pending" : delivery.identifiers.upc || "—"}
+                          {" · "}
+                          ISRC{" "}
+                          {delivery.identifiers.isrcPending
+                            ? "pending"
+                            : delivery.identifiers.isrc || "—"}
+                          {delivery.publishing?.label
+                            ? ` · ${delivery.publishing.label}`
+                            : ""}
+                        </p>
+                      )}
                       {delivery && !delivery.error && (
                         <p class={`mt-1 text-xs ${storeBadgeClass(delivery.spotifyStatus || delivery.aggregateStatus)}`}>
                           {delivery.aggregateStatus ? `${delivery.aggregateStatus}` : ""}
@@ -349,6 +706,16 @@ export default function ArtistHub({ slug }) {
                       )}
                     </div>
                     <div class="flex flex-wrap gap-2">
+                      {delivery?.publishing?.canSubmitUnison && delivery?.dashboardUrl && (
+                        <a
+                          class="btn btn-primary btn-sm gap-1"
+                          href={delivery.dashboardUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Unison <ExternalLink size={12} />
+                        </a>
+                      )}
                       {delivery?.spotifyUrl && (
                         <a
                           class="btn btn-ghost btn-sm gap-1"
@@ -357,6 +724,16 @@ export default function ArtistHub({ slug }) {
                           rel="noreferrer"
                         >
                           Spotify <ExternalLink size={12} />
+                        </a>
+                      )}
+                      {delivery?.dashboardUrl && !delivery?.publishing?.canSubmitUnison && (
+                        <a
+                          class="btn btn-ghost btn-sm gap-1"
+                          href={delivery.dashboardUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          ONCE <ExternalLink size={12} />
                         </a>
                       )}
                       <a class="btn btn-ghost btn-sm" href={`/?project=${r.id}`}>

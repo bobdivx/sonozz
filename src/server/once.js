@@ -80,6 +80,104 @@ export async function onceReleaseStatus(token, releaseId) {
   return onceFetch(token, `/releases/${encodeURIComponent(releaseId)}/status`);
 }
 
+/** Métadonnées release (UPC, ISRC, tracks…). */
+export async function onceReleaseMeta(token, releaseId) {
+  return onceFetch(token, `/releases/${encodeURIComponent(releaseId)}`);
+}
+
+/**
+ * Extrait UPC / ISRC depuis GET /releases/:id (champs variables selon version API).
+ */
+export function extractOnceIdentifiers(release = {}) {
+  const upcRaw =
+    release.upc ||
+    release.upc_code ||
+    release.barcode ||
+    release.ean ||
+    release.release?.upc ||
+    null;
+  const tracks = Array.isArray(release.tracks) ? release.tracks : [];
+  const trackIsrcs = tracks.map((t, i) => {
+    const isrc =
+      t.isrc ||
+      t.isrc_code ||
+      t.recording_isrc ||
+      t.identifiers?.isrc ||
+      null;
+    return {
+      index: i + 1,
+      title: t.title || `Piste ${i + 1}`,
+      isrc: isrc ? String(isrc) : null,
+    };
+  });
+  const isrc =
+    trackIsrcs.find((t) => t.isrc)?.isrc ||
+    release.isrc ||
+    release.isrc_code ||
+    null;
+
+  const upc = upcRaw ? String(upcRaw) : null;
+  const isPendingCode = (v) => !v || /pending|assign|n\/?a|null/i.test(String(v));
+
+  return {
+    upc,
+    isrc,
+    tracks: trackIsrcs,
+    upcPending: isPendingCode(upc),
+    isrcPending: isPendingCode(isrc),
+  };
+}
+
+/**
+ * Unison / Release Publishing : verrouillé tant qu’aucun store live + ISRC.
+ */
+export function publishingReadiness({ delivery = {}, identifiers = {} } = {}) {
+  const statusBlob = `${delivery.spotifyStatus || ""} ${delivery.aggregateStatus || ""}`;
+  const live =
+    /live|distributed|delivered|success/i.test(statusBlob) || Boolean(delivery.spotifyUrl);
+  const pendingDist = /pending|inspect|queued|process/i.test(statusBlob) && !live;
+  const hasIsrc = Boolean(identifiers.isrc) && !identifiers.isrcPending;
+
+  if (delivery.error) {
+    return {
+      status: "error",
+      label: "Erreur statut",
+      reason: delivery.error,
+      canSubmitUnison: false,
+    };
+  }
+  if (pendingDist || (!live && !hasIsrc)) {
+    return {
+      status: "locked",
+      label: "Publishing verrouillé",
+      reason: "Attendre livraison magasin + attribution ISRC",
+      canSubmitUnison: false,
+    };
+  }
+  if (live && !hasIsrc) {
+    return {
+      status: "awaiting_isrc",
+      label: "Live — ISRC pending",
+      reason: "Store live mais ISRC pas encore visible ; réessaie bientôt",
+      canSubmitUnison: false,
+    };
+  }
+  if (hasIsrc) {
+    return {
+      status: "ready",
+      label: "Prêt Unison",
+      reason: `ISRC ${identifiers.isrc} — ouvre Release Publishing sur ONCE`,
+      canSubmitUnison: true,
+    };
+  }
+  return {
+    status: "unknown",
+    label: "Statut inconnu",
+    reason: "Rafraîchis les stats ONCE",
+    canSubmitUnison: false,
+  };
+}
+
 const MCP_BASE = "https://beta.once.app/api/mcp";
 
 /**

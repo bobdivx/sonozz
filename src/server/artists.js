@@ -1,4 +1,5 @@
 import { ensureSchema, getDb, uid, saveProject } from "./db.js";
+import { runCareerAgent } from "./careerAgent.js";
 
 export function slugify(input = "") {
   return String(input)
@@ -368,9 +369,12 @@ export async function listLibraryTracks(limit = 200) {
 async function enrichStatsFromOnce(stats, releases, onceToken) {
   const {
     onceReleaseStatus,
+    onceReleaseMeta,
     oncePerformanceSummary,
     onceReleasePerformance,
     normalizeOnceDelivery,
+    extractOnceIdentifiers,
+    publishingReadiness,
   } = await import("./once.js");
 
   const withIds = releases.filter((r) => r.releaseId);
@@ -380,8 +384,25 @@ async function enrichStatsFromOnce(stats, releases, onceToken) {
   await Promise.all(
     withIds.slice(0, 20).map(async (r) => {
       try {
-        const raw = await onceReleaseStatus(onceToken, r.releaseId);
-        delivery[r.releaseId] = normalizeOnceDelivery(raw);
+        const [rawStatus, rawMeta] = await Promise.all([
+          onceReleaseStatus(onceToken, r.releaseId),
+          onceReleaseMeta(onceToken, r.releaseId).catch(() => null),
+        ]);
+        const normalized = normalizeOnceDelivery(rawStatus);
+        const identifiers = rawMeta
+          ? extractOnceIdentifiers(rawMeta)
+          : { upc: null, isrc: null, tracks: [], upcPending: true, isrcPending: true };
+        const publishing = publishingReadiness({
+          delivery: normalized,
+          identifiers,
+        });
+        delivery[r.releaseId] = {
+          ...normalized,
+          identifiers,
+          publishing,
+          dashboardUrl: `https://beta.once.app/releases/${r.releaseId}`,
+          publishingUrl: `https://beta.once.app/releases/${r.releaseId}`,
+        };
       } catch (e) {
         delivery[r.releaseId] = { error: e.message || "Statut ONCE indisponible" };
       }
@@ -438,10 +459,13 @@ async function enrichStatsFromOnce(stats, releases, onceToken) {
     ),
   ).length;
 
+  const unisonReady = Object.values(delivery).filter((d) => d.publishing?.canSubmitUnison).length;
+
   stats.delivery = delivery;
   stats.releaseStreams = releaseStreams;
   stats.streams = streams;
   stats.liveOnSpotify = liveOnSpotify;
+  stats.unisonReady = unisonReady;
   stats.releases = (stats.releases || []).map((r) => ({
     ...r,
     delivery: r.releaseId ? delivery[r.releaseId] || null : null,
@@ -453,7 +477,9 @@ async function enrichStatsFromOnce(stats, releases, onceToken) {
       streams.periodChangePct == null
         ? ""
         : ` (${streams.periodChangePct > 0 ? "+" : ""}${streams.periodChangePct}% vs période préc.)`;
-    stats.streamsNote = `ONCE · ${streams.totalStreams ?? 0} streams (30 j)${change}. Revenus via ONCE / Spotify for Artists.`;
+    const unisonBit =
+      unisonReady > 0 ? ` · ${unisonReady} titre(s) prêt(s) Unison` : "";
+    stats.streamsNote = `ONCE · ${streams.totalStreams ?? 0} streams (30 j)${change}${unisonBit}. Revenus via ONCE / Spotify for Artists.`;
   } else if (streams?.error) {
     stats.streamsNote = `Stats catalogue OK. Streams ONCE : ${streams.error}. Vérifie le token ONCE ou ouvre Spotify for Artists.`;
   }
@@ -535,7 +561,50 @@ export async function getArtistHub(slug) {
       }
     : await computeArtistStats(slug);
 
-  return { ...artist, stats, releases };
+  return {
+    ...artist,
+    stats,
+    releases,
+    career: artist.stats?.career || null,
+  };
+}
+
+/**
+ * Agent carrière (Analytics → prochain single). Persiste dans stats.career.
+ */
+export async function adviseArtistCareer(slug, { keys, force = false } = {}) {
+  const artist = await getArtistBySlug(slug);
+  if (!artist) throw new Error("Artiste introuvable");
+
+  const prevCareer = artist.stats?.career;
+  const cachedAt = prevCareer?.updatedAt ? Date.parse(prevCareer.updatedAt) : 0;
+  if (!force && cachedAt && Date.now() - cachedAt < 6 * 60 * 60 * 1000) {
+    return { career: prevCareer, cached: true };
+  }
+
+  const releases = await listArtistReleases(slug, 40);
+  // Utilise stats déjà sync (ONCE) si présentes — pas de re-fetch obligatoire
+  let stats = artist.stats || {};
+  if (!stats.updatedAt) {
+    stats = await computeArtistStats(slug, {
+      onceToken: keys?.onceApiToken?.trim() || "",
+    });
+  }
+
+  const career = await runCareerAgent({ keys, artist, releases, stats });
+  const nextStats = {
+    ...stats,
+    career,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const db = getDb();
+  await db.execute({
+    sql: `UPDATE artists SET stats_json = ?, updated_at = ? WHERE slug = ?`,
+    args: [JSON.stringify(nextStats), nextStats.updatedAt, slug],
+  });
+
+  return { career, cached: false, stats: nextStats };
 }
 
 /**

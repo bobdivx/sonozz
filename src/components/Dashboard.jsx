@@ -234,7 +234,7 @@ export default function Dashboard() {
 
   async function runStep(fn, key, goTo) {
     if (!keysReady(loadKeys())) {
-      setError("Configure d'abord ta clé Gemini dans Paramètres.");
+      setError("Configure d'abord un LLM (Gemini ou Ollama) dans Paramètres.");
       window.location.href = "/parametres?section=ia";
       return;
     }
@@ -289,7 +289,7 @@ export default function Dashboard() {
 
   async function runFullAuto() {
     if (!keysReady(loadKeys())) {
-      setError("Configure d'abord ta clé Gemini pour lancer l'auto.");
+      setError("Configure d'abord un LLM (Gemini ou Ollama) pour lancer l'auto.");
       window.location.href = "/parametres?section=ia";
       return;
     }

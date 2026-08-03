@@ -12,7 +12,7 @@ import {
   Share2,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
-import { KEY_FIELDS, loadKeys, saveKeys, keysReady, tiktokRedirectUri } from "../lib/keys.js";
+import { KEY_FIELDS, loadKeys, saveKeys, keysReady, tiktokRedirectUri, fieldVisible } from "../lib/keys.js";
 import { formatQuotaReset, getTikTokQuota } from "../lib/tiktokQuota.js";
 import { api } from "../lib/apiClient.js";
 
@@ -20,7 +20,7 @@ const TIKTOK_STATE_KEY = "sonozz.tiktok.oauth.state";
 const TIKTOK_VERIFIER_KEY = "sonozz.tiktok.oauth.verifier";
 
 const SECTION_META = {
-  IA: { id: "ia", icon: Sparkles, blurb: "Gemini et génération audio / image." },
+  IA: { id: "ia", icon: Sparkles, blurb: "Gemini, Ollama local, et génération audio / image." },
   Streaming: { id: "streaming", icon: Music2, blurb: "Spotify et Deezer pour le contexte catalogue." },
   "Distribution ONCE": {
     id: "distribution",
@@ -47,7 +47,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [connectingTikTok, setConnectingTikTok] = useState(false);
-  const [tiktokPreview, setTiktokPreview] = useState(null);
+  const [webhookBusy, setWebhookBusy] = useState(false);
+  const [webhookConfig, setWebhookConfig] = useState(null);
   const [tests, setTests] = useState(null);
   const [message, setMessage] = useState("");
   const redirectUri = typeof window !== "undefined" ? tiktokRedirectUri() : "";
@@ -70,6 +71,70 @@ export default function SettingsPage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (section !== "distribution") return;
+    fetch("/api/once/webhooks")
+      .then((r) => r.json())
+      .then((j) => setWebhookConfig(j.config || null))
+      .catch(() => setWebhookConfig(null));
+  }, [section]);
+
+  async function registerOnceWebhook() {
+    setWebhookBusy(true);
+    setMessage("");
+    try {
+      await handleSave();
+      const k = loadKeys();
+      if (!k.onceApiToken?.trim()) {
+        throw new Error("Enregistre d’abord le token ONCE.");
+      }
+      const base = window.location.origin;
+      if (!/^https:\/\//i.test(base)) {
+        throw new Error(
+          "ONCE exige une URL HTTPS publique. Ouvre sonozz.briseteia.me (ou ton déploiement) pour enregistrer le webhook — pas localhost.",
+        );
+      }
+      const res = await fetch("/api/once/webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "register",
+          keys: k,
+          publicBaseUrl: base,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Enregistrement webhook KO");
+      setWebhookConfig(json.config || null);
+      setMessage(`Webhook ONCE actif → ${json.url || json.config?.url}`);
+    } catch (e) {
+      setMessage(e.message);
+    } finally {
+      setWebhookBusy(false);
+    }
+  }
+
+  async function unregisterOnceWebhook() {
+    setWebhookBusy(true);
+    setMessage("");
+    try {
+      const k = loadKeys();
+      const res = await fetch("/api/once/webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "unregister", keys: k }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Suppression KO");
+      setWebhookConfig(json.config || null);
+      setMessage("Webhook ONCE désenregistré.");
+    } catch (e) {
+      setMessage(e.message);
+    } finally {
+      setWebhookBusy(false);
+    }
+  }
+
   function selectSection(id) {
     setSection(id);
     setMessage("");
@@ -88,8 +153,12 @@ export default function SettingsPage() {
     setKeys(next);
     setMessage(
       keysReady(next)
-        ? "Clés enregistrées localement."
-        : "Enregistré — Gemini est encore requis pour l’auto.",
+        ? next.llmProvider === "ollama"
+          ? "Clés enregistrées — texte via Ollama."
+          : "Clés enregistrées localement."
+        : next.llmProvider === "ollama"
+          ? "Enregistré — modèle Ollama encore requis."
+          : "Enregistré — Gemini est encore requis pour l’auto.",
     );
     setSaving(false);
   }
@@ -241,12 +310,18 @@ export default function SettingsPage() {
               handleSave();
             }}
           >
-            {activeGroup.items.map((field) => (
+            {activeGroup.items.filter((field) => fieldVisible(field, keys)).map((field) => (
               <label key={field.id} class="form-control block w-full max-w-xl">
                 <span class="mb-1 flex items-center justify-between gap-2 text-sm">
                   <span>
                     {field.label}
                     {field.required && <span class="text-primary"> *</span>}
+                    {field.id === "geminiApiKey" && keys.llmProvider !== "ollama" && (
+                      <span class="text-primary"> *</span>
+                    )}
+                    {field.id === "ollamaModel" && keys.llmProvider === "ollama" && (
+                      <span class="text-primary"> *</span>
+                    )}
                   </span>
                   {field.url && (
                     <a
@@ -286,6 +361,59 @@ export default function SettingsPage() {
               </label>
             ))}
           </form>
+
+          {section === "distribution" && (
+            <div class="mt-8 max-w-xl space-y-3 border border-base-content/10 bg-base-200/40 p-4">
+              <h3 class="font-display text-lg font-semibold">Webhook carrière ONCE</h3>
+              <p class="text-xs text-base-content/60">
+                ONCE pousse <code>release.status_changed</code> → SONOZZ met à jour le statut stores /
+                ISRC et recalcule l’agent carrière (sans refresh manuel).
+              </p>
+              {webhookConfig?.registered ? (
+                <div class="space-y-2 text-sm">
+                  <p class="text-success">Actif</p>
+                  <p class="break-all font-mono text-xs text-base-content/55">{webhookConfig.url}</p>
+                  {webhookConfig.lastEvent && (
+                    <p class="text-xs text-base-content/50">
+                      Dernier event : {webhookConfig.lastEvent.status || "—"}
+                      {webhookConfig.lastEvent.careerVerdict
+                        ? ` · verdict ${webhookConfig.lastEvent.careerVerdict}`
+                        : ""}
+                      {webhookConfig.lastEvent.at
+                        ? ` · ${new Date(webhookConfig.lastEvent.at).toLocaleString("fr-FR")}`
+                        : ""}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    class="btn btn-outline btn-sm"
+                    disabled={webhookBusy}
+                    onClick={unregisterOnceWebhook}
+                  >
+                    Désenregistrer
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  class="btn btn-primary btn-sm gap-2"
+                  disabled={webhookBusy}
+                  onClick={registerOnceWebhook}
+                >
+                  {webhookBusy ? (
+                    <span class="loading loading-spinner loading-sm" />
+                  ) : (
+                    <PlugZap size={14} />
+                  )}
+                  Activer le webhook ONCE
+                </button>
+              )}
+              <p class="text-xs text-base-content/45">
+                HTTPS obligatoire (prod). Localhost : utilise un tunnel ou enregistre depuis le domaine
+                déployé.
+              </p>
+            </div>
+          )}
 
           {section === "reseaux" && redirectUri && (
             <div class="mt-6 max-w-xl space-y-3 border border-warning/30 bg-warning/5 p-4 text-xs text-base-content/80">

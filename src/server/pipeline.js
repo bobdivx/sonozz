@@ -1,4 +1,3 @@
-import { geminiJson, resolveGeminiTextModel } from "./gemini.js";
 import { generateVisual } from "./images.js";
 import { fetchDeezerCharts } from "./deezer.js";
 import { prepareSpotifyRelease, getSpotifyAccess, spotifySearchContext } from "./spotify.js";
@@ -6,14 +5,10 @@ import { submitOnceRelease } from "./once.js";
 import { generateMusicWithReplicate } from "./replicate.js";
 import { isUsableRasterImage } from "./imagePersist.js";
 import { slugify, getArtistBySlug } from "./artists.js";
-import { requireGemini } from "./http.js";
+import { llmJson, requireTextLlm } from "./llm.js";
 
 function waveform() {
   return Array.from({ length: 40 }, () => 18 + Math.floor(Math.random() * 82));
-}
-
-function geminiOpts(keys) {
-  return { model: resolveGeminiTextModel(keys?.geminiModel) };
 }
 
 /** Gemini renvoie parfois un score 0–1 ; l'UI attend un pourcentage 0–100. */
@@ -150,7 +145,7 @@ function spotifyQueryForArtist(artist, market) {
 }
 
 export async function runTrends({ keys, market = "FR", artist = null, stats = null, artistSlug = null }) {
-  const apiKey = requireGemini(keys);
+  requireTextLlm(keys);
   const charts = await fetchDeezerCharts();
 
   let resolvedArtist = slimArtistForTrends(artist);
@@ -241,7 +236,7 @@ ${baseJsonShape}
 
 ${risingRules}`;
 
-  const analysis = await geminiJson(apiKey, prompt, geminiOpts(keys));
+  const analysis = await llmJson(keys, prompt);
 
   return {
     analyzedAt: new Date().toISOString(),
@@ -318,7 +313,7 @@ function withGenderInPrompt(prompt, genderEn) {
 }
 
 export async function runArtist({ keys, name, bioHint, trends, genre, genres, language }) {
-  const apiKey = requireGemini(keys);
+  requireTextLlm(keys);
   const lang = resolveLanguage(language);
   const langName = languagePromptName(lang);
   const styleList = Array.isArray(genres)
@@ -333,8 +328,8 @@ export async function runArtist({ keys, name, bioHint, trends, genre, genres, la
       ? styleList[0]
       : `fusion / croisement de: ${styleList.join(" + ")} (garde une identité cohérente, pas un collage arbitraire)`
     : "";
-  const data = await geminiJson(
-    apiKey,
+  const data = await llmJson(
+    keys,
     `Crée un profil d'artiste musical fictionnel mais ultra-réaliste,
 avec une identité visuelle cohérente (look, style photo, wardrobe).
 Nom suggéré: ${name || "génère un nom crédible adapté au marché"}
@@ -382,7 +377,6 @@ ${
 "language" doit être exactement "${lang}".
 legalName = prénom + nom de famille réalistes cohérents avec gender (obligatoire pour la distribution).
 portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." ou "adult woman..." ou androgyne), puis âge, traits, coiffure, tenue, lumière, décor ; square photo ; no text in image.`,
-    geminiOpts(keys),
   );
 
   const lock = genderVisualLock(data.gender);
@@ -426,11 +420,11 @@ portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." o
 }
 
 export async function runLyrics({ keys, theme, artist, trends, language }) {
-  const apiKey = requireGemini(keys);
+  requireTextLlm(keys);
   const lang = resolveLanguage(language, artist);
   const langName = languagePromptName(lang);
-  const data = await geminiJson(
-    apiKey,
+  const data = await llmJson(
+    keys,
     `Écris des paroles de chanson originales en ${langName} pour cet artiste.
 Artiste: ${promptJson(artist)}
 Style musical: ${artist?.genre || "pop contemporain"}
@@ -448,7 +442,6 @@ JSON strict:
 }
 Le champ text doit contenir les tags MiniMax en anglais: [Verse], [Chorus], [Verse], [Bridge], [Chorus], [Outro] avec de vraies paroles en ${langName} sous chaque tag.
 "language" doit être exactement "${lang}".`,
-    geminiOpts(keys),
   );
   return { ...data, language: lang };
 }
@@ -592,9 +585,9 @@ export async function runDistroKid({ keys, artist, track, cover, lyrics, submit 
 }
 
 export async function runSocial({ keys, artist, track, lyrics, cover }) {
-  const apiKey = requireGemini(keys);
-  const data = await geminiJson(
-    apiKey,
+  requireTextLlm(keys);
+  const data = await llmJson(
+    keys,
     `Crée un pack de publication short vertical 9:16 pour CE MORCEAU (pas un clip générique).
 Artiste: ${promptJson(artist)}
 Morceau: ${promptJson({
@@ -624,7 +617,6 @@ Règles:
 - veoPromptHint = 1–2 phrases EN ANGLAIS : direction cinéma du clip fidèle au morceau + portrait + jaquette (énergie BPM, émotion, lieux évoqués par les paroles), cadre 9:16 plein écran sans letterbox, sans lip-sync.
 - caption/hook en français, accrocheurs, liés au titre.
 - Aucun nom de célébrité réelle.`,
-    geminiOpts(keys),
   );
 
   return {
