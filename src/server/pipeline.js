@@ -281,6 +281,42 @@ function languagePromptName(code) {
   return LANG_PROMPT[resolveLanguage(code)] || "français";
 }
 
+/** Verrou visuel sexe / présentation — évite portrait femme + bio « chanteur ». */
+function genderVisualLock(gender) {
+  const g = String(gender || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+  if (/^(female|woman|femme|f)$/.test(g)) {
+    return {
+      code: "female",
+      en: "adult woman, female singer, clearly feminine face and presentation",
+      voiceHint: "female vocals",
+    };
+  }
+  if (/^(nonbinary|non-binary|nonbinaire|nb|androgyne)$/.test(g)) {
+    return {
+      code: "nonbinary",
+      en: "androgynous adult musician, non-binary presentation, same look in every image",
+      voiceHint: "androgynous vocals",
+    };
+  }
+  return {
+    code: "male",
+    en: "adult man, male singer, clearly masculine face and presentation",
+    voiceHint: "male vocals",
+  };
+}
+
+function withGenderInPrompt(prompt, genderEn) {
+  const base = String(prompt || "").trim();
+  if (!genderEn) return base;
+  if (new RegExp(genderEn.split(",")[0], "i").test(base)) {
+    return base;
+  }
+  return `${genderEn}. ${base}`.trim();
+}
+
 export async function runArtist({ keys, name, bioHint, trends, genre, genres, language }) {
   const apiKey = requireGemini(keys);
   const lang = resolveLanguage(language);
@@ -307,11 +343,19 @@ Langue des chansons imposée: ${langName} (code ${lang}) — le catalogue et les
 Indices personnalité / univers (PAS le style musical): ${bioHint || "aucun"}
 Tendances: ${promptJson(trends || {})}
 
+IMPORTANT — SEXE / PRÉSENTATION (à ne PAS confondre avec le style musical « genre ») :
+- Choisis UN seul gender: "male" | "female" | "nonbinary".
+- Tout le profil DOIT coller : name / legalName / aka / bio / voice / look / wardrobe / portraitPrompt.
+- Si gender=male → chanteur homme, voix masculine, portrait d'un homme adulte.
+- Si gender=female → chanteuse femme, voix féminine, portrait d'une femme adulte.
+- Interdit : bio au masculin + portrait féminin (et l'inverse).
+
 JSON strict:
 {
   "name": string,
   "aka": string,
   "legalName": string,
+  "gender": "male" | "female" | "nonbinary",
   "genre": string,
   "genres": [string],
   "language": "${lang}",
@@ -332,15 +376,16 @@ JSON strict:
 }
 ${
   styleHint
-    ? `Le champ "genre" DOIT résumer ces styles: "${styleHint}". "genres" DOIT lister chaque style (${styleList.map((g) => '"' + g + '"').join(", ") || '"' + styleHint + '"'}). Affinage léger OK, pas de remplacement.`
+    ? `Le champ "genre" DOIT résumer le STYLE MUSICAL: "${styleHint}". "genres" liste chaque style (${styleList.map((g) => '"' + g + '"').join(", ") || '"' + styleHint + '"'}). Ce n'est PAS le sexe.`
     : ""
 }
 "language" doit être exactement "${lang}".
-legalName = prénom + nom de famille réalistes (obligatoire pour la distribution, ex. "Kaelen Moreau"), même si name est un mononyme.
-portraitPrompt doit décrire un portrait photo réaliste de l'artiste (âge, traits, coiffure, tenue, lumière, décor), en anglais, sans texte dans l'image.`,
+legalName = prénom + nom de famille réalistes cohérents avec gender (obligatoire pour la distribution).
+portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." ou "adult woman..." ou androgyne), puis âge, traits, coiffure, tenue, lumière, décor ; square photo ; no text in image.`,
     geminiOpts(keys),
   );
 
+  const lock = genderVisualLock(data.gender);
   const finalGenres =
     styleList.length > 0
       ? styleList
@@ -348,9 +393,10 @@ portraitPrompt doit décrire un portrait photo réaliste de l'artiste (âge, tra
         ? data.genres.map((g) => String(g).trim()).filter(Boolean)
         : [data.genre || "Pop"].filter(Boolean);
   const finalGenre = styleHint || finalGenres.join(" × ") || data.genre || "Pop";
-  const portraitPrompt =
+  const rawPortrait =
     data.visualIdentity?.portraitPrompt ||
     `Cinematic portrait of music artist ${data.name}, ${finalGenre} vibe, ${data.mood} mood, wardrobe ${data.visualIdentity?.wardrobe || "contemporary streetwear"}, ${data.visualIdentity?.photographyStyle || "film grain night portrait"}, square composition, photorealistic`;
+  const portraitPrompt = withGenderInPrompt(rawPortrait, lock.en);
 
   const portrait = await generateVisual({
     keys,
@@ -360,9 +406,11 @@ portraitPrompt doit décrire un portrait photo réaliste de l'artiste (âge, tra
 
   return {
     ...data,
+    gender: lock.code,
     genre: finalGenre,
     genres: finalGenres,
     language: lang,
+    voice: data.voice || lock.voiceHint,
     slug: slugify(data.aka || data.name || "artiste"),
     imageUrl: portrait.imageUrl,
     imageFallback: false,
@@ -370,6 +418,10 @@ portraitPrompt doit décrire un portrait photo réaliste de l'artiste (âge, tra
     imageProvider: portrait.provider,
     localAsset: false,
     portraitPrompt,
+    visualIdentity: {
+      ...(data.visualIdentity || {}),
+      genderLock: lock.en,
+    },
   };
 }
 
@@ -404,10 +456,12 @@ Le champ text doit contenir les tags MiniMax en anglais: [Verse], [Chorus], [Ver
 export async function runTrack({ keys, lyrics, artist }) {
   const lang = resolveLanguage(lyrics?.language, artist);
   const langName = languagePromptName(lang);
+  const genderLock = genderVisualLock(artist?.gender);
   const prompt = [
     `${artist?.genre || "pop"}`,
     `${artist?.mood || "emotional"} mood`,
-    `${artist?.voice || "modern vocals"}`,
+    `${artist?.voice || genderLock.voiceHint}`,
+    genderLock.voiceHint,
     `vocals and lyrics in ${langName}`,
     "contemporary production, radio-ready, emotional hook",
   ].join(", ");
@@ -471,15 +525,18 @@ export async function runCover({ keys, prompt, artist, track }) {
     );
   }
 
+  const genderLock =
+    artist?.visualIdentity?.genderLock || genderVisualLock(artist?.gender).en;
   const visual =
     prompt?.trim() ||
     [
       `Album cover for "${track?.title || "Single"}" by ${artist?.name || "artist"}`,
+      genderLock,
       `mood ${artist?.visualIdentity?.look || artist?.mood || "nocturne"}`,
       `wardrobe ${artist?.visualIdentity?.wardrobe || "contemporary"}`,
       `${artist?.genre || "pop"} aesthetic`,
       `palette ${artist?.palette?.join(", ") || "brass and moss"}`,
-      "cinematic square composition, keep the same artist face from the reference photo",
+      "cinematic square composition, SAME PERSON and SAME GENDER as the reference portrait photo, do not change sex or age",
     ].join(", ");
 
   const image = await generateVisual({
