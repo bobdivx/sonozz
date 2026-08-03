@@ -19,11 +19,12 @@ const NAV = [
 ];
 
 /**
- * Shell app avec sidebar gauche (Studio / Artistes / Play / Paramètres).
+ * Shell app avec sidebar (si connecté) ou bandeau logo public (écoute /play).
  * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres', children: any, title?: string, subtitle?: string }} props
  */
 export default function AppShell({ active, children, title, subtitle }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  // false jusqu’à confirmation — évite d’afficher la nav studio aux visiteurs
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
@@ -40,6 +41,44 @@ export default function AppShell({ active, children, title, subtitle }) {
       /* ignore */
     }
     location.assign("/login");
+  }
+
+  if (!authed) {
+    return (
+      <div class="min-h-screen">
+        <header class="sticky top-0 z-30 border-b border-base-content/10 bg-base-200/90 backdrop-blur">
+          <div class="mx-auto flex max-w-4xl items-center gap-3 px-4 py-3 sm:px-6">
+            <a href="/play" class="inline-flex items-center gap-3" aria-label="SONOZZ — Play">
+              <img
+                src="/logo.png"
+                alt="SONOZZ"
+                class="h-10 w-10 rounded-xl object-cover shadow-md shadow-black/30 sm:h-11 sm:w-11"
+                width="44"
+                height="44"
+              />
+              <span class="font-display text-lg font-bold tracking-tight text-base-content sm:text-xl">
+                SONOZZ
+              </span>
+            </a>
+          </div>
+        </header>
+
+        {(title || subtitle) && (
+          <div class="mx-auto max-w-4xl border-b border-base-content/10 px-4 py-4 sm:px-6 sm:py-6">
+            {title && (
+              <h1 class="font-display text-2xl font-extrabold tracking-tight sm:text-3xl">
+                {title}
+              </h1>
+            )}
+            {subtitle && (
+              <p class="mt-1 max-w-2xl text-sm text-base-content/60">{subtitle}</p>
+            )}
+          </div>
+        )}
+
+        <div class="mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6">{children}</div>
+      </div>
+    );
   }
 
   return (
@@ -116,15 +155,13 @@ export default function AppShell({ active, children, title, subtitle }) {
           <a href="/legal/terms" class="flex items-center gap-2 px-3 py-1.5 hover:text-base-content">
             <Scale size={12} /> Conditions
           </a>
-          {authed && (
-            <button
-              type="button"
-              class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:text-base-content"
-              onClick={logout}
-            >
-              <LogOut size={12} /> Déconnexion
-            </button>
-          )}
+          <button
+            type="button"
+            class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:text-base-content"
+            onClick={logout}
+          >
+            <LogOut size={12} /> Déconnexion
+          </button>
         </div>
       </aside>
 
