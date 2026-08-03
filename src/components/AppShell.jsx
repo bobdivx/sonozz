@@ -6,24 +6,26 @@ import {
   Menu,
   X,
   Scale,
+  Headphones,
 } from "lucide-preact";
+import JobsDock from "./JobsDock.jsx";
 
 const NAV = [
   { href: "/", id: "studio", label: "Studio", icon: Waves },
   { href: "/artistes", id: "artistes", label: "Artistes", icon: UserRound },
+  { href: "/play", id: "play", label: "Play", icon: Headphones },
   { href: "/parametres", id: "parametres", label: "Paramètres", icon: Settings2 },
 ];
 
 /**
- * Shell app avec sidebar gauche (Studio / Artistes / Paramètres).
- * @param {{ active: 'studio' | 'artistes' | 'parametres', children: any, title?: string, subtitle?: string }} props
+ * Shell app avec sidebar gauche (Studio / Artistes / Play / Paramètres).
+ * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres', children: any, title?: string, subtitle?: string }} props
  */
 export default function AppShell({ active, children, title, subtitle }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
     <div class="min-h-screen md:flex">
-      {/* Mobile top bar */}
       <div class="sticky top-0 z-30 flex items-center justify-between border-b border-base-content/10 bg-base-200/90 px-4 py-3 backdrop-blur md:hidden">
         <a href="/" class="inline-flex items-center" aria-label="SONOZZ — Accueil">
           <img src="/logo.png" alt="SONOZZ" class="h-9 w-9 rounded-lg object-cover" width="36" height="36" />
@@ -63,7 +65,7 @@ export default function AppShell({ active, children, title, subtitle }) {
           </a>
         </div>
 
-        <nav class="flex flex-1 flex-col gap-1 p-3" aria-label="Navigation principale">
+        <nav class="flex flex-col gap-1 p-3" aria-label="Navigation principale">
           {NAV.map((item) => {
             const Icon = item.icon;
             const isActive = active === item.id;
@@ -84,6 +86,10 @@ export default function AppShell({ active, children, title, subtitle }) {
             );
           })}
         </nav>
+
+        <div class="min-h-0 flex-1 overflow-y-auto">
+          <JobsDock />
+        </div>
 
         <div class="border-t border-base-content/10 p-3 text-xs text-base-content/45">
           <a href="/legal/privacy" class="flex items-center gap-2 px-3 py-1.5 hover:text-base-content">

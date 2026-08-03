@@ -1,5 +1,5 @@
 import { json, error, readBody } from "../../server/http.js";
-import { geminiText } from "../../server/gemini.js";
+import { geminiText, resolveGeminiTextModel } from "../../server/gemini.js";
 import { fetchDeezerCharts } from "../../server/deezer.js";
 import { getSpotifyAccess } from "../../server/spotify.js";
 import { onceCredits, onceMe } from "../../server/once.js";
@@ -20,7 +20,7 @@ export async function POST({ request }) {
 
     if (keys.geminiApiKey?.trim()) {
       try {
-        const model = keys.geminiModel?.trim() || "gemini-2.5-flash-lite";
+        const model = resolveGeminiTextModel(keys.geminiModel);
         const key = keys.geminiApiKey.trim();
         await geminiText(key, 'Réponds uniquement: "ok"', { model });
 

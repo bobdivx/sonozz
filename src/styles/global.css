@@ -120,3 +120,38 @@ main {
 .progress-fill {
   animation: bar-sweep 0.6s ease-out both;
 }
+
+@keyframes pipeline-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.pipeline-indeterminate {
+  animation: pipeline-indeterminate 1.35s ease-in-out infinite;
+}
+
+.pipeline-progress-glow {
+  box-shadow: 0 0 12px color-mix(in oklab, var(--p, #c9a227) 45%, transparent);
+}
+
+@keyframes cover-glow {
+  0%,
+  100% {
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  }
+  50% {
+    box-shadow: 0 28px 56px rgba(201, 162, 39, 0.18);
+  }
+}
+
+.play-cover-playing {
+  animation: cover-glow 3.2s ease-in-out infinite;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}

@@ -6,6 +6,7 @@ export const prerender = false;
 export async function GET({ url }) {
   try {
     const forceSync = new URL(url).searchParams.get("sync") === "1";
+    // Sync forcé seulement si demandé ; sinon auto-sync uniquement table vide (dans listArtists)
     if (forceSync) {
       await syncArtistsFromProjects();
     }

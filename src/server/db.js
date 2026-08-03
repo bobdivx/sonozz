@@ -3,17 +3,19 @@ import { createClient } from "@libsql/client";
 let client;
 let ready;
 
-function getEnv(name) {
-  const fromImport = typeof import.meta !== "undefined" ? import.meta.env?.[name] : "";
-  const fromProcess = typeof process !== "undefined" ? process.env?.[name] : "";
-  return String(fromImport || fromProcess || "").trim();
+function getTursoEnv() {
+  const meta = import.meta.env || {};
+  const proc = typeof process !== "undefined" ? process.env || {} : {};
+  return {
+    url: String(meta.TURSO_DATABASE_URL || proc.TURSO_DATABASE_URL || "").trim(),
+    authToken: String(meta.TURSO_AUTH_TOKEN || proc.TURSO_AUTH_TOKEN || "").trim(),
+  };
 }
 
 export function getDb() {
   if (client) return client;
 
-  const url = getEnv("TURSO_DATABASE_URL");
-  const authToken = getEnv("TURSO_AUTH_TOKEN");
+  const { url, authToken } = getTursoEnv();
 
   if (!url || !authToken) {
     throw new Error(
@@ -78,7 +80,13 @@ function summarize(project = {}, seed = {}) {
 
   let status = "draft";
   if (project.social?.publishedAt || project.social?.publish) status = "published";
-  else if (project.clip?.videoBase64 || project.clip?.videoUrl) status = "clip";
+  else if (
+    project.clip?.videoBase64 ||
+    project.clip?.videoUrl ||
+    (Array.isArray(project.clips) &&
+      project.clips.some((c) => c?.videoUrl || c?.s3Key || c?.storedRemote || c?.storedLocally))
+  )
+    status = "clip";
   else if (project.social) status = "shorts";
   else if (project.distrokid) status = "distribution";
   else if (project.cover) status = "cover";
@@ -142,7 +150,7 @@ export async function getProject(id) {
     trackTitle: row.track_title,
     status: row.status,
     seed: row.seed_json ? JSON.parse(row.seed_json) : {},
-    project: JSON.parse(row.project_json),
+    project: stripHeavyProjectPayload(JSON.parse(row.project_json)),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     events: events.rows.map((e) => ({
@@ -156,11 +164,57 @@ export async function getProject(id) {
   };
 }
 
+function stripHeavyProjectPayload(project = {}) {
+  if (!project || typeof project !== "object") return project;
+  const next = { ...project };
+
+  if (next.clip && typeof next.clip === "object") {
+    const { videoBase64, videoUrl, ...meta } = next.clip;
+    const remote = typeof videoUrl === "string" && /^https?:\/\//i.test(videoUrl) ? videoUrl : undefined;
+    next.clip = {
+      ...meta,
+      videoUrl: remote,
+      videoBase64: undefined,
+      storedRemote: Boolean(remote || meta.s3Key || meta.storedRemote),
+      storedLocally: Boolean(meta.storedLocally && !remote),
+    };
+  }
+
+  if (Array.isArray(next.clips)) {
+    next.clips = next.clips.map((c) => {
+      if (!c || typeof c !== "object") return c;
+      const { videoBase64, videoUrl, ...meta } = c;
+      const remote =
+        typeof videoUrl === "string" && /^https?:\/\//i.test(videoUrl) ? videoUrl : undefined;
+      return {
+        ...meta,
+        videoUrl: remote,
+        videoBase64: undefined,
+        storedRemote: Boolean(remote || meta.s3Key || meta.storedRemote),
+        storedLocally: Boolean(meta.storedLocally && !remote),
+      };
+    });
+  }
+
+  const audio = next.track?.audioUrl;
+  if (typeof audio === "string" && audio.startsWith("data:") && audio.length > 500_000) {
+    next.track = {
+      ...next.track,
+      audioUrl: null,
+      localAsset: true,
+      assetMissingReason: "audio-data-stripped",
+    };
+  }
+
+  return next;
+}
+
 export async function saveProject({ id, project, seed = {}, event } = {}) {
   await ensureSchema();
   const db = getDb();
   const now = new Date().toISOString();
-  const summary = summarize(project, seed);
+  const lightProject = stripHeavyProjectPayload(project || {});
+  const summary = summarize(lightProject, seed);
   const projectId = id || uid("proj");
 
   const existing = await db.execute({
@@ -182,7 +236,7 @@ export async function saveProject({ id, project, seed = {}, event } = {}) {
         summary.trackTitle,
         summary.status,
         JSON.stringify(seed || {}),
-        JSON.stringify(project || {}),
+        JSON.stringify(lightProject),
         now,
         projectId,
       ],
@@ -201,7 +255,7 @@ export async function saveProject({ id, project, seed = {}, event } = {}) {
         summary.trackTitle,
         summary.status,
         JSON.stringify(seed || {}),
-        JSON.stringify(project || {}),
+        JSON.stringify(lightProject),
         now,
         now,
       ],
@@ -248,9 +302,10 @@ export async function testDb() {
   await ensureSchema();
   const db = getDb();
   const res = await db.execute(`SELECT COUNT(*) AS c FROM projects`);
+  const { url } = getTursoEnv();
   return {
     ok: true,
     projects: Number(res.rows[0]?.c || 0),
-    url: getEnv("TURSO_DATABASE_URL"),
+    url,
   };
 }

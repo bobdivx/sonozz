@@ -7,23 +7,37 @@ function displayScore(score) {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-export default function TrendsStep({ trends, loading, onAnalyze }) {
+export default function TrendsStep({ trends, artist, loading, onAnalyze }) {
+  const hasArtist = Boolean(artist?.name);
+  const artistName = artist?.name;
+
   return (
     <section class="animate-rise space-y-6">
       <header class="space-y-2">
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Déterminer les tendances</h2>
         <p class="max-w-xl text-base-content/70">
-          Charts Deezer en live + analyse Gemini (+ Spotify si configuré).
+          {hasArtist
+            ? `Positionnement de ${artistName} face aux charts Deezer + analyse Gemini (+ stats catalogue / Spotify si dispo).`
+            : "Charts Deezer en live + analyse Gemini (+ Spotify si configuré)."}
         </p>
       </header>
 
       <button class="btn btn-primary gap-2" onClick={onAnalyze} disabled={loading}>
         {loading ? <span class="loading loading-spinner loading-sm" /> : <TrendingUp size={18} />}
-        {loading ? "Analyse en cours…" : "Lancer l'analyse du marché"}
+        {loading
+          ? "Analyse en cours…"
+          : hasArtist
+            ? `Analyser le marché pour ${artistName}`
+            : "Lancer l'analyse du marché"}
       </button>
 
       {trends && (
         <div class="space-y-5 animate-rise">
+          {trends.forArtist?.name && (
+            <p class="text-xs uppercase tracking-wider text-base-content/45">
+              Analyse pour {trends.forArtist.name}
+            </p>
+          )}
           <p class="text-sm text-primary/90">{trends.opportunity}</p>
 
           <ul class="space-y-3">
@@ -44,7 +58,18 @@ export default function TrendsStep({ trends, loading, onAnalyze }) {
             })}
           </ul>
 
-          {trends.charts?.topTracks?.length > 0 && (
+          {!hasArtist && trends.audience && (
+            <div class="flex flex-wrap gap-4 text-sm text-base-content/75">
+              <span class="inline-flex items-center gap-2">
+                <Users size={16} class="text-secondary" /> {trends.audience.age} · {trends.audience.listening}
+              </span>
+              <span class="inline-flex items-center gap-2">
+                <Sparkles size={16} class="text-accent" /> {(trends.audience.platforms || []).join(" · ")}
+              </span>
+            </div>
+          )}
+
+          {!hasArtist && trends.charts?.topTracks?.length > 0 && (
             <div>
               <h3 class="mb-2 font-display text-sm font-semibold uppercase tracking-wider text-base-content/45">
                 Top Deezer
@@ -56,17 +81,6 @@ export default function TrendsStep({ trends, loading, onAnalyze }) {
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
-
-          {trends.audience && (
-            <div class="flex flex-wrap gap-4 text-sm text-base-content/75">
-              <span class="inline-flex items-center gap-2">
-                <Users size={16} class="text-secondary" /> {trends.audience.age} · {trends.audience.listening}
-              </span>
-              <span class="inline-flex items-center gap-2">
-                <Sparkles size={16} class="text-accent" /> {(trends.audience.platforms || []).join(" · ")}
-              </span>
             </div>
           )}
         </div>

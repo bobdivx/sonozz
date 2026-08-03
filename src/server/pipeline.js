@@ -1,11 +1,11 @@
-import { geminiJson } from "./gemini.js";
+import { geminiJson, resolveGeminiTextModel } from "./gemini.js";
 import { generateVisual } from "./images.js";
 import { fetchDeezerCharts } from "./deezer.js";
 import { prepareSpotifyRelease, getSpotifyAccess, spotifySearchContext } from "./spotify.js";
 import { submitOnceRelease } from "./once.js";
 import { generateMusicWithReplicate } from "./replicate.js";
 import { isUsableRasterImage } from "./imagePersist.js";
-import { slugify } from "./artists.js";
+import { slugify, getArtistBySlug } from "./artists.js";
 import { requireGemini } from "./http.js";
 
 function waveform() {
@@ -13,7 +13,7 @@ function waveform() {
 }
 
 function geminiOpts(keys) {
-  return { model: keys?.geminiModel?.trim() || "gemini-2.5-flash-lite" };
+  return { model: resolveGeminiTextModel(keys?.geminiModel) };
 }
 
 /** Gemini renvoie parfois un score 0–1 ; l'UI attend un pourcentage 0–100. */
@@ -98,24 +98,136 @@ function slimCharts(charts) {
   };
 }
 
-export async function runTrends({ keys, market = "FR" }) {
+function slimArtistForTrends(artist) {
+  if (!artist || typeof artist !== "object") return null;
+  return {
+    name: artist.name || null,
+    aka: artist.aka || null,
+    genre: artist.genre || null,
+    mood: artist.mood || null,
+    city: artist.city || null,
+    bio: artist.bio || null,
+    voice: artist.voice || null,
+    influences: artist.influences || null,
+    targetPersona: artist.targetPersona || null,
+  };
+}
+
+function slimStatsForTrends(stats) {
+  if (!stats || typeof stats !== "object") return null;
+  return {
+    tracks: stats.tracks ?? null,
+    distributed: stats.distributed ?? null,
+    liveOnSpotify: stats.liveOnSpotify ?? null,
+    streamsNote: stats.streamsNote || null,
+    streams: stats.streams
+      ? {
+          totalStreams: stats.streams.totalStreams ?? null,
+          periodChangePct: stats.streams.periodChangePct ?? null,
+          topStore: stats.streams.topStore || null,
+        }
+      : null,
+    releases: Array.isArray(stats.releases)
+      ? stats.releases.slice(0, 8).map((r) => ({
+          title: r.title || null,
+          status: r.status || null,
+          streams: r.streams?.totalStreams ?? null,
+        }))
+      : null,
+  };
+}
+
+function spotifyQueryForArtist(artist, market) {
+  const year = new Date().getFullYear();
+  const genre = String(artist?.genre || "")
+    .split(/[,/&]+/)[0]
+    ?.trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .slice(0, 40);
+  if (genre) return `${genre} year:${year - 1}-${year}`;
+  return `genre:pop year:${year - 1}-${year} market:${market || "FR"}`;
+}
+
+export async function runTrends({ keys, market = "FR", artist = null, stats = null, artistSlug = null }) {
   const apiKey = requireGemini(keys);
   const charts = await fetchDeezerCharts();
+
+  let resolvedArtist = slimArtistForTrends(artist);
+  let resolvedStats = slimStatsForTrends(stats);
+
+  const slug = artistSlug || artist?.slug;
+  if (slug && (!resolvedArtist?.name || !resolvedStats)) {
+    try {
+      const row = await getArtistBySlug(slug);
+      if (row) {
+        if (!resolvedArtist?.name) {
+          resolvedArtist = slimArtistForTrends({ ...row.profile, name: row.name, slug: row.slug });
+        }
+        if (!resolvedStats) resolvedStats = slimStatsForTrends(row.stats);
+      }
+    } catch {
+      /* optional */
+    }
+  }
+
+  const forExistingArtist = Boolean(resolvedArtist?.name);
 
   let spotifyHints = [];
   try {
     const access = await getSpotifyAccess(keys);
     if (access) {
-      const search = await spotifySearchContext(access.token, `genre:pop year:2024-${new Date().getFullYear()}`);
+      const query = forExistingArtist
+        ? spotifyQueryForArtist(resolvedArtist, market)
+        : `genre:pop year:2024-${new Date().getFullYear()}`;
+      const search = await spotifySearchContext(access.token, query);
       spotifyHints = (search?.tracks?.items || []).slice(0, 5).map((t) => `${t.name} — ${t.artists?.[0]?.name}`);
     }
   } catch {
     /* optional */
   }
 
-  const analysis = await geminiJson(
-    apiKey,
-    `Tu es un A&R musical expert marché ${market}.
+  const baseJsonShape = `{
+  "rising": [{"tag": string, "score": number, "note": string}],
+  "audience": {"age": string, "platforms": string[], "listening": string},
+  "opportunity": string,
+  "mood": string,
+  "genre": string,
+  "hooks": string[]
+}`;
+
+  const risingRules = `Règles pour "rising":
+- 3 à 5 tendances concrètes (genres / sons / formats / angles de single).
+- "score" = force relative de l'opportunité sur une échelle ENTIÈRE de 0 à 100 (jamais une fraction 0–1).
+- Les scores doivent refléter la conviction A&R : clairement soutenu ≥ 60, intéressant 40–59, faible < 40.
+- Au moins une tendance doit avoir un score ≥ 65 si les charts le permettent.`;
+
+  const prompt = forExistingArtist
+    ? `Tu es un A&R musical expert marché ${market}.
+L'artiste ci-dessous EXISTE déjà. Ne propose PAS un nouvel artiste fictionnel.
+Analyse les charts Deezer et indices Spotify pour positionner CET artiste : quelles tendances du marché il peut rider, quels angles de prochain single, comment ses stats catalogue éclairent l'opportunité.
+
+ARTISTE:
+${promptJson(resolvedArtist)}
+
+STATS CATALOGUE (streams ONCE / livraisons, si dispo):
+${promptJson(resolvedStats || {})}
+
+CHARTS DEEZER:
+${promptJson(slimCharts(charts))}
+
+SPOTIFY HINTS (proche du genre de l'artiste):
+${promptJson(spotifyHints)}
+
+Réponds en JSON strict:
+${baseJsonShape}
+
+"opportunity" = 1–3 phrases : positionnement de cet artiste face au marché actuel (pas une invention d'artiste).
+"genre" et "mood" = affinage pour le prochain release de CET artiste (reste cohérent avec son identité).
+"hooks" = angles / accroches de single adaptés à cet artiste + aux charts.
+"rising" = tendances du marché que CET artiste peut exploiter (cite le lien avec son genre / ses stats dans "note").
+${risingRules}`
+    : `Tu es un A&R musical expert marché ${market}.
 Analyse ces charts Deezer et indices Spotify pour proposer une opportunité d'artiste fictionnel réaliste.
 
 CHARTS DEEZER:
@@ -125,26 +237,22 @@ SPOTIFY HINTS:
 ${promptJson(spotifyHints)}
 
 Réponds en JSON strict:
-{
-  "rising": [{"tag": string, "score": number, "note": string}],
-  "audience": {"age": string, "platforms": string[], "listening": string},
-  "opportunity": string,
-  "mood": string,
-  "genre": string,
-  "hooks": string[]
-}
+${baseJsonShape}
 
-Règles pour "rising":
-- 3 à 5 tendances concrètes (genres / sons / formats) détectables dans les charts.
-- "score" = force relative de l'opportunité sur une échelle ENTIÈRE de 0 à 100 (jamais une fraction 0–1).
-- Les scores doivent refléter la conviction A&R : une tendance clairement soutenue par les charts ≥ 60, une piste intéressante 40–59, une intuition faible < 40.
-- Au moins une tendance doit avoir un score ≥ 65 si les charts le permettent.`,
-    geminiOpts(keys),
-  );
+${risingRules}`;
+
+  const analysis = await geminiJson(apiKey, prompt, geminiOpts(keys));
 
   return {
     analyzedAt: new Date().toISOString(),
-    source: { deezer: true, spotify: spotifyHints.length > 0 },
+    source: {
+      deezer: true,
+      spotify: spotifyHints.length > 0,
+      artist: forExistingArtist,
+    },
+    forArtist: forExistingArtist
+      ? { name: resolvedArtist.name, slug: slug || null }
+      : null,
     charts: {
       topTracks: charts.tracks.slice(0, 6),
       topArtists: charts.artists.slice(0, 5),
@@ -154,14 +262,49 @@ Règles pour "rising":
   };
 }
 
-export async function runArtist({ keys, name, bioHint, trends }) {
+const LANG_PROMPT = {
+  fr: "français",
+  en: "anglais (English)",
+  es: "espagnol",
+  pt: "portugais",
+  it: "italien",
+  de: "allemand",
+  ar: "arabe",
+};
+
+function resolveLanguage(code, artist) {
+  const raw = (code || artist?.language || "fr").toString().toLowerCase().slice(0, 2);
+  return LANG_PROMPT[raw] ? raw : "fr";
+}
+
+function languagePromptName(code) {
+  return LANG_PROMPT[resolveLanguage(code)] || "français";
+}
+
+export async function runArtist({ keys, name, bioHint, trends, genre, genres, language }) {
   const apiKey = requireGemini(keys);
+  const lang = resolveLanguage(language);
+  const langName = languagePromptName(lang);
+  const styleList = Array.isArray(genres)
+    ? genres.map((g) => String(g || "").trim()).filter(Boolean)
+    : String(genre || "")
+        .split(/\s*[×xX|/]\s*|\s*,\s*/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+  const styleHint = styleList.join(" × ") || String(genre || "").trim();
+  const stylePrompt = styleList.length
+    ? styleList.length === 1
+      ? styleList[0]
+      : `fusion / croisement de: ${styleList.join(" + ")} (garde une identité cohérente, pas un collage arbitraire)`
+    : "";
   const data = await geminiJson(
     apiKey,
-    `Crée un profil d'artiste musical fictionnel mais ultra-réaliste (marché francophone),
+    `Crée un profil d'artiste musical fictionnel mais ultra-réaliste,
 avec une identité visuelle cohérente (look, style photo, wardrobe).
-Nom suggéré: ${name || "génère un nom crédible"}
-Indices bio: ${bioHint || "aucun"}
+Nom suggéré: ${name || "génère un nom crédible adapté au marché"}
+Style(s) musical(aux) imposé(s): ${stylePrompt || "choisis un style cohérent avec les tendances (explicite et précis)"}
+Langue des chansons imposée: ${langName} (code ${lang}) — le catalogue et les paroles seront dans cette langue.
+Indices personnalité / univers (PAS le style musical): ${bioHint || "aucun"}
 Tendances: ${promptJson(trends || {})}
 
 JSON strict:
@@ -170,6 +313,8 @@ JSON strict:
   "aka": string,
   "legalName": string,
   "genre": string,
+  "genres": [string],
+  "language": "${lang}",
   "mood": string,
   "city": string,
   "bio": string,
@@ -185,14 +330,27 @@ JSON strict:
     "portraitPrompt": string
   }
 }
+${
+  styleHint
+    ? `Le champ "genre" DOIT résumer ces styles: "${styleHint}". "genres" DOIT lister chaque style (${styleList.map((g) => '"' + g + '"').join(", ") || '"' + styleHint + '"'}). Affinage léger OK, pas de remplacement.`
+    : ""
+}
+"language" doit être exactement "${lang}".
 legalName = prénom + nom de famille réalistes (obligatoire pour la distribution, ex. "Kaelen Moreau"), même si name est un mononyme.
 portraitPrompt doit décrire un portrait photo réaliste de l'artiste (âge, traits, coiffure, tenue, lumière, décor), en anglais, sans texte dans l'image.`,
     geminiOpts(keys),
   );
 
+  const finalGenres =
+    styleList.length > 0
+      ? styleList
+      : Array.isArray(data.genres) && data.genres.length
+        ? data.genres.map((g) => String(g).trim()).filter(Boolean)
+        : [data.genre || "Pop"].filter(Boolean);
+  const finalGenre = styleHint || finalGenres.join(" × ") || data.genre || "Pop";
   const portraitPrompt =
     data.visualIdentity?.portraitPrompt ||
-    `Cinematic portrait of French music artist ${data.name}, ${data.genre} vibe, ${data.mood} mood, wardrobe ${data.visualIdentity?.wardrobe || "contemporary streetwear"}, ${data.visualIdentity?.photographyStyle || "film grain night portrait"}, square composition, photorealistic`;
+    `Cinematic portrait of music artist ${data.name}, ${finalGenre} vibe, ${data.mood} mood, wardrobe ${data.visualIdentity?.wardrobe || "contemporary streetwear"}, ${data.visualIdentity?.photographyStyle || "film grain night portrait"}, square composition, photorealistic`;
 
   const portrait = await generateVisual({
     keys,
@@ -202,6 +360,9 @@ portraitPrompt doit décrire un portrait photo réaliste de l'artiste (âge, tra
 
   return {
     ...data,
+    genre: finalGenre,
+    genres: finalGenres,
+    language: lang,
     slug: slugify(data.aka || data.name || "artiste"),
     imageUrl: portrait.imageUrl,
     imageFallback: false,
@@ -212,12 +373,16 @@ portraitPrompt doit décrire un portrait photo réaliste de l'artiste (âge, tra
   };
 }
 
-export async function runLyrics({ keys, theme, artist, trends }) {
+export async function runLyrics({ keys, theme, artist, trends, language }) {
   const apiKey = requireGemini(keys);
+  const lang = resolveLanguage(language, artist);
+  const langName = languagePromptName(lang);
   const data = await geminiJson(
     apiKey,
-    `Écris des paroles de chanson originales en français pour cet artiste.
+    `Écris des paroles de chanson originales en ${langName} pour cet artiste.
 Artiste: ${promptJson(artist)}
+Style musical: ${artist?.genre || "pop contemporain"}
+Langue obligatoire des paroles: ${langName} (code ${lang}) — aucune autre langue dans le chant.
 Thème/titre: ${theme || "inspire-toi des tendances"}
 Tendances: ${promptJson(trends || {})}
 
@@ -225,22 +390,26 @@ JSON strict:
 {
   "title": string,
   "theme": string,
-  "language": "fr",
+  "language": "${lang}",
   "structure": string[],
   "text": string
 }
-Le champ text doit contenir les tags MiniMax en anglais: [Verse], [Chorus], [Verse], [Bridge], [Chorus], [Outro] avec de vraies paroles françaises sous chaque tag.`,
+Le champ text doit contenir les tags MiniMax en anglais: [Verse], [Chorus], [Verse], [Bridge], [Chorus], [Outro] avec de vraies paroles en ${langName} sous chaque tag.
+"language" doit être exactement "${lang}".`,
     geminiOpts(keys),
   );
-  return data;
+  return { ...data, language: lang };
 }
 
 export async function runTrack({ keys, lyrics, artist }) {
+  const lang = resolveLanguage(lyrics?.language, artist);
+  const langName = languagePromptName(lang);
   const prompt = [
     `${artist?.genre || "pop"}`,
     `${artist?.mood || "emotional"} mood`,
     `${artist?.voice || "modern vocals"}`,
-    "French contemporary production, radio-ready, emotional hook",
+    `vocals and lyrics in ${langName}`,
+    "contemporary production, radio-ready, emotional hook",
   ].join(", ");
 
   let audioUrl = null;
@@ -278,6 +447,7 @@ ${lyrics?.text || ""}
     key: ["Am", "Dm", "Em", "F", "Gm", "C"][Math.floor(Math.random() * 6)],
     duration: audioUrl ? durationLabel : "3:24",
     style: artist?.genre || "Pop",
+    mood: artist?.mood || "emotional",
     status: audioUrl ? "audio-ready" : "prompt-ready",
     waveform: waveform(),
     audioUrl,
@@ -368,11 +538,17 @@ export async function runSocial({ keys, artist, track, lyrics, cover }) {
   const apiKey = requireGemini(keys);
   const data = await geminiJson(
     apiKey,
-    `Crée un pack de publication short vertical 9:16 pour cet artiste.
+    `Crée un pack de publication short vertical 9:16 pour CE MORCEAU (pas un clip générique).
 Artiste: ${promptJson(artist)}
-Titre: ${track?.title || ""}
+Morceau: ${promptJson({
+      title: track?.title,
+      style: track?.style,
+      bpm: track?.bpm,
+      key: track?.key,
+      mood: track?.mood || artist?.mood,
+    })}
 Jaquette / univers: ${promptJson({ prompt: cover?.prompt, style: cover?.style })}
-Extrait paroles: ${(lyrics?.text || "").slice(0, 500)}
+Paroles (source narrative du clip): ${(lyrics?.text || "").slice(0, 900)}
 
 JSON strict:
 {
@@ -386,8 +562,11 @@ JSON strict:
   "veoPromptHint": string,
   "status": "ready-for-veo"
 }
-veoPromptHint = 1 phrase en anglais décrivant le clip cinéma fidèle au portrait + jaquette.
-scenes = 3 battements visuels cohérents avec le look de l'artiste.`,
+Règles:
+- scenes = 3 battements VISUELS en anglais qui illustrent les paroles / le thème du titre (métaphores → images), pas juste le look artiste. Préférer plans larges/moyens, silhouette, mains, décor — éviter gros plans bouche / lip-sync.
+- veoPromptHint = 1–2 phrases EN ANGLAIS : direction cinéma du clip fidèle au morceau + portrait + jaquette (énergie BPM, émotion, lieux évoqués par les paroles), cadre 9:16 plein écran sans letterbox, sans lip-sync.
+- caption/hook en français, accrocheurs, liés au titre.
+- Aucun nom de célébrité réelle.`,
     geminiOpts(keys),
   );
 
@@ -401,18 +580,39 @@ scenes = 3 battements visuels cohérents avec le look de l'artiste.`,
   };
 }
 
-export async function runFullPipeline({ keys, name, bioHint, theme, market }) {
+/** Étapes du pipeline A→Z (ordre d’exécution). */
+export const PIPELINE_STEPS = [
+  { key: "trends", label: "Tendances", message: "Analyse Deezer + Gemini…" },
+  { key: "artist", label: "Artiste", message: "Génération profil artiste…" },
+  { key: "lyrics", label: "Paroles", message: "Écriture des paroles…" },
+  { key: "track", label: "Morceau", message: "Création morceau / brief audio…" },
+  { key: "cover", label: "Jaquette", message: "Génération jaquette…" },
+  { key: "distrokid", label: "ONCE", message: "Soumission ONCE → Spotify…" },
+  { key: "social", label: "Réseaux", message: "Pack shorts réseaux…" },
+  { key: "done", label: "Terminé", message: "Pipeline terminé" },
+];
+
+export async function runFullPipeline({ keys, name, bioHint, theme, market, genre, genres, language, onProgress }) {
   const log = [];
-  const push = (step, message) => log.push({ step, message, at: new Date().toISOString() });
+  const total = PIPELINE_STEPS.length;
+  const push = (step, message) => {
+    const entry = { step, message, at: new Date().toISOString() };
+    log.push(entry);
+    const index = Math.max(
+      0,
+      PIPELINE_STEPS.findIndex((s) => s.key === step),
+    );
+    onProgress?.({ ...entry, index, total });
+  };
 
   push("trends", "Analyse Deezer + Gemini…");
   const trends = await runTrends({ keys, market });
 
   push("artist", "Génération profil artiste…");
-  const artist = await runArtist({ keys, name, bioHint, trends });
+  const artist = await runArtist({ keys, name, bioHint, trends, genre, genres, language });
 
   push("lyrics", "Écriture des paroles…");
-  const lyrics = await runLyrics({ keys, theme, artist, trends });
+  const lyrics = await runLyrics({ keys, theme, artist, trends, language: language || artist.language });
 
   push("track", "Création morceau / brief audio…");
   const track = await runTrack({ keys, lyrics, artist });

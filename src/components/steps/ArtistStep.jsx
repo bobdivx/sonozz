@@ -1,22 +1,82 @@
-import { useState } from "preact/hooks";
-import { UserRound, MapPin, Mic2, Palette, Camera, Shirt } from "lucide-preact";
+import { useEffect, useState } from "preact/hooks";
+import { UserRound, MapPin, Mic2, Palette, Camera, Shirt, Music2, Languages } from "lucide-preact";
+import {
+  MUSIC_LANGUAGES,
+  MUSIC_STYLES,
+  formatGenres,
+  languageLabel,
+  parseGenres,
+} from "../../lib/studio.js";
 
 export default function ArtistStep({ artist, trends, loading, onGenerate }) {
   const [name, setName] = useState(artist?.name || "");
+  const [genres, setGenres] = useState(() => parseGenres(artist?.genres || artist?.genre));
+  const [customGenre, setCustomGenre] = useState("");
+  const [showCustom, setShowCustom] = useState(false);
+  const [language, setLanguage] = useState(artist?.language || "fr");
   const [bioHint, setBioHint] = useState("");
 
+  useEffect(() => {
+    if (!artist) return;
+    setName(artist.name || "");
+    const parsed = parseGenres(artist.genres || artist.genre);
+    const presetValues = new Set(MUSIC_STYLES.map((s) => s.value).filter(Boolean));
+    const known = parsed.filter((g) => presetValues.has(g));
+    const unknown = parsed.filter((g) => !presetValues.has(g));
+    setGenres(known);
+    if (unknown.length) {
+      setShowCustom(true);
+      setCustomGenre(unknown.join(" × "));
+    } else {
+      setShowCustom(false);
+      setCustomGenre("");
+    }
+    if (artist.language) setLanguage(artist.language);
+  }, [artist?.name, artist?.genre, artist?.genres, artist?.language]);
+
+  function toggleStyle(value) {
+    if (!value) {
+      // « Au choix de l'IA » : vide la sélection
+      setGenres([]);
+      setShowCustom(false);
+      setCustomGenre("");
+      return;
+    }
+    setGenres((prev) =>
+      prev.includes(value) ? prev.filter((g) => g !== value) : [...prev, value],
+    );
+  }
+
+  const resolvedGenres = [
+    ...genres,
+    ...(showCustom && customGenre.trim() ? [customGenre.trim()] : []),
+  ];
+  const resolvedGenre = formatGenres(resolvedGenres);
+
+  function handleGenerate() {
+    onGenerate({
+      name: name.trim(),
+      genre: resolvedGenre || undefined,
+      genres: resolvedGenres.length ? resolvedGenres : undefined,
+      language,
+      bioHint: bioHint.trim(),
+      trends,
+    });
+  }
+
   const vi = artist?.visualIdentity;
+  const displayGenres = parseGenres(artist?.genres || artist?.genre);
 
   return (
     <section class="animate-rise space-y-6">
       <header class="space-y-2">
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Créer un artiste complet</h2>
         <p class="max-w-xl text-base-content/70">
-          Profil + identité visuelle + portrait IA — base pour jaquettes et shorts.
+          Choisis un ou plusieurs styles musicaux et la langue — puis génère profil + portrait.
         </p>
       </header>
 
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-5">
         <label class="form-control w-full">
           <span class="label-text mb-1 text-sm text-base-content/60">Nom de l'artiste</span>
           <input
@@ -27,20 +87,101 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
             onInput={(e) => setName(e.currentTarget.value)}
           />
         </label>
+
+        <fieldset class="space-y-2">
+          <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
+            <Music2 size={14} class="text-primary" />
+            Styles musicaux
+          </legend>
+          <p class="text-xs text-base-content/45">
+            Multi-sélection — mélange possible (ex. Rap × Électro). Définit le son, les paroles et la
+            prod.
+          </p>
+          <div class="flex flex-wrap gap-2">
+            {MUSIC_STYLES.map((s) => {
+              const active = s.value
+                ? genres.includes(s.value)
+                : genres.length === 0 && !showCustom;
+              return (
+                <button
+                  key={s.label}
+                  type="button"
+                  class={`btn btn-sm ${active ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+                  onClick={() => toggleStyle(s.value)}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              class={`btn btn-sm ${showCustom ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+              onClick={() => {
+                setShowCustom((v) => !v);
+                if (showCustom) setCustomGenre("");
+              }}
+            >
+              Personnalisé
+            </button>
+          </div>
+          {resolvedGenres.length > 0 && (
+            <p class="text-xs text-primary">
+              Sélection : {formatGenres(resolvedGenres)}
+            </p>
+          )}
+          {showCustom && (
+            <input
+              class="input input-bordered mt-2 w-full bg-base-200"
+              type="text"
+              placeholder="Ex. duo électro-rap aux influences orientales"
+              value={customGenre}
+              onInput={(e) => setCustomGenre(e.currentTarget.value)}
+            />
+          )}
+        </fieldset>
+
+        <fieldset class="space-y-2">
+          <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
+            <Languages size={14} class="text-primary" />
+            Langue des chansons
+          </legend>
+          <p class="text-xs text-base-content/45">
+            Langue des paroles, du chant et des métadonnées de release.
+          </p>
+          <div class="flex flex-wrap gap-2">
+            {MUSIC_LANGUAGES.map((l) => {
+              const active = language === l.code;
+              return (
+                <button
+                  key={l.code}
+                  type="button"
+                  class={`btn btn-sm ${active ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+                  onClick={() => setLanguage(l.code)}
+                >
+                  {l.label}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+
         <label class="form-control w-full">
-          <span class="label-text mb-1 text-sm text-base-content/60">Biographie / style (optionnel)</span>
+          <span class="label-text mb-1 text-sm text-base-content/60">
+            Personnalité / univers (optionnel)
+          </span>
           <textarea
             class="textarea textarea-bordered w-full bg-base-200"
-            rows={4}
-            placeholder="Indices de personnalité, origines, univers…"
+            rows={3}
+            placeholder="Origines, look, histoire… (pas le style musical — déjà choisi au-dessus)"
             value={bioHint}
             onInput={(e) => setBioHint(e.currentTarget.value)}
           />
         </label>
+
         <button
           class="btn btn-primary gap-2 self-start"
-          disabled={loading}
-          onClick={() => onGenerate({ name, bioHint, trends })}
+          disabled={loading || (showCustom && !customGenre.trim() && genres.length === 0)}
+          onClick={handleGenerate}
         >
           {loading ? <span class="loading loading-spinner loading-sm" /> : <UserRound size={18} />}
           {loading ? "Profil + portrait…" : "Générer le profil & le visuel"}
@@ -73,9 +214,13 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
               )}
               {(!artist.imageUrl || /^data:image\/svg/i.test(artist.imageUrl)) && (
                 <p class="text-xs text-warning">
-                  Sans photo réelle, la jaquette et ONCE resteront bloqués. Billing Replicate :
-                  {" "}
-                  <a class="link" href="https://replicate.com/account/billing#billing" target="_blank" rel="noreferrer">
+                  Sans photo réelle, la jaquette et ONCE resteront bloqués. Billing Replicate :{" "}
+                  <a
+                    class="link"
+                    href="https://replicate.com/account/billing#billing"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
                     replicate.com/billing
                   </a>
                 </p>
@@ -105,6 +250,34 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
                 </div>
               </div>
 
+              <div class="flex flex-wrap gap-2">
+                {displayGenres.length ? (
+                  displayGenres.map((g) => (
+                    <span
+                      key={g}
+                      class="inline-flex items-center gap-1.5 border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary"
+                    >
+                      <Music2 size={12} />
+                      {g}
+                    </span>
+                  ))
+                ) : (
+                  <span class="inline-flex items-center gap-1.5 border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary">
+                    <Music2 size={12} />
+                    Style non défini
+                  </span>
+                )}
+                <span class="inline-flex items-center gap-1.5 border border-secondary/30 bg-secondary/10 px-2.5 py-1 text-xs text-secondary">
+                  <Languages size={12} />
+                  {languageLabel(artist.language)}
+                </span>
+                {artist.mood && (
+                  <span class="inline-flex items-center border border-base-content/15 px-2.5 py-1 text-xs text-base-content/70">
+                    {artist.mood}
+                  </span>
+                )}
+              </div>
+
               <p class="leading-relaxed text-base-content/80">{artist.bio}</p>
 
               <div class="flex flex-wrap gap-4 text-sm text-base-content/70">
@@ -114,7 +287,6 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
                 <span class="inline-flex items-center gap-2">
                   <Mic2 size={16} class="text-accent" /> {artist.voice}
                 </span>
-                <span>{artist.genre} · {artist.mood}</span>
               </div>
 
               <p class="text-sm text-base-content/55">

@@ -5,6 +5,7 @@ import {
   defaultRedirectUri,
   isDesktopRedirect,
   sanitizeClientKey,
+  TIKTOK_SCOPES,
 } from "../../../server/tiktok.js";
 
 export const prerender = false;
@@ -32,7 +33,7 @@ export async function POST({ request }) {
 
     const state = body.state || crypto.randomUUID();
     const desktop = isDesktopRedirect(redirectUri);
-    const scopes = body.scopes?.trim() || "user.info.basic";
+    const scopes = body.scopes?.trim() || TIKTOK_SCOPES;
 
     let codeVerifier = null;
     let codeChallenge = null;

@@ -5,6 +5,12 @@ import {
   isEphemeralImageUrl,
   materializeImageForStorage,
 } from "../../../server/imagePersist.js";
+import {
+  isAudioDataUrl,
+  isEphemeralAudioUrl,
+  materializeAudioForStorage,
+} from "../../../server/audioPersist.js";
+import { isS3Configured } from "../../../server/s3.js";
 
 export const prerender = false;
 
@@ -94,7 +100,7 @@ async function sanitizeImageField(entity, field = "imageUrl") {
   return entity;
 }
 
-async function sanitizeProject(project = {}) {
+async function sanitizeProject(project = {}, { projectId } = {}) {
   const clone = structuredClone(project);
 
   if (clone.artist) {
@@ -109,14 +115,105 @@ async function sanitizeProject(project = {}) {
   }
 
   const audio = clone.track?.audioUrl;
-  if (typeof audio === "string" && (audio.startsWith("data:") || audio.startsWith("blob:"))) {
-    clone.track = {
-      ...clone.track,
-      audioUrl: null,
-      localAsset: true,
-      status: "audio-was-local",
-      assetMissingReason: "audio-data-not-persisted",
+  if (typeof audio === "string" && audio.length > 0) {
+    const needsPersist =
+      isAudioDataUrl(audio) ||
+      isEphemeralAudioUrl(audio) ||
+      audio.startsWith("blob:");
+
+    if (audio.startsWith("blob:")) {
+      clone.track = {
+        ...clone.track,
+        audioUrl: null,
+        localAsset: true,
+        status: "audio-was-local",
+        assetMissingReason: "blob-not-persisted",
+        warning: "Audio blob perdu — réimporte le fichier mp3.",
+      };
+    } else if (needsPersist) {
+      try {
+        if (!isS3Configured()) {
+          clone.track = {
+            ...clone.track,
+            // Garde l’URL éphémère en mémoire de session mais marque le risque
+            audioEphemeral: isEphemeralAudioUrl(audio),
+            warning: isAudioDataUrl(audio)
+              ? "Audio data: trop lourd pour Turso sans S3 — configure S3 sinon perte au reload."
+              : "Audio Replicate non persisté (expire ~1 h) — configure S3.",
+          };
+          if (isAudioDataUrl(audio)) {
+            // Ne pas stocker des Mo de base64 dans Turso
+            clone.track = {
+              ...clone.track,
+              audioUrl: null,
+              localAsset: true,
+              status: "audio-was-local",
+              assetMissingReason: "audio-data-not-persisted-no-s3",
+            };
+          }
+        } else {
+          const saved = await materializeAudioForStorage(audio, {
+            projectId: projectId || clone.id || clone.artist?.slug || "anon",
+          });
+          if (saved?.url) {
+            clone.track = {
+              ...clone.track,
+              audioUrl: saved.url,
+              audioS3Key: saved.s3Key || clone.track.audioS3Key,
+              localAsset: false,
+              audioEphemeral: false,
+              status: "audio-ready",
+              warning: undefined,
+              assetMissingReason: undefined,
+            };
+          }
+        }
+      } catch (e) {
+        console.warn("[projects] persist audio:", e.message);
+        if (isEphemeralAudioUrl(audio) || isAudioDataUrl(audio)) {
+          clone.track = {
+            ...clone.track,
+            audioUrl: isEphemeralAudioUrl(audio) ? audio : null,
+            audioEphemeral: true,
+            warning: e.message || "Persistance audio échouée",
+            assetMissingReason: "audio-persist-failed",
+          };
+        }
+      }
+    }
+  }
+
+  // Clip : garder URL S3/http ; strip uniquement data: / blob: (trop lourds pour Turso)
+  function sanitizeClipMeta(clip) {
+    if (!clip || typeof clip !== "object") return clip;
+    const { videoBase64, videoUrl, ...meta } = clip;
+    const remoteUrl =
+      typeof videoUrl === "string" && /^https?:\/\//i.test(videoUrl) ? videoUrl : null;
+    const heavyData =
+      (typeof videoBase64 === "string" && videoBase64.startsWith("data:")) ||
+      (typeof videoUrl === "string" && videoUrl.startsWith("data:"));
+
+    const light = {
+      ...meta,
+      videoBase64: undefined,
+      videoUrl: remoteUrl || undefined,
+      s3Key: meta.s3Key || undefined,
+      storedRemote: Boolean(remoteUrl || meta.s3Key || meta.storedRemote),
+      storedLocally: Boolean(meta.storedLocally && !remoteUrl),
+      mimeType: meta.mimeType || "video/webm",
     };
+
+    if (!remoteUrl && (heavyData || meta.storedLocally)) {
+      light.storedLocally = true;
+    }
+    return light;
+  }
+
+  if (clone.clip && typeof clone.clip === "object") {
+    clone.clip = sanitizeClipMeta(clone.clip);
+  }
+  if (Array.isArray(clone.clips)) {
+    clone.clips = clone.clips.map(sanitizeClipMeta);
   }
 
   return clone;
@@ -134,7 +231,7 @@ export async function GET() {
 export async function POST({ request }) {
   try {
     const body = await readBody(request);
-    const project = await sanitizeProject(body.project || {});
+    const project = await sanitizeProject(body.project || {}, { projectId: body.id });
     const saved = await saveProject({
       id: body.id || null,
       project,

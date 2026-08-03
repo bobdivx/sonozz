@@ -1,12 +1,25 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-/** Modèles free-tier courants — 2.0-flash est souvent à quota 0. */
+/** Modèles free-tier courants (1.5 / 2.0 retirés par Google). */
 export const GEMINI_TEXT_MODELS = [
   "gemini-2.5-flash-lite",
   "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
+  "gemini-flash-lite-latest",
+  "gemini-flash-latest",
 ];
+
+/** Anciens IDs encore éventuellement en localStorage / params. */
+const RETIRED_TEXT_MODELS = new Set([
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
+  "gemini-1.5-flash-latest",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-001",
+  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash-lite-001",
+]);
+
+export const DEFAULT_GEMINI_TEXT_MODEL = "gemini-2.5-flash-lite";
 
 /** Modèles image actuels (Nano Banana / Flash Image) — plus de 2.0-flash-exp. */
 export const GEMINI_IMAGE_MODELS = [
@@ -20,8 +33,12 @@ function client(apiKey) {
   return new GoogleGenerativeAI(apiKey);
 }
 
+function errText(err) {
+  return String(err?.message || err || "");
+}
+
 function isQuotaError(err) {
-  const msg = String(err?.message || err || "");
+  const msg = errText(err);
   return (
     msg.includes("429") ||
     msg.includes("Too Many Requests") ||
@@ -30,21 +47,32 @@ function isQuotaError(err) {
   );
 }
 
+function isRetriableModelError(err) {
+  const msg = errText(err);
+  return (
+    isQuotaError(err) ||
+    /not found|404|not supported|is not found|NOT_FOUND/i.test(msg)
+  );
+}
+
+export function resolveGeminiTextModel(preferred) {
+  const p = preferred?.trim();
+  if (!p || RETIRED_TEXT_MODELS.has(p)) return DEFAULT_GEMINI_TEXT_MODEL;
+  return p;
+}
+
 function modelQueue(preferred) {
   const list = [...GEMINI_TEXT_MODELS];
-  if (preferred?.trim()) {
-    const p = preferred.trim();
-    return [p, ...list.filter((m) => m !== p)];
-  }
-  return list;
+  const p = resolveGeminiTextModel(preferred);
+  return [p, ...list.filter((m) => m !== p)];
 }
 
 function friendlyQuotaMessage(err, model) {
   return [
     `Quota Gemini dépassé sur ${model}.`,
-    "Le free tier de gemini-2.0-flash est souvent à 0 — utilise gemini-2.5-flash-lite ou gemini-2.5-flash.",
+    "Utilise gemini-2.5-flash-lite ou gemini-2.5-flash (recommandés free tier).",
     "Solutions : changer le modèle dans Paramètres, attendre le reset, ou activer la facturation AI Studio.",
-    `Détail : ${String(err?.message || err).slice(0, 220)}`,
+    `Détail : ${errText(err).slice(0, 220)}`,
   ].join(" ");
 }
 
@@ -67,7 +95,7 @@ async function generateWithFallback(apiKey, prompt, { preferredModel, json = fal
       return { text, model };
     } catch (err) {
       lastError = err;
-      if (isQuotaError(err) || /not found|404|not supported/i.test(String(err.message))) {
+      if (isRetriableModelError(err)) {
         continue;
       }
       throw err;

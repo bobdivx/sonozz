@@ -6,9 +6,90 @@ import {
   AudioLines,
   Sparkles,
   ChevronRight,
+  Upload,
+  Trash2,
+  RefreshCw,
 } from "lucide-preact";
 import { renderShortVideo, downloadBlob } from "../../lib/renderShort.js";
+import { assemblePromoShort, PROMO_SHORT_SECONDS } from "../../lib/assemblePromoShort.js";
+import { extractTrackExcerpt } from "../../lib/audioExcerpt.js";
+import { detectBeatsFromUrl, pickCutPoints } from "../../lib/beatDetect.js";
+import { planMusicVideoShots } from "../../lib/shotPlan.js";
+import { resolveVideoBlobUrl, resolveVideoBlobUrls } from "../../lib/videoResolve.js";
+import { loadKeys } from "../../lib/keys.js";
 import { api } from "../../lib/apiClient.js";
+import {
+  clipMetaOnly,
+  ensureClipStorageKey,
+  resolveClipBlob,
+  saveClipBlob,
+  deleteClipBlob,
+} from "../../lib/clipStore.js";
+import {
+  CLIP_KIND_FULL,
+  CLIP_KIND_SHORT,
+  clipBlobKey,
+  clipsOfKind,
+  createClipId,
+  isClipReady,
+  normalizeProjectClips,
+} from "../../lib/clipsModel.js";
+import ClipGallery, { clipLabel } from "../ClipGallery.jsx";
+import { continueVeoAfterStart } from "../../lib/jobRunner.js";
+import { createJobId, getJob, subscribeJobs } from "../../lib/jobStore.js";
+
+function waitForJob(jobId, { onUpdate } = {}) {
+  return new Promise((resolve, reject) => {
+    const unsub = subscribeJobs((jobs) => {
+      const j = jobs.find((x) => x.id === jobId) || getJob(jobId);
+      if (!j) return;
+      onUpdate?.(j);
+      if (j.status === "done") {
+        unsub();
+        resolve(j);
+      } else if (j.status === "error" || j.status === "interrupted") {
+        unsub();
+        reject(new Error(j.message || "Job échoué"));
+      }
+    });
+  });
+}
+
+/** Seedance = payant Replicate (~$0.9–2 / plan). Défaut économique = Veo (Gemini). */
+const SEEDANCE_SHOTS = 2;
+const SEEDANCE_SHOT_SEC = 5;
+/** 1 extension Veo (~8s+~7s) — assez pour mux 28s, ~½ du coût vs 2 extends. */
+const EXTEND_COUNT = 1;
+const MAX_IMPORT_BYTES = 80_000_000;
+
+function isUsableSocialBrief(social) {
+  const brief = social?.audioBrief || social?.veo?.audioBrief;
+  if (!brief || typeof brief !== "object") return false;
+  return Boolean(
+    brief.veoDirection ||
+      brief.energy ||
+      brief.mood ||
+      (Array.isArray(brief.visualBeats) && brief.visualBeats.length),
+  );
+}
+
+function probeVideoDuration(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const el = document.createElement("video");
+    el.preload = "metadata";
+    el.onloadedmetadata = () => {
+      const d = Number.isFinite(el.duration) ? Math.round(el.duration) : null;
+      URL.revokeObjectURL(url);
+      resolve(d);
+    };
+    el.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    el.src = url;
+  });
+}
 
 function hasAudio(track) {
   return Boolean(track?.audioUrl);
@@ -25,15 +106,6 @@ function isDurableRaster(url = "") {
   return /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(url);
 }
 
-function dataUrlToBlob(dataUrl) {
-  const [meta, b64] = String(dataUrl).split(",");
-  const mime = meta.match(/data:([^;]+)/)?.[1] || "video/mp4";
-  const bin = atob(b64);
-  const arr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  return new Blob([arr], { type: mime });
-}
-
 function blobToObjectUrl(blob) {
   return URL.createObjectURL(blob);
 }
@@ -41,6 +113,9 @@ function blobToObjectUrl(blob) {
 export default function ClipStep({
   social,
   clip,
+  clips = [],
+  activeClipId = null,
+  projectId,
   artist,
   track,
   cover,
@@ -48,17 +123,32 @@ export default function ClipStep({
   loading,
   onGeneratePack,
   onClipReady,
+  onSelectClip,
+  onRemoveClip,
   onGoToTracks,
   onGoToArtist,
   onGoToCover,
   onGoToSocial,
 }) {
+  const normalized = normalizeProjectClips({ clip, clips, activeClipId });
+  const allClips = normalized.clips;
+  const activeId = normalized.activeClipId;
+  const activeClip = allClips.find((c) => c.id === activeId) || clip || null;
+
+  const [kindTab, setKindTab] = useState(
+    activeClip?.kind === CLIP_KIND_FULL ? CLIP_KIND_FULL : CLIP_KIND_SHORT,
+  );
+  const [creatingNew, setCreatingNew] = useState(false);
+  const [replaceMode, setReplaceMode] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [progress, setProgress] = useState(0);
   const [videoUrl, setVideoUrl] = useState(null);
   const [videoBlob, setVideoBlob] = useState(null);
   const [videoMeta, setVideoMeta] = useState(null);
   const [error, setError] = useState("");
+  const [statusMsg, setStatusMsg] = useState("");
+  /** veo = Gemini (souvent gratuit/quota) · seedance = Replicate payant */
+  const [clipEngine, setClipEngine] = useState("veo");
 
   const hasPortrait = Boolean(artist?.imageUrl && !/^data:image\/svg/i.test(artist.imageUrl));
   const hasCover = Boolean(cover?.imageUrl && !/^data:image\/svg/i.test(cover.imageUrl));
@@ -68,28 +158,88 @@ export default function ClipStep({
   const trackReady = Boolean(track);
   const audioReady = hasAudio(track);
 
+  const kindClips = clipsOfKind(allClips, kindTab);
+  const activeInTab = kindClips.some((c) => c.id === activeId);
+
   useEffect(() => {
-    const src = clip?.videoBase64 || clip?.videoUrl;
-    if (!src) return undefined;
-    try {
-      const blob = dataUrlToBlob(src);
-      const url = blobToObjectUrl(blob);
-      setVideoBlob(blob);
+    if (activeClip?.kind && activeClip.kind !== kindTab) {
+      setKindTab(activeClip.kind);
+    }
+  }, [activeClip?.id, activeClip?.kind]);
+
+  useEffect(() => {
+    if (creatingNew) {
+      setVideoBlob(null);
+      setVideoMeta(null);
       setVideoUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
-        return url;
+        return null;
       });
-      setVideoMeta({
-        provider: clip.provider,
-        usedPortrait: clip.usedPortrait,
-        usedCover: clip.usedCover,
-        warning: clip.warning,
-      });
-    } catch {
-      /* ignore corrupt clip */
+      return undefined;
     }
-    return undefined;
-  }, [clip?.videoBase64, clip?.videoUrl, clip?.provider]);
+    const hasMeta = isClipReady(activeClip) || activeClip?.provider === "canvas-fallback";
+    if (!hasMeta) {
+      setVideoBlob(null);
+      setVideoMeta(null);
+      setVideoUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const blob = await resolveClipBlob(projectId, activeClip);
+        if (cancelled) return;
+        if (!blob || blob.size < 1000) {
+          setError("Clip introuvable — régénère ou réimporte.");
+          return;
+        }
+        const typed =
+          blob.type?.startsWith("video/")
+            ? blob
+            : new Blob([blob], {
+                type: activeClip?.mimeType || activeClip?.publishMimeType || "video/mp4",
+              });
+        const url = blobToObjectUrl(typed);
+        setVideoBlob(typed);
+        setVideoUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
+        setVideoMeta({
+          id: activeClip.id,
+          kind: activeClip.kind,
+          provider: activeClip.provider,
+          usedPortrait: activeClip.usedPortrait,
+          usedCover: activeClip.usedCover,
+          warning: activeClip.warning,
+          fileName: activeClip.fileName,
+          isVeo: activeClip.provider !== "canvas-fallback" && activeClip.provider !== "user-upload",
+          durationSec: activeClip.durationSec,
+        });
+        setError("");
+      } catch (e) {
+        if (!cancelled) {
+          setError(e?.message || "Clip illisible — régénère ou réimporte.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    projectId,
+    activeClip?.id,
+    activeClip?.storedLocally,
+    activeClip?.storedRemote,
+    activeClip?.provider,
+    activeClip?.at,
+    activeClip?.videoUrl,
+    activeClip?.s3Key,
+    creatingNew,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -97,11 +247,350 @@ export default function ClipStep({
     };
   }, [videoUrl]);
 
+  async function pollUntilDone(operationName, { from = 12, to = 40, safePrompt = false } = {}) {
+    const maxPolls = 60;
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise((r) => setTimeout(r, 10_000));
+      setProgress(Math.min(to, from + Math.round(((i + 1) / maxPolls) * (to - from))));
+      try {
+        const poll = await api.veoShortPoll(operationName);
+        if (poll?.done) return poll;
+      } catch (pollErr) {
+        const msg = String(pollErr?.message || pollErr);
+        if (!safePrompt && /VEO_CELEBRITY_FILTER|celebrity|likeness|real people/i.test(msg)) {
+          throw Object.assign(new Error(msg), { celebrity: true });
+        }
+        throw pollErr;
+      }
+    }
+    throw new Error("Timeout Veo (~10 min) — réessaie.");
+  }
+
+  async function pollSeedanceUntilDone(predictionId, { from = 20, to = 55 } = {}) {
+    const maxPolls = 90;
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise((r) => setTimeout(r, 8_000));
+      setProgress(Math.min(to, from + Math.round(((i + 1) / maxPolls) * (to - from))));
+      const poll = await api.seedancePoll(predictionId);
+      if (poll?.done && poll.videoUrl) return poll;
+    }
+    throw new Error("Timeout Seedance (~12 min) — réessaie.");
+  }
+
+  async function analyzeBeatsSafe() {
+    try {
+      const analysis = await detectBeatsFromUrl(track.audioUrl, PROMO_SHORT_SECONDS);
+      return {
+        beats: analysis.beats || [],
+        cutPoints: pickCutPoints(analysis.beats || [], {
+          durationSec: PROMO_SHORT_SECONDS,
+          minGap: 2.4,
+          maxCuts: 6,
+        }),
+        bpmEstimate: analysis.bpmEstimate,
+      };
+    } catch (e) {
+      console.warn("[clip] beats:", e.message);
+      return { beats: [], cutPoints: [0], bpmEstimate: track?.bpm || 100 };
+    }
+  }
+
+  async function muxCinematic({
+    videoUrls,
+    providerLabel,
+    audioBrief,
+    clipId,
+    extra = {},
+    cutPoints: forcedCuts,
+    shotSec,
+  } = {}) {
+    const beatInfo = await analyzeBeatsSafe();
+    setStatusMsg("Montage cinéma : multi-plans + ton audio + beats…");
+    setProgress(78);
+    const objectUrls = [];
+    let revokeResolved = () => {};
+    try {
+      setStatusMsg("Téléchargement des plans (proxy, anti-CORS)…");
+      const resolved = await resolveVideoBlobUrls(videoUrls);
+      revokeResolved = resolved.revokeAll;
+      const urls = resolved.urls;
+      if (!urls.length) throw new Error("Aucun plan vidéo à monter");
+
+      // Seedance : cuts = offsets audio des extraits (pas un découpage égal arbitraire)
+      const alignedCuts =
+        forcedCuts?.length >= 1
+          ? forcedCuts
+          : urls.length > 1 && shotSec
+            ? Array.from({ length: urls.length }, (_, i) => i * shotSec)
+            : urls.length > 1
+              ? beatInfo.cutPoints?.length >= urls.length
+                ? beatInfo.cutPoints.slice(0, urls.length)
+                : Array.from({ length: urls.length }, (_, i) => (i * PROMO_SHORT_SECONDS) / urls.length)
+              : beatInfo.cutPoints;
+      setStatusMsg("Montage cinéma : multi-plans + ton audio + beats…");
+      const finalBlob = await assemblePromoShort({
+        veoVideoUrls: urls,
+        track,
+        artist,
+        social,
+        durationSec: PROMO_SHORT_SECONDS,
+        beats: beatInfo.beats,
+        cutPoints: alignedCuts,
+        cinematic: true,
+        onProgress: (p) => setProgress(78 + Math.round(p * 0.2)),
+      });
+      const muxMime = finalBlob.type?.startsWith("video/") ? finalBlob.type : "video/webm";
+      const isMp4 = /mp4/i.test(muxMime);
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      setVideoUrl(blobToObjectUrl(finalBlob));
+      setVideoBlob(finalBlob);
+      setProgress(100);
+      const meta = clipMetaOnly({
+        id: clipId,
+        kind: CLIP_KIND_SHORT,
+        provider: providerLabel,
+        warning: [
+          "1080×1920 · 9:16 TikTok",
+          audioBrief?.bpmEstimate || beatInfo.bpmEstimate
+            ? `Montage ~${audioBrief?.bpmEstimate || beatInfo.bpmEstimate} BPM (pas de lip-sync)`
+            : "Montage rythme (pas de lip-sync)",
+          `${urls.length} plan(s) + audio du morceau`,
+          isMp4 ? "" : "WebM — Chrome recommandé pour TikTok MP4",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        isVeo: /veo/i.test(providerLabel),
+        durationSec: PROMO_SHORT_SECONDS,
+        mimeType: muxMime,
+        publishMimeType: isMp4 ? "video/mp4" : muxMime,
+        muxed: true,
+        cinematic: true,
+        audioBrief: audioBrief || null,
+        at: new Date().toISOString(),
+        storedLocally: true,
+        ...extra,
+      });
+      await commitClip(finalBlob, meta);
+      return finalBlob;
+    } finally {
+      objectUrls.forEach((u) => URL.revokeObjectURL(u));
+      try {
+        revokeResolved();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /** Pipeline pro : Seedance entend le morceau (Replicate). */
+  async function renderWithSeedance() {
+    setError("");
+    setStatusMsg("");
+    setRendering(true);
+    setProgress(4);
+    const clipId = resolveTargetClipId({ forceNew: !replaceMode });
+    const keys = loadKeys();
+    if (!keys.replicateApiToken?.trim()) {
+      throw new Error("Token Replicate manquant pour Seedance");
+    }
+    if (!track?.audioUrl) throw new Error("Audio du morceau requis");
+
+    try {
+      setStatusMsg("Analyse beats + extraits du morceau…");
+      const listenExcerpt = await extractTrackExcerpt(track.audioUrl, PROMO_SHORT_SECONDS, 0);
+      setProgress(8);
+      let audioBrief = isUsableSocialBrief(social) ? social.audioBrief || social?.veo?.audioBrief : null;
+      if (audioBrief) {
+        setStatusMsg("Brief audio réutilisé (économie)…");
+      } else {
+        try {
+          const listened = await api.seedanceListen({
+            track,
+            lyrics,
+            social,
+            audioExcerptBase64: listenExcerpt.base64,
+            audioExcerptMimeType: listenExcerpt.mimeType,
+          });
+          audioBrief = listened?.audioBrief || null;
+        } catch (e) {
+          console.warn("[clip] listen:", e.message);
+        }
+      }
+
+      const shotPlan = planMusicVideoShots({
+        lyrics,
+        social,
+        audioBrief,
+        shotCount: SEEDANCE_SHOTS,
+        shotSec: SEEDANCE_SHOT_SEC,
+      });
+
+      const shotUrls = [];
+      const revokeShots = [];
+      try {
+        for (let s = 0; s < SEEDANCE_SHOTS; s++) {
+          const brief = shotPlan[s];
+          setStatusMsg(
+            `Plan ${s + 1}/${SEEDANCE_SHOTS} (~${SEEDANCE_SHOT_SEC}s)${
+              brief?.lyricPhrase ? ` · « ${brief.lyricPhrase.slice(0, 40)}… »` : ""
+            }`,
+          );
+          const excerpt = await extractTrackExcerpt(
+            track.audioUrl,
+            SEEDANCE_SHOT_SEC,
+            s * SEEDANCE_SHOT_SEC,
+          );
+          const started = await api.seedanceStart({
+            artist,
+            track,
+            social,
+            lyrics,
+            audioBrief,
+            audioExcerptBase64: excerpt.base64,
+            audioExcerptMimeType: excerpt.mimeType,
+            shotIndex: s,
+            shotBrief: brief,
+            projectId,
+            duration: SEEDANCE_SHOT_SEC,
+          });
+          if (started?.audioBrief) audioBrief = started.audioBrief;
+          if (!started?.predictionId) throw new Error("Seedance sans predictionId");
+          const done = await pollSeedanceUntilDone(started.predictionId, {
+            from: 10 + s * 16,
+            to: 24 + s * 16,
+          });
+          if (!done?.videoUrl) throw new Error(`Plan ${s + 1} sans URL vidéo`);
+
+          // Immédiatement en blob local — les liens replicate.delivery expirent vite
+          setStatusMsg(`Sauvegarde plan ${s + 1}/${SEEDANCE_SHOTS} (anti-expiration)…`);
+          const local = await resolveVideoBlobUrl(done.videoUrl);
+          if (local.revoke) revokeShots.push(local.url);
+          shotUrls.push(local.url);
+        }
+
+        const result = await muxCinematic({
+          videoUrls: shotUrls,
+          providerLabel: "seedance-2.0+mux",
+          audioBrief,
+          clipId,
+          shotSec: SEEDANCE_SHOT_SEC,
+          cutPoints: Array.from({ length: shotUrls.length }, (_, i) => i * SEEDANCE_SHOT_SEC),
+          extra: {
+            mode: "seedance-short-shots",
+            shots: shotUrls.length,
+            shotSec: SEEDANCE_SHOT_SEC,
+            method: "gemini-short-cuts",
+          },
+        });
+        return result;
+      } finally {
+        revokeShots.forEach((u) => {
+          try {
+            URL.revokeObjectURL(u);
+          } catch {
+            /* ignore */
+          }
+        });
+      }
+    } finally {
+      setRendering(false);
+    }
+  }
+
+  function extendPromptAt(index) {
+    const scenes = (social?.scenes || []).map((s) => String(s).trim()).filter(Boolean);
+    const genre = track?.style || "";
+    const mood = track?.mood || artist?.mood || "";
+    const vibe = [genre, mood].filter(Boolean).join(", ");
+    const defaults = [
+      `Continue seamlessly: wide/mid environment mirroring the song${vibe ? ` (${vibe})` : ""}, rhythmic camera.`,
+      "Continue seamlessly: silhouette / hands / stage atmosphere — NO mouth close-up, NO lip-sync attempt.",
+    ];
+    const beat = scenes[index + 1] || scenes[index] || defaults[index] || defaults[0];
+    return [
+      "Continue the music video seamlessly, faithful to the song mood and lyric imagery.",
+      "Full-bleed vertical 9:16 TikTok frame, no letterboxing, no black bars.",
+      `Next beat: ${String(beat).slice(0, 140)}.`,
+      "Same fictional character, no celebrities, no text, no logos, no invented song, no singing mouth close-ups.",
+    ].join(" ");
+  }
+
+  function resolveTargetClipId({ forceNew = false } = {}) {
+    if (forceNew || creatingNew) return createClipId();
+    if (replaceMode && activeInTab && activeId) return activeId;
+    return createClipId();
+  }
+
+  async function commitClip(blob, metaBase) {
+    const clipId = metaBase.id || createClipId();
+    const kind = metaBase.kind || CLIP_KIND_SHORT;
+    let meta = clipMetaOnly(metaBase, { id: clipId, kind });
+    setVideoMeta(meta);
+
+    const storageKey = ensureClipStorageKey(projectId, clipId);
+    await saveClipBlob(storageKey, blob, meta);
+
+    try {
+      setStatusMsg("Upload S3…");
+      setProgress(96);
+      const remote = await api.uploadClip({
+        videoBlob: blob,
+        projectId: storageKey,
+        mimeType: meta.mimeType || blob.type || "video/mp4",
+      });
+      meta = clipMetaOnly(meta, {
+        videoUrl: remote.videoUrl,
+        s3Key: remote.s3Key,
+        storedRemote: true,
+        storedLocally: true,
+        byteLength: remote.byteLength,
+        warning: `${meta.warning || "Clip"} · S3`,
+      });
+      setVideoMeta(meta);
+      await saveClipBlob(storageKey, blob, meta);
+    } catch (upErr) {
+      console.warn("[clip] S3 upload skip:", upErr.message);
+      meta = clipMetaOnly(meta, {
+        warning: `${meta.warning || "Clip"} · local only (${upErr.message})`,
+      });
+      setVideoMeta(meta);
+    }
+
+    setReplaceMode(false);
+    setCreatingNew(false);
+    setStatusMsg("");
+    onClipReady?.(meta, blob, storageKey);
+    return meta;
+  }
+
   async function renderWithVeo(safePrompt = false) {
     setError("");
+    setStatusMsg("");
     setRendering(true);
     setProgress(5);
+    const clipId = resolveTargetClipId({ forceNew: !replaceMode });
     try {
+      let audioExcerptBase64;
+      let audioExcerptMimeType;
+      if (track?.audioUrl) {
+        try {
+          setStatusMsg("Extrait du morceau (28 s) pour caler le clip…");
+          setProgress(6);
+          const excerpt = await extractTrackExcerpt(track.audioUrl, PROMO_SHORT_SECONDS);
+          audioExcerptBase64 = excerpt.base64;
+          audioExcerptMimeType = excerpt.mimeType;
+        } catch (exErr) {
+          console.warn("[clip] extrait audio:", exErr.message);
+          setStatusMsg("Extrait local KO — écoute via URL du morceau…");
+        }
+      }
+
+      setStatusMsg(
+        audioExcerptBase64 || track?.audioUrl
+          ? "Écoute du morceau + démarrage Veo…"
+          : "Veo : démarrage…",
+      );
+      setProgress(8);
       const started = await api.veoShortStart({
         artist,
         track,
@@ -109,81 +598,85 @@ export default function ClipStep({
         social,
         lyrics,
         safePrompt,
+        audioExcerptBase64,
+        audioExcerptMimeType,
       });
-      if (!started?.operationName) {
-        throw new Error("Veo n’a pas renvoyé d’opération");
-      }
+      if (!started?.operationName) throw new Error("Veo n’a pas renvoyé d’opération");
 
-      setProgress(12);
-      const maxPolls = 60;
-      let finished = null;
-      for (let i = 0; i < maxPolls; i++) {
-        await new Promise((r) => setTimeout(r, 10_000));
-        setProgress(Math.min(92, 12 + Math.round(((i + 1) / maxPolls) * 80)));
+      const jobId = createJobId("veo");
+      continueVeoAfterStart({
+        jobId,
+        started,
+        label: `Short Veo${track?.title ? ` · ${track.title}` : ""}`,
+        context: {
+          projectId,
+          clipId,
+          artist,
+          track,
+          cover,
+          social,
+          lyrics,
+        },
+      });
+
+      setStatusMsg(
+        started.warning
+          ? `${started.warning} — tu peux naviguer (suivi sidebar)`
+          : "Veo en arrière-plan — tu peux naviguer (suivi sidebar)",
+      );
+
+      await waitForJob(jobId, {
+        onUpdate: (j) => {
+          if (typeof j.progress === "number") setProgress(j.progress);
+          if (j.message) setStatusMsg(`${j.message} · sidebar`);
+        },
+      });
+
+      // Recharge le clip sauvegardé par le runner
+      let meta = { id: clipId, kind: CLIP_KIND_SHORT, storedLocally: true };
+      if (projectId) {
         try {
-          const poll = await api.veoShortPoll(started.operationName);
-          if (poll?.done) {
-            finished = poll;
-            break;
-          }
-        } catch (pollErr) {
-          const msg = String(pollErr?.message || pollErr);
-          // Filtre celebrity → un seul retry avec prompt sans noms
-          if (!safePrompt && /VEO_CELEBRITY_FILTER|celebrity|likeness|real people/i.test(msg)) {
-            setError("Filtre Veo (noms/ressemblance) — nouvel essai sans noms…");
-            setRendering(false);
-            return renderWithVeo(true);
-          }
-          throw pollErr;
+          const row = await api.getProject(projectId);
+          const proj = normalizeProjectClips(row.project || row);
+          meta = proj.clips.find((c) => c.id === clipId) || proj.clip || meta;
+        } catch {
+          /* ignore */
         }
       }
-      if (!finished?.videoBase64 && !finished?.videoUrl) {
-        throw new Error("Timeout Veo (~10 min) — réessaie.");
-      }
-
-      setProgress(100);
-      const provider =
-        started.mode === "i2v" || started.mode === "refs"
-          ? started.model
-          : `${started.model}-${started.mode || "gen"}`;
-      const videoBase64 = finished.videoBase64 || finished.videoUrl;
-      const blob = dataUrlToBlob(videoBase64);
+      const blob = await resolveClipBlob(projectId, meta);
+      if (!blob) throw new Error("Clip généré introuvable — rouvre Clips depuis la sidebar");
+      const typed =
+        blob.type?.startsWith("video/")
+          ? blob
+          : new Blob([blob], { type: meta.mimeType || "video/mp4" });
       if (videoUrl) URL.revokeObjectURL(videoUrl);
-      const url = blobToObjectUrl(blob);
-      setVideoUrl(url);
-      setVideoBlob(blob);
-      const meta = {
-        provider,
-        usedPortrait: started.usedPortrait,
-        usedCover: started.usedCover,
-        warning: started.warning,
-        isVeo: true,
-      };
+      setVideoUrl(blobToObjectUrl(typed));
+      setVideoBlob(typed);
       setVideoMeta(meta);
-      onClipReady?.({
-        videoBase64,
-        videoUrl: videoBase64,
-        mimeType: "video/mp4",
-        ...meta,
-        prompt: started.prompt,
-        mode: started.mode,
-        at: new Date().toISOString(),
-      });
-      return blob;
+      setProgress(100);
+      setReplaceMode(false);
+      setCreatingNew(false);
+      onClipReady?.(meta, typed, ensureClipStorageKey(projectId, clipId));
+      setStatusMsg("");
+      return typed;
     } catch (e) {
       const msg = String(e?.message || e);
-      if (!safePrompt && /VEO_CELEBRITY_FILTER|celebrity|likeness|real people/i.test(msg)) {
-        setError("Filtre Veo (noms/ressemblance) — nouvel essai sans noms…");
-        setRendering(false);
-        return renderWithVeo(true);
-      }
-      if (/VEO_CELEBRITY_FILTER|celebrity|likeness/i.test(msg)) {
+      if (
+        (!safePrompt || e.celebrity) &&
+        /VEO_CELEBRITY_FILTER|celebrity|likeness|real people/i.test(msg)
+      ) {
+        if (!safePrompt) {
+          setStatusMsg("Filtre Veo (noms/ressemblance) — nouvel essai sans noms…");
+          setRendering(false);
+          return renderWithVeo(true);
+        }
         setError(
-          "Veo refuse les noms / ressemblances « célébrité ». Le prompt a déjà été allégé — régénère un portrait plus original (moins « star ») à l’étape Artiste, puis réessaie.",
+          "Veo refuse les noms / ressemblances « célébrité ». Régénère un portrait plus original, puis réessaie.",
         );
       } else {
         setError(msg || "Génération Veo impossible");
       }
+      setStatusMsg("");
       return null;
     } finally {
       setRendering(false);
@@ -194,6 +687,7 @@ export default function ClipStep({
     setError("");
     setRendering(true);
     setProgress(0);
+    const clipId = resolveTargetClipId({ forceNew: !replaceMode });
     try {
       const blob = await renderShortVideo({
         artist,
@@ -206,27 +700,17 @@ export default function ClipStep({
       const url = blobToObjectUrl(blob);
       setVideoUrl(url);
       setVideoBlob(blob);
-      const meta = {
+      const meta = clipMetaOnly({
+        id: clipId,
+        kind: CLIP_KIND_SHORT,
         provider: "canvas-fallback",
         isVeo: false,
         warning: "Maquette locale uniquement — ce n’est pas un clip Veo.",
-      };
-
-      const videoBase64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("Lecture vidéo impossible"));
-        reader.readAsDataURL(blob);
-      });
-
-      setVideoMeta(meta);
-      onClipReady?.({
-        videoBase64,
-        videoUrl: videoBase64,
         mimeType: blob.type || "video/webm",
-        ...meta,
         at: new Date().toISOString(),
+        storedLocally: true,
       });
+      await commitClip(blob, meta);
       return blob;
     } catch (e) {
       setError(e.message || "Maquette locale impossible");
@@ -237,6 +721,7 @@ export default function ClipStep({
   }
 
   async function generateVeoClip() {
+    setKindTab(CLIP_KIND_SHORT);
     if (!audioReady) {
       setError("Crée d'abord le morceau audio (étape 4).");
       return null;
@@ -246,38 +731,153 @@ export default function ClipStep({
       return null;
     }
     if (!hasPortrait) {
-      setError("Portrait artiste photo requis pour Veo 3 — régénère l’étape Artiste.");
+      setError("Portrait artiste photo requis — régénère l’étape Artiste.");
       return null;
     }
     if (portraitExpired) {
       setError(
-        "Portrait expiré (URL Replicate morte). Va à l’étape Artiste, régénère le portrait, puis relance Veo.",
+        "Portrait expiré (URL Replicate morte). Va à l’étape Artiste, régénère le portrait, puis relance.",
       );
       return null;
     }
+
+    const keys = loadKeys();
+    // Par défaut Veo (Gemini) — Seedance seulement si choisi (crédits Replicate)
+    if (clipEngine === "seedance" && keys.replicateApiToken?.trim()) {
+      try {
+        return await renderWithSeedance();
+      } catch (e) {
+        console.warn("[clip] Seedance KO → fallback Veo:", e.message);
+        setStatusMsg(`Seedance indisponible (${e.message?.slice(0, 80)}) — bascule Veo…`);
+        setRendering(false);
+      }
+    }
+
     return renderWithVeo();
   }
 
-  async function exportOnly() {
+  function exportOnly() {
     if (!videoBlob) {
-      setError("Génère d’abord un clip Veo (bouton 2).");
+      setError("Génère ou importe d’abord une vidéo.");
       return;
     }
     const ext = videoBlob.type.includes("mp4") ? "mp4" : "webm";
     const safe = (track?.title || "short").replace(/[^\w\-]+/g, "_").slice(0, 40);
-    downloadBlob(videoBlob, `${safe}-9x16.${ext}`);
+    const kind = kindTab === CLIP_KIND_FULL ? "full" : "short";
+    downloadBlob(videoBlob, `${safe}-${kind}-9x16.${ext}`);
   }
 
-  const isCanvasMock = videoMeta?.provider === "canvas-fallback" || clip?.provider === "canvas-fallback";
-  const hasRealVeo = Boolean(videoBlob && !isCanvasMock);
+  async function importUserVideo(e) {
+    const file = e.currentTarget.files?.[0];
+    e.currentTarget.value = "";
+    if (!file) return;
+
+    setError("");
+    setStatusMsg("");
+
+    const mime = file.type || "";
+    const looksVideo =
+      mime.startsWith("video/") ||
+      /\.(mp4|webm|mov|m4v|mkv)$/i.test(file.name || "");
+    if (!looksVideo) {
+      setError("Choisis un fichier vidéo (mp4, webm, mov…).");
+      return;
+    }
+    if (file.size < 1000) {
+      setError("Fichier trop petit / invalide.");
+      return;
+    }
+    if (file.size > MAX_IMPORT_BYTES) {
+      setError("Vidéo trop lourde (max ~80 Mo).");
+      return;
+    }
+
+    setRendering(true);
+    setProgress(10);
+    const clipId = resolveTargetClipId({ forceNew: !replaceMode });
+    try {
+      const mimeType = mime.startsWith("video/")
+        ? mime
+        : /\.webm$/i.test(file.name)
+          ? "video/webm"
+          : "video/mp4";
+      const blob = new Blob([await file.arrayBuffer()], { type: mimeType });
+      const durationSec = (await probeVideoDuration(blob)) || undefined;
+      const isMp4 = /mp4|quicktime/i.test(mimeType);
+
+      setProgress(40);
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      const url = blobToObjectUrl(blob);
+      setVideoUrl(url);
+      setVideoBlob(blob);
+
+      const meta = clipMetaOnly({
+        id: clipId,
+        kind: kindTab,
+        provider: "user-upload",
+        isVeo: false,
+        fileName: file.name,
+        warning: isMp4
+          ? `Import · ${file.name}`
+          : `Import · ${file.name} — préfère un MP4 pour TikTok`,
+        mimeType,
+        publishMimeType: isMp4 ? "video/mp4" : mimeType,
+        durationSec,
+        at: new Date().toISOString(),
+        storedLocally: true,
+      });
+      await commitClip(blob, meta);
+    } catch (err) {
+      setError(err?.message || "Import vidéo impossible");
+      setStatusMsg("");
+    } finally {
+      setRendering(false);
+    }
+  }
+
+  async function removeClip(clipId) {
+    if (!clipId) return;
+    const key = clipBlobKey(projectId, clipId) || ensureClipStorageKey(projectId, clipId);
+    try {
+      await deleteClipBlob(key);
+    } catch {
+      /* ignore */
+    }
+    if (clipId === activeId) {
+      setReplaceMode(false);
+      setCreatingNew(false);
+      setVideoBlob(null);
+      setVideoMeta(null);
+      setVideoUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+    }
+    onRemoveClip?.(clipId);
+  }
+
+  async function removeActive() {
+    if (!activeId || !activeInTab) return;
+    await removeClip(activeId);
+  }
+
+  const isCanvasMock =
+    videoMeta?.provider === "canvas-fallback" || activeClip?.provider === "canvas-fallback";
+  const isUserUpload =
+    videoMeta?.provider === "user-upload" || activeClip?.provider === "user-upload";
+  const hasPublishableClip = Boolean(
+    videoBlob && !isCanvasMock && activeInTab && !creatingNew,
+  );
+  const previewAspect = kindTab === CLIP_KIND_FULL ? "aspect-video" : "aspect-[9/16]";
+  const previewMax = kindTab === CLIP_KIND_FULL ? "max-w-md" : "max-w-[220px]";
 
   if (!trackReady || !audioReady) {
     return (
       <section class="animate-rise space-y-6">
         <header class="space-y-2">
-          <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Clip vidéo</h2>
+          <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Clips vidéo</h2>
           <p class="max-w-xl text-base-content/70">
-            Audio + portrait + jaquette → short Veo 3 (9:16).
+            Shorts 9:16 et vidéos complètes — plusieurs par projet.
           </p>
         </header>
         <div class="border border-warning/40 bg-warning/10 p-5">
@@ -296,11 +896,83 @@ export default function ClipStep({
   return (
     <section class="animate-rise space-y-6">
       <header class="space-y-2">
-        <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Clip vidéo</h2>
+        <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Clips vidéo</h2>
         <p class="max-w-xl text-base-content/70">
-          Génère le short 9:16 avec Veo 3.1 — portrait, jaquette et thème du titre.
+          Plusieurs shorts (9:16) et vidéos complètes par projet. Génère via Veo, ou importe tes
+          fichiers.
         </p>
       </header>
+
+      <div role="tablist" class="tabs tabs-boxed w-fit bg-base-200">
+        <button
+          type="button"
+          role="tab"
+          class={`tab ${kindTab === CLIP_KIND_SHORT ? "tab-active" : ""}`}
+          onClick={() => {
+            setKindTab(CLIP_KIND_SHORT);
+            setReplaceMode(false);
+            const first = clipsOfKind(allClips, CLIP_KIND_SHORT)[0];
+            if (first) onSelectClip?.(first.id);
+          }}
+        >
+          Shorts ({clipsOfKind(allClips, CLIP_KIND_SHORT).length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class={`tab ${kindTab === CLIP_KIND_FULL ? "tab-active" : ""}`}
+          onClick={() => {
+            setKindTab(CLIP_KIND_FULL);
+            setReplaceMode(false);
+            const first = clipsOfKind(allClips, CLIP_KIND_FULL)[0];
+            if (first) onSelectClip?.(first.id);
+          }}
+        >
+          Fulls ({clipsOfKind(allClips, CLIP_KIND_FULL).length})
+        </button>
+      </div>
+
+      <div class="space-y-2">
+        <div class="flex items-baseline justify-between gap-3">
+          <p class="text-sm font-medium">
+            Galerie {kindTab === CLIP_KIND_FULL ? "fulls" : "shorts"}
+          </p>
+          <p class="text-xs text-base-content/55">
+            Clique pour choisir la vidéo à diffuser · survol pour supprimer
+          </p>
+        </div>
+        <ClipGallery
+          clips={kindClips}
+          activeClipId={creatingNew ? null : activeId}
+          projectId={projectId}
+          disabled={rendering}
+          showNew
+          newLabel={kindTab === CLIP_KIND_FULL ? "Nouveau full" : "Nouveau short"}
+          selectLabel="À diffuser"
+          emptyLabel={
+            kindTab === CLIP_KIND_FULL
+              ? "Aucun full — importe une vidéo"
+              : "Aucun short — génère ou importe"
+          }
+          onSelect={(id) => {
+            setReplaceMode(false);
+            setCreatingNew(false);
+            onSelectClip?.(id);
+          }}
+          onRemove={removeClip}
+          onNew={() => {
+            setReplaceMode(false);
+            setCreatingNew(true);
+            setVideoBlob(null);
+            setVideoMeta(null);
+            setVideoUrl((prev) => {
+              if (prev) URL.revokeObjectURL(prev);
+              return null;
+            });
+            setError("");
+          }}
+        />
+      </div>
 
       <div class="grid gap-2 border border-base-content/10 bg-base-200/40 p-3 text-sm sm:grid-cols-2">
         <p
@@ -319,27 +991,17 @@ export default function ClipStep({
               ? "✗ URL expirée — régénère Artiste"
               : hasPortrait
                 ? "✓"
-                : "✗ requis"}
+                : "✗ requis pour Veo"}
         </p>
-        <p
-          class={
-            coverExpired ? "text-warning" : hasCover ? "text-success" : "text-base-content/50"
-          }
-        >
-          Jaquette{" "}
-          {coverExpired ? "✗ URL expirée" : hasCover ? "✓" : "· optionnelle"}
+        <p class={coverExpired ? "text-warning" : hasCover ? "text-success" : "text-base-content/50"}>
+          Jaquette {coverExpired ? "✗ URL expirée" : hasCover ? "✓" : "· optionnelle"}
         </p>
       </div>
 
-      {(portraitExpired || (!portraitDurable && hasPortrait && /^https?:/i.test(artist?.imageUrl || ""))) && (
+      {(portraitExpired ||
+        (!portraitDurable && hasPortrait && /^https?:/i.test(artist?.imageUrl || ""))) && (
         <div class="border border-warning/40 bg-warning/10 p-4 text-sm space-y-2">
-          <p class="font-medium text-warning">
-            Portrait non durable (URL temporaire type Replicate).
-          </p>
-          <p class="text-base-content/70">
-            Ces liens meurent en ~1 h → erreur 404 sur Veo. Régénère le portrait à l’étape Artiste
-            (il sera sauvé en JPEG local).
-          </p>
+          <p class="font-medium text-warning">Portrait non durable (URL temporaire).</p>
           <button type="button" class="btn btn-warning btn-sm" onClick={onGoToArtist}>
             Régénérer le portrait
           </button>
@@ -348,12 +1010,7 @@ export default function ClipStep({
 
       {coverExpired && !portraitExpired && (
         <div class="border border-warning/40 bg-warning/10 p-3 text-sm space-y-2">
-          <p class="text-warning font-medium">Jaquette : lien temporaire expiré</p>
-          <p class="text-base-content/70">
-            La jaquette a bien été générée, mais Replicate ne garde le fichier qu’environ 1 h.
-            Le lien est mort — ce n’est pas une perte de création, juste le fichier distant.
-            Régénère la jaquette (elle sera sauvée en JPEG local).
-          </p>
+          <p class="font-medium text-warning">Jaquette : lien temporaire expiré</p>
           <button type="button" class="btn btn-ghost btn-sm" onClick={onGoToCover}>
             Régénérer la jaquette
           </button>
@@ -361,109 +1018,244 @@ export default function ClipStep({
       )}
 
       <div class="flex flex-wrap gap-3">
-        <button class="btn btn-outline gap-2" disabled={loading || rendering} onClick={onGeneratePack}>
-          {loading ? <span class="loading loading-spinner loading-sm" /> : <Clapperboard size={18} />}
-          {loading ? "Script…" : "1. Pack scènes"}
-        </button>
-        <button
-          class="btn btn-primary gap-2"
-          disabled={!social || rendering || !hasPortrait || portraitExpired}
-          onClick={generateVeoClip}
-          title={portraitExpired ? "Régénère d’abord le portrait (URL expirée)" : undefined}
-        >
-          {rendering && !isCanvasMock ? (
-            <span class="loading loading-spinner loading-sm" />
-          ) : (
-            <Sparkles size={18} />
-          )}
-          {rendering ? `Veo ${progress}%…` : "2. Générer clip Veo 3"}
-        </button>
+        {kindTab === CLIP_KIND_SHORT && (
+          <>
+            <div class="flex w-full flex-wrap items-center gap-2 text-sm">
+              <span class="text-base-content/60">Moteur vidéo :</span>
+              <label class="label cursor-pointer gap-2 py-0">
+                <input
+                  type="radio"
+                  name="clip-engine"
+                  class="radio radio-sm radio-primary"
+                  checked={clipEngine === "veo"}
+                  onChange={() => setClipEngine("veo")}
+                  disabled={rendering}
+                />
+                <span>Veo (Gemini) — économique</span>
+              </label>
+              <label class="label cursor-pointer gap-2 py-0">
+                <input
+                  type="radio"
+                  name="clip-engine"
+                  class="radio radio-sm"
+                  checked={clipEngine === "seedance"}
+                  onChange={() => setClipEngine("seedance")}
+                  disabled={rendering}
+                />
+                <span>Seedance (Replicate) — ~$1–2 / short</span>
+              </label>
+            </div>
+            <button
+              class="btn btn-outline gap-2"
+              disabled={loading || rendering}
+              onClick={onGeneratePack}
+            >
+              {loading ? <span class="loading loading-spinner loading-sm" /> : <Clapperboard size={18} />}
+              {loading ? "Script…" : "1. Pack scènes"}
+            </button>
+            <button
+              class="btn btn-primary gap-2"
+              disabled={!social || rendering || !hasPortrait || portraitExpired}
+              onClick={generateVeoClip}
+            >
+              {rendering ? <span class="loading loading-spinner loading-sm" /> : <Sparkles size={18} />}
+              {rendering
+                ? `Short ${progress}%…`
+                : replaceMode
+                  ? `Remplacer short (${clipEngine === "seedance" ? "Seedance" : "Veo"} ~${PROMO_SHORT_SECONDS}s)`
+                  : `2. Short ${clipEngine === "seedance" ? "Seedance" : "Veo"} (~${PROMO_SHORT_SECONDS}s)`}
+            </button>
+          </>
+        )}
+
+        <label class={`btn btn-secondary gap-2 ${rendering ? "btn-disabled" : "cursor-pointer"}`}>
+          <Upload size={18} />
+          {replaceMode && activeInTab
+            ? "Remplacer par fichier"
+            : kindTab === CLIP_KIND_FULL
+              ? "Importer un full"
+              : "Importer un short"}
+          <input
+            type="file"
+            accept="video/*,.mp4,.webm,.mov,.m4v"
+            class="hidden"
+            disabled={rendering}
+            onChange={importUserVideo}
+          />
+        </label>
+
+        {activeInTab && (
+          <>
+            <button
+              type="button"
+              class={`btn gap-2 ${replaceMode ? "btn-warning" : "btn-ghost"}`}
+              disabled={rendering}
+              onClick={() => setReplaceMode((v) => !v)}
+            >
+              <RefreshCw size={16} />
+              {replaceMode ? "Remplacement ON" : "Mode remplacer"}
+            </button>
+            <button
+              type="button"
+              class="btn btn-ghost text-error gap-2"
+              disabled={rendering}
+              onClick={removeActive}
+            >
+              <Trash2 size={16} /> Supprimer
+            </button>
+          </>
+        )}
+
         <button class="btn btn-ghost gap-2" disabled={!videoBlob || rendering} onClick={exportOnly}>
           <Film size={18} /> Export fichier
         </button>
-        {hasRealVeo && (
+        {hasPublishableClip && (
           <button type="button" class="btn btn-secondary gap-2" onClick={onGoToSocial}>
-            Diffuser sur les réseaux <ChevronRight size={16} />
+            Diffuser <ChevronRight size={16} />
           </button>
         )}
       </div>
 
-      {isCanvasMock && (
-        <div class="border border-warning/40 bg-warning/10 p-4 text-sm">
-          <p class="font-medium text-warning">Ceci est une maquette locale, pas un clip Veo.</p>
-          <p class="mt-1 text-base-content/70">
-            Relance « Générer clip Veo 3 ». Il faut une clé Gemini avec facturation vidéo (paid preview).
+      {replaceMode && activeInTab && (
+        <p class="text-xs text-warning">
+          Mode remplacer : la prochaine génération / import écrase « {clipLabel(activeClip, 0)} ».
+        </p>
+      )}
+
+      {kindTab === CLIP_KIND_SHORT && (
+        <p class="text-xs text-base-content/55">
+          Pipeline éco : Veo 1×base + 1×extend, brief audio réutilisé entre essais.
+          Seedance (Replicate) reste optionnel (~$1–2). Pas de lip-sync : cutaways /
+          silhouettes.
+        </p>
+      )}
+
+      {(!track?.audioUrl || track?.audioEphemeral || track?.assetMissingReason) && (
+        <div class="border border-warning/40 bg-warning/10 p-4 text-sm space-y-1">
+          <p class="font-medium text-warning">
+            {!track?.audioUrl
+              ? "Morceau audio manquant ou perdu"
+              : "Audio temporaire / à risque"}
           </p>
-          <button
-            type="button"
-            class="btn btn-primary btn-sm mt-3 gap-2"
-            disabled={rendering || !social || !hasPortrait}
-            onClick={generateVeoClip}
-          >
-            <Sparkles size={16} /> Relancer Veo 3
-          </button>
+          <p class="text-base-content/70">
+            Les liens Replicate expirent (~1 h). Va à l’étape 4 → régénère MiniMax ou importe un
+            fichier mp3 (sauvé sur S3).
+          </p>
+          {onGoToTracks ? (
+            <button type="button" class="btn btn-warning btn-sm mt-2" onClick={onGoToTracks}>
+              Réparer le morceau
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      {kindTab === CLIP_KIND_FULL && (
+        <p class="text-sm text-base-content/60">
+          Les fulls sont importés (fichier). Veo reste réservé aux shorts ~{PROMO_SHORT_SECONDS}s.
+        </p>
+      )}
+
+      {isCanvasMock && activeInTab && (
+        <div class="border border-warning/40 bg-warning/10 p-4 text-sm">
+          <p class="font-medium text-warning">Maquette locale — pas un vrai short Veo.</p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="btn btn-primary btn-sm gap-2"
+              disabled={rendering || !social || !hasPortrait}
+              onClick={() => {
+                setReplaceMode(true);
+                generateVeoClip();
+              }}
+            >
+              <Sparkles size={16} /> Remplacer par Veo
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isUserUpload && activeInTab && (
+        <div class="border border-base-content/10 bg-base-200/40 p-3 text-sm text-base-content/70">
+          Clip importé{videoMeta?.fileName ? ` · ${videoMeta.fileName}` : ""}.
         </div>
       )}
 
       {error && (
         <div class="border border-error/40 bg-error/10 p-4 text-sm text-error space-y-2">
           <p>{error}</p>
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs"
-            disabled={rendering || !social}
-            onClick={renderWithCanvas}
-          >
-            Utiliser maquette locale (secours)
-          </button>
+          {kindTab === CLIP_KIND_SHORT && (
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs"
+              disabled={rendering || !social}
+              onClick={renderWithCanvas}
+            >
+              Utiliser maquette locale (secours)
+            </button>
+          )}
         </div>
       )}
-      {rendering && (
+
+      {(rendering || statusMsg) && (
         <div class="space-y-1">
-          <p class="text-xs text-base-content/50">Veo génère un vrai clip cinéma (~1–3 min)…</p>
-          <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
-            <div class="h-full bg-primary transition-all" style={{ width: `${Math.max(progress, 8)}%` }} />
-          </div>
+          <p class="text-xs text-base-content/50">
+            {statusMsg ||
+              (kindTab === CLIP_KIND_SHORT
+                ? "Pipeline : Veo → 1 extension (~2–5 min)…"
+                : "Import en cours…")}
+          </p>
+          {rendering && (
+            <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
+              <div
+                class="h-full bg-primary transition-all"
+                style={{ width: `${Math.max(progress, 8)}%` }}
+              />
+            </div>
+          )}
         </div>
       )}
 
       <audio controls class="w-full max-w-md" src={track.audioUrl} />
 
-      {videoMeta && (
+      {videoMeta && activeInTab && !creatingNew && (
         <p class="text-xs text-base-content/55">
-          Source : {videoMeta.provider}
-          {videoMeta.usedPortrait ? " · portrait" : ""}
-          {videoMeta.usedCover ? " · jaquette" : ""}
+          {videoMeta.kind === CLIP_KIND_FULL ? "Full" : "Short"} · {videoMeta.provider}
+          {videoMeta.durationSec ? ` · ${videoMeta.durationSec}s` : ""}
           {videoMeta.warning ? ` — ${videoMeta.warning}` : ""}
         </p>
       )}
 
-      <div class="animate-rise grid gap-6 border-t border-base-content/10 pt-5 md:grid-cols-[220px_1fr]">
+      <div class="animate-rise grid gap-6 border-t border-base-content/10 pt-5 md:grid-cols-[minmax(220px,1fr)_1fr]">
         <div class="space-y-3">
-          {videoUrl ? (
-            <video
-              class="mx-auto aspect-[9/16] w-full max-w-[220px] rounded-xl bg-base-200 object-cover shadow-xl"
-              src={videoUrl}
-              controls
-              playsInline
-            />
+          {videoUrl && activeInTab && !creatingNew ? (
+            <div
+              class={`relative mx-auto ${previewAspect} w-full ${previewMax} overflow-hidden rounded-xl bg-base-300 shadow-xl`}
+            >
+              <video
+                key={videoUrl}
+                class="absolute inset-0 h-full w-full object-cover"
+                src={videoUrl}
+                controls
+                playsInline
+                muted={!videoMeta?.muxed}
+                loop
+                preload="metadata"
+              />
+            </div>
           ) : (
-            <div class="relative mx-auto aspect-[9/16] w-full max-w-[220px] overflow-hidden rounded-xl bg-gradient-to-b from-secondary/40 via-primary/30 to-base-200 shadow-xl">
-              {(cover?.imageUrl || artist?.imageUrl) && (
-                <img
-                  src={cover?.imageUrl || artist?.imageUrl}
-                  alt=""
-                  class="absolute inset-0 h-full w-full object-cover opacity-50"
-                />
-              )}
-              <div class="absolute inset-x-3 top-1/3 space-y-2 text-center">
-                <p class="font-display text-sm font-bold">{track?.title}</p>
-                <p class="text-[10px] text-base-content/70">{artist?.name}</p>
-                {social?.hook && <p class="text-[10px] text-primary">{social.hook}</p>}
-              </div>
+            <div
+              class={`relative mx-auto flex ${previewAspect} w-full ${previewMax} items-center justify-center overflow-hidden rounded-xl bg-base-300 shadow-xl`}
+            >
+              <p class="px-4 text-center text-xs text-base-content/55">
+                {rendering
+                  ? "Traitement…"
+                  : kindTab === CLIP_KIND_FULL
+                    ? "Aucun full — importe une vidéo"
+                    : "Aucun short — lance Veo ou importe"}
+              </p>
             </div>
           )}
-          {videoUrl && (
+          {videoUrl && activeInTab && !creatingNew && (
             <a class="btn btn-secondary btn-sm w-full gap-1" href={videoUrl} download>
               <Download size={14} /> Télécharger
             </a>
@@ -471,21 +1263,26 @@ export default function ClipStep({
         </div>
 
         <div class="space-y-3">
-          {social ? (
-            <>
-              <p class="text-sm font-medium">Scènes du clip</p>
-              <ol class="list-decimal space-y-1 pl-5 text-sm text-base-content/75">
-                {(social.scenes || []).map((s) => (
-                  <li key={s}>{s}</li>
-                ))}
-              </ol>
-              {social.hook && (
-                <p class="text-sm text-primary">Hook : {social.hook}</p>
-              )}
-            </>
+          {kindTab === CLIP_KIND_SHORT ? (
+            social ? (
+              <>
+                <p class="text-sm font-medium">Scènes du short</p>
+                <ol class="list-decimal space-y-1 pl-5 text-sm text-base-content/75">
+                  {(social.scenes || []).map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ol>
+                {social.hook && <p class="text-sm text-primary">Hook : {social.hook}</p>}
+              </>
+            ) : (
+              <p class="text-sm text-base-content/55">
+                Commence par le pack scènes, puis lance Veo — ou importe directement.
+              </p>
+            )
           ) : (
             <p class="text-sm text-base-content/55">
-              Commence par le pack scènes, puis lance Veo.
+              Vidéo complète du morceau (clip long). Idéal pour YouTube / archives ; TikTok préfère
+              un short 9:16.
             </p>
           )}
         </div>

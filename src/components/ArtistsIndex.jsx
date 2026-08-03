@@ -10,7 +10,7 @@ export default function ArtistsIndex() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/artists?sync=1");
+        const res = await fetch("/api/artists");
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "Erreur");
         setArtists(data.artists || []);

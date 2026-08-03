@@ -4,5 +4,6 @@ import SettingsPage from "../components/SettingsPage.jsx";
 ---
 
 <Layout title="SONOZZ — Paramètres" description="Clés API et connexions SONOZZ.">
-  <SettingsPage client:load />
+  {/* client:only — dépend de localStorage + ?section= (SSR ≠ hydratation) */}
+  <SettingsPage client:only="preact" />
 </Layout>

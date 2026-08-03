@@ -76,6 +76,107 @@ export async function onceCredits(token) {
   return onceFetch(token, "/me/credits");
 }
 
+export async function onceReleaseStatus(token, releaseId) {
+  return onceFetch(token, `/releases/${encodeURIComponent(releaseId)}/status`);
+}
+
+const MCP_BASE = "https://beta.once.app/api/mcp";
+
+/**
+ * Call an ONCE MCP tool via JSON-RPC (Bearer PAT / OAuth token).
+ * Performance analytics live here — not on the REST /v1 surface.
+ */
+export async function onceMcpCall(token, name, args = {}) {
+  const res = await fetch(MCP_BASE, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "X-Once-Provenance": "SONOZZ",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  });
+
+  const raw = await res.text();
+  let data = {};
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    // Streamable HTTP may return SSE; extract first JSON-RPC payload
+    const match = raw.match(/\{[\s\S]*"jsonrpc"[\s\S]*\}/);
+    if (match) {
+      try {
+        data = JSON.parse(match[0]);
+      } catch {
+        data = {};
+      }
+    }
+  }
+
+  if (!res.ok) {
+    const msg =
+      data?.error?.message || data?.message || data?.error || `ONCE MCP HTTP ${res.status}`;
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  if (data.error) {
+    throw new Error(data.error.message || data.error.code || "ONCE MCP error");
+  }
+
+  const text = data?.result?.content?.find((c) => c?.type === "text")?.text;
+  if (text == null) return data?.result ?? data;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+export async function oncePerformanceSummary(token, opts = {}) {
+  return onceMcpCall(token, "get_performance_summary", {
+    topReleasesLimit: opts.topReleasesLimit ?? 10,
+    topStoresLimit: opts.topStoresLimit ?? 8,
+    ...(opts.fromDate ? { fromDate: opts.fromDate } : {}),
+    ...(opts.toDate ? { toDate: opts.toDate } : {}),
+  });
+}
+
+export async function onceReleasePerformance(token, releaseId, opts = {}) {
+  return onceMcpCall(token, "get_release_performance", {
+    releaseId,
+    includeTracks: opts.includeTracks !== false,
+    ...(opts.fromDate ? { fromDate: opts.fromDate } : {}),
+    ...(opts.toDate ? { toDate: opts.toDate } : {}),
+  });
+}
+
+/** Normalize GET /releases/:id/status into a stable shape for the hub. */
+export function normalizeOnceDelivery(raw = {}) {
+  const storesRaw =
+    raw.storeStatuses || raw.stores || raw.store_statuses || raw.distribution || [];
+  const stores = (Array.isArray(storesRaw) ? storesRaw : []).map((s) => {
+    const name = s.storeName || s.name || s.store || s.distributorName || "Store";
+    const status = s.statusText || s.status || s.state || s.deliveryStatus || "—";
+    const url = s.urlInStore || s.url || s.storeUrl || s.link || null;
+    return { name, status, url, storeId: s.storeId ?? s.id ?? null };
+  });
+  const spotify = stores.find((s) => /spotify/i.test(s.name));
+  return {
+    aggregateStatus:
+      raw.aggregateStatus || raw.status || raw.aggregate_status || raw.state || null,
+    pending: Boolean(raw.pending),
+    fallback: Boolean(raw.fallback),
+    stores,
+    spotifyUrl: spotify?.url || null,
+    spotifyStatus: spotify?.status || null,
+  };
+}
+
 export async function uploadOnceFromUrl(token, { type, url, fileName }) {
   return onceFetch(token, "/files/from-url", {
     method: "POST",
@@ -274,6 +375,15 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
   const coverArtFileUrl = await resolveCoverFileUrl(token, cover, { artist, track, keys });
   const audioFileUrl = await resolveAudioFileUrl(token, track);
 
+  const audioLang = (
+    lyrics?.language ||
+    artist?.language ||
+    "fr"
+  )
+    .toString()
+    .toLowerCase()
+    .slice(0, 2);
+
   const releasePayload = {
     title,
     primary_artist_name: artistName,
@@ -281,8 +391,8 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
     sub_genre,
     release_date: releaseDateISO(days),
     label,
-    audio_language: "fr",
-    metadata_language: "fr",
+    audio_language: audioLang,
+    metadata_language: audioLang,
     distribution_store_ids: [1, 9, 13, 319, 17], // Apple, Spotify, YT Music, TikTok, Amazon
     pline_year: year,
     pline_owner: label,
@@ -300,7 +410,7 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
     primary_artist_name: artistName,
     explicit_flag: explicit,
     track_type: "original",
-    language: "fr",
+    language: audioLang,
     pline_year: year,
     pline_owner: label,
     cline_year: year,

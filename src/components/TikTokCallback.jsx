@@ -65,7 +65,15 @@ export default function TikTokCallback() {
           ...keys,
           tiktokAccessToken: data.accessToken || "",
           tiktokRefreshToken: data.refreshToken || keys.tiktokRefreshToken || "",
+          tiktokScope: data.scope || "",
         });
+        if (data.scope && !/video\.publish/i.test(data.scope)) {
+          setError(
+            `Connecté, mais sans video.publish (reçu : ${data.scope}). Active Direct Post + scope video.publish, puis Reconnecter.`,
+          );
+          setStatus("Scope incomplet");
+          return;
+        }
         sessionStorage.removeItem(STATE_KEY);
         sessionStorage.removeItem(VERIFIER_KEY);
         setStatus("TikTok connecté. Tu peux fermer cet onglet.");

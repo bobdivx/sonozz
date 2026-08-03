@@ -102,15 +102,35 @@ export async function upsertArtistFromProject(artist, { preferredSlug } = {}) {
   return { id, slug, name: artist.name, profile, createdAt: now, updatedAt: now };
 }
 
+function lightAssetUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("data:") && url.length <= 500_000) return url;
+  return null;
+}
+
 /**
  * Importe les artistes depuis les projets existants (historique avant la table artists).
  */
 export async function syncArtistsFromProjects() {
   await ensureArtistSchema();
   const db = getDb();
+  // Pas de project_json entier — extraction légère uniquement
   const res = await db.execute({
     sql: `
-      SELECT id, artist_name, artist_slug, project_json, updated_at
+      SELECT
+        id,
+        artist_name,
+        artist_slug,
+        updated_at,
+        json_extract(project_json, '$.artist.name') AS artist_name_json,
+        json_extract(project_json, '$.artist.aka') AS artist_aka,
+        json_extract(project_json, '$.artist.slug') AS artist_slug_json,
+        json_extract(project_json, '$.artist.bio') AS artist_bio,
+        json_extract(project_json, '$.artist.genre') AS artist_genre,
+        json_extract(project_json, '$.artist.city') AS artist_city,
+        json_extract(project_json, '$.artist.mood') AS artist_mood,
+        json_extract(project_json, '$.artist.imageUrl') AS artist_image
       FROM projects
       ORDER BY updated_at DESC
       LIMIT 200
@@ -121,25 +141,23 @@ export async function syncArtistsFromProjects() {
   const seen = new Set();
 
   for (const row of res.rows) {
-    let project = {};
-    try {
-      project = JSON.parse(row.project_json || "{}");
-    } catch {
-      continue;
-    }
+    const name = row.artist_name_json || row.artist_name;
+    if (!name) continue;
 
-    const artist =
-      project.artist && project.artist.name
-        ? project.artist
-        : row.artist_name
-          ? { name: row.artist_name }
-          : null;
-
-    if (!artist?.name) continue;
+    const imageUrl = lightAssetUrl(row.artist_image);
+    const artist = {
+      name,
+      aka: row.artist_aka || undefined,
+      slug: row.artist_slug_json || undefined,
+      bio: row.artist_bio || undefined,
+      genre: row.artist_genre || undefined,
+      city: row.artist_city || undefined,
+      mood: row.artist_mood || undefined,
+      imageUrl: imageUrl || undefined,
+    };
 
     const preferredSlug = row.artist_slug || artist.slug || slugify(artist.aka || artist.name);
     if (seen.has(preferredSlug)) {
-      // Lier le projet même si déjà sync
       await db.execute({
         sql: `UPDATE projects SET artist_slug = ? WHERE id = ?`,
         args: [preferredSlug, row.id],
@@ -189,15 +207,23 @@ export async function listArtists(limit = 50) {
     });
   }
 
-  return res.rows.map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    name: row.name,
-    profile: row.profile_json ? JSON.parse(row.profile_json) : {},
-    stats: row.stats_json ? JSON.parse(row.stats_json) : {},
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  return res.rows.map((row) => {
+    const profile = row.profile_json ? JSON.parse(row.profile_json) : {};
+    // Index : pas de data URL lourdes (thumb http ou rien)
+    if (profile.imageUrl && String(profile.imageUrl).startsWith("data:")) {
+      profile.imageUrl =
+        String(profile.imageUrl).length <= 200_000 ? profile.imageUrl : null;
+    }
+    return {
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      profile,
+      stats: row.stats_json ? JSON.parse(row.stats_json) : {},
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  });
 }
 
 export async function getArtistBySlug(slug) {
@@ -224,13 +250,29 @@ export async function listArtistReleases(slug, limit = 40) {
   await ensureArtistSchema();
   const db = getDb();
 
-  // Par slug dédié OU nom artiste (projets anciens)
   const artist = await getArtistBySlug(slug);
   const name = artist?.name || slug;
 
+  // Ne jamais SELECT project_json entier (peut peser des dizaines de Mo : clip base64).
+  // json_extract côté Turso ne renvoie que les champs utiles.
   const res = await db.execute({
     sql: `
-      SELECT id, title, artist_name, track_title, status, artist_slug, project_json, created_at, updated_at
+      SELECT
+        id,
+        title,
+        artist_name,
+        track_title,
+        status,
+        artist_slug,
+        created_at,
+        updated_at,
+        json_extract(project_json, '$.track.title') AS track_title_json,
+        json_extract(project_json, '$.lyrics.title') AS lyrics_title,
+        json_extract(project_json, '$.track.audioUrl') AS audio_url,
+        json_extract(project_json, '$.cover.imageUrl') AS cover_url,
+        json_extract(project_json, '$.distrokid.status') AS once_status,
+        json_extract(project_json, '$.distrokid.provider') AS once_provider,
+        json_extract(project_json, '$.distrokid.releaseId') AS release_id
       FROM projects
       WHERE artist_slug = ? OR artist_name = ?
       ORDER BY updated_at DESC
@@ -240,35 +282,188 @@ export async function listArtistReleases(slug, limit = 40) {
   });
 
   return res.rows.map((row) => {
-    let project = {};
-    try {
-      project = JSON.parse(row.project_json || "{}");
-    } catch {
-      project = {};
-    }
+    const audioUrl = lightAssetUrl(row.audio_url);
+    const coverUrl = lightAssetUrl(row.cover_url);
+    const onceStatus = row.once_status || null;
     return {
       id: row.id,
       title: row.title,
       artistName: row.artist_name,
-      trackTitle: row.track_title || project.track?.title || project.lyrics?.title || null,
+      trackTitle:
+        row.track_title || row.track_title_json || row.lyrics_title || null,
       status: row.status,
       slug: row.artist_slug || slug,
-      hasAudio: Boolean(project.track?.audioUrl),
-      hasCover: Boolean(project.cover?.imageUrl),
+      hasAudio: Boolean(row.audio_url),
+      hasCover: Boolean(row.cover_url),
       distributed: Boolean(
-        project.distrokid?.status === "submitted" || project.distrokid?.provider === "once",
+        onceStatus === "submitted" || row.once_provider === "once",
       ),
-      onceStatus: project.distrokid?.status || null,
-      releaseId: project.distrokid?.releaseId || null,
-      coverUrl: project.cover?.imageUrl || null,
-      audioUrl: project.track?.audioUrl || null,
+      onceStatus,
+      releaseId: row.release_id || null,
+      coverUrl,
+      audioUrl,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
   });
 }
 
-export async function computeArtistStats(slug) {
+/**
+ * Catalogue jouable : tous les projets avec audioUrl (léger, sans project_json entier).
+ */
+export async function listLibraryTracks(limit = 200) {
+  await ensureArtistSchema();
+  const db = getDb();
+  const res = await db.execute({
+    sql: `
+      SELECT
+        id,
+        title,
+        artist_name,
+        track_title,
+        status,
+        artist_slug,
+        created_at,
+        updated_at,
+        json_extract(project_json, '$.track.title') AS track_title_json,
+        json_extract(project_json, '$.lyrics.title') AS lyrics_title,
+        json_extract(project_json, '$.track.audioUrl') AS audio_url,
+        json_extract(project_json, '$.cover.imageUrl') AS cover_url,
+        json_extract(project_json, '$.track.duration') AS duration,
+        json_extract(project_json, '$.artist.imageUrl') AS artist_image
+      FROM projects
+      WHERE json_extract(project_json, '$.track.audioUrl') IS NOT NULL
+        AND length(json_extract(project_json, '$.track.audioUrl')) > 8
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `,
+    args: [limit],
+  });
+
+  return res.rows
+    .map((row) => {
+      const audioUrl = lightAssetUrl(row.audio_url);
+      if (!audioUrl) return null;
+      const coverUrl = lightAssetUrl(row.cover_url);
+      const artistImage = lightAssetUrl(row.artist_image);
+      return {
+        id: row.id,
+        title: row.title,
+        artistName: row.artist_name || "Artiste inconnu",
+        trackTitle:
+          row.track_title || row.track_title_json || row.lyrics_title || row.title || "Sans titre",
+        slug: row.artist_slug || null,
+        status: row.status,
+        coverUrl,
+        artistImage,
+        audioUrl,
+        duration: row.duration || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    })
+    .filter(Boolean);
+}
+
+async function enrichStatsFromOnce(stats, releases, onceToken) {
+  const {
+    onceReleaseStatus,
+    oncePerformanceSummary,
+    onceReleasePerformance,
+    normalizeOnceDelivery,
+  } = await import("./once.js");
+
+  const withIds = releases.filter((r) => r.releaseId);
+  const delivery = {};
+  const releaseStreams = {};
+
+  await Promise.all(
+    withIds.slice(0, 20).map(async (r) => {
+      try {
+        const raw = await onceReleaseStatus(onceToken, r.releaseId);
+        delivery[r.releaseId] = normalizeOnceDelivery(raw);
+      } catch (e) {
+        delivery[r.releaseId] = { error: e.message || "Statut ONCE indisponible" };
+      }
+    }),
+  );
+
+  let streams = null;
+  try {
+    const summary = await oncePerformanceSummary(onceToken);
+    const kpis = summary?.kpis || {};
+    streams = {
+      fromDate: summary?.fromDate || null,
+      toDate: summary?.toDate || null,
+      totalStreams: kpis.totalStreams ?? 0,
+      avgDailyStreams: kpis.avgDailyStreams ?? null,
+      periodChangePct: kpis.periodChangePct ?? null,
+      topStore: kpis.topStore || null,
+      topStores: summary?.topStores || [],
+      topReleases: summary?.topReleases || [],
+      catalogReleases: summary?.releases || null,
+      source: "once-mcp",
+    };
+  } catch (e) {
+    streams = {
+      error: e.message || "Analytics ONCE indisponibles",
+      source: "once-mcp",
+    };
+  }
+
+  // Per-release streams for hub catalogue (cap to avoid rate limits)
+  await Promise.all(
+    withIds.slice(0, 8).map(async (r) => {
+      try {
+        const perf = await onceReleasePerformance(onceToken, r.releaseId, {
+          includeTracks: false,
+        });
+        releaseStreams[r.releaseId] = {
+          totalStreams: perf?.kpis?.totalStreams ?? 0,
+          avgDailyStreams: perf?.kpis?.avgDailyStreams ?? null,
+          periodChangePct: perf?.kpis?.periodChangePct ?? null,
+          topStore: perf?.kpis?.topStore || null,
+          distributors: perf?.distributors || [],
+          source: perf?.source || "once-mcp",
+        };
+      } catch (e) {
+        releaseStreams[r.releaseId] = { error: e.message || "Streams KO" };
+      }
+    }),
+  );
+
+  const liveOnSpotify = Object.values(delivery).filter((d) =>
+    /live|distributed|delivered/i.test(
+      `${d.spotifyStatus || ""} ${d.aggregateStatus || ""}`,
+    ),
+  ).length;
+
+  stats.delivery = delivery;
+  stats.releaseStreams = releaseStreams;
+  stats.streams = streams;
+  stats.liveOnSpotify = liveOnSpotify;
+  stats.releases = (stats.releases || []).map((r) => ({
+    ...r,
+    delivery: r.releaseId ? delivery[r.releaseId] || null : null,
+    streams: r.releaseId ? releaseStreams[r.releaseId] || null : null,
+  }));
+
+  if (streams && !streams.error) {
+    const change =
+      streams.periodChangePct == null
+        ? ""
+        : ` (${streams.periodChangePct > 0 ? "+" : ""}${streams.periodChangePct}% vs période préc.)`;
+    stats.streamsNote = `ONCE · ${streams.totalStreams ?? 0} streams (30 j)${change}. Revenus via ONCE / Spotify for Artists.`;
+  } else if (streams?.error) {
+    stats.streamsNote = `Stats catalogue OK. Streams ONCE : ${streams.error}. Vérifie le token ONCE ou ouvre Spotify for Artists.`;
+  }
+
+  return stats;
+}
+
+export async function computeArtistStats(slug, { onceToken } = {}) {
+  const artist = await getArtistBySlug(slug);
+  const prev = artist?.stats || {};
   const releases = await listArtistReleases(slug, 100);
   const stats = {
     tracks: releases.length,
@@ -283,11 +478,36 @@ export async function computeArtistStats(slug) {
       title: r.trackTitle || r.title,
       status: r.onceStatus || r.status,
       releaseId: r.releaseId,
+      delivery: r.releaseId && prev.delivery?.[r.releaseId] ? prev.delivery[r.releaseId] : null,
+      streams: r.releaseId && prev.releaseStreams?.[r.releaseId] ? prev.releaseStreams[r.releaseId] : null,
     })),
+    links: {
+      once: "https://once.app/",
+      spotifyForArtists: "https://artists.spotify.com/",
+    },
     streamsNote:
-      "Les streams Spotify/Apple se voient dans Spotify for Artists / ONCE après livraison stores (24–72 h+).",
+      prev.streamsNote ||
+      "Rafraîchis avec ton token ONCE pour sync statut stores + streams. Sinon : Spotify for Artists / ONCE (24–72 h+ après livraison).",
     updatedAt: new Date().toISOString(),
   };
+
+  // Sans token : ne pas écraser le dernier sync ONCE (streams / delivery)
+  if (!onceToken?.trim()) {
+    if (prev.streams) stats.streams = prev.streams;
+    if (prev.delivery) stats.delivery = prev.delivery;
+    if (prev.releaseStreams) stats.releaseStreams = prev.releaseStreams;
+    if (prev.liveOnSpotify != null) stats.liveOnSpotify = prev.liveOnSpotify;
+  } else {
+    try {
+      await enrichStatsFromOnce(stats, releases, onceToken.trim());
+    } catch (e) {
+      stats.streamsNote = `Enrichissement ONCE échoué : ${e.message}`;
+      stats.streams = { error: e.message, source: "once-mcp" };
+      // garder l’ancien delivery si le sync partiel échoue tôt
+      if (prev.delivery) stats.delivery = prev.delivery;
+      if (prev.releaseStreams) stats.releaseStreams = prev.releaseStreams;
+    }
+  }
 
   const db = getDb();
   await db.execute({
@@ -302,7 +522,19 @@ export async function getArtistHub(slug) {
   const artist = await getArtistBySlug(slug);
   if (!artist) return null;
   const releases = await listArtistReleases(slug);
-  const stats = await computeArtistStats(slug);
+
+  // Stats fraîches (< 10 min) : pas de recalcul (évite écritures Turso inutiles)
+  const cachedAt = artist.stats?.updatedAt ? Date.parse(artist.stats.updatedAt) : 0;
+  const fresh = cachedAt && Date.now() - cachedAt < 10 * 60 * 1000;
+  const stats = fresh
+    ? {
+        ...artist.stats,
+        tracks: releases.length,
+        withAudio: releases.filter((r) => r.hasAudio).length,
+        withCover: releases.filter((r) => r.hasCover).length,
+      }
+    : await computeArtistStats(slug);
+
   return { ...artist, stats, releases };
 }
 
@@ -326,6 +558,8 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
     distrokid: null,
     social: null,
     clip: null,
+    clips: [],
+    activeClipId: null,
   };
 
   const seed = {

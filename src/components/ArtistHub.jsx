@@ -3,12 +3,32 @@ import {
   AudioLines,
   BarChart3,
   ExternalLink,
+  Headphones,
   Music2,
   Plus,
   RefreshCw,
   UserRound,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
+import { loadKeys } from "../lib/keys.js";
+
+function formatStreams(n) {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  return Number(n).toLocaleString("fr-FR");
+}
+
+function formatPct(n) {
+  if (n == null || Number.isNaN(Number(n))) return null;
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${Number(n).toFixed(1)} %`;
+}
+
+function storeBadgeClass(status = "") {
+  if (/live|distributed|delivered/i.test(status)) return "text-success";
+  if (/fail|error|reject/i.test(status)) return "text-error";
+  if (/pending|queued|process/i.test(status)) return "text-warning";
+  return "text-base-content/55";
+}
 
 export default function ArtistHub({ slug }) {
   const [data, setData] = useState(null);
@@ -40,16 +60,22 @@ export default function ArtistHub({ slug }) {
   async function refreshStats() {
     setBusy(true);
     setMsg("");
+    setError("");
     try {
+      const keys = loadKeys();
       const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "refresh-stats" }),
+        body: JSON.stringify({ action: "refresh-stats", keys }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Stats KO");
       setData((prev) => (prev ? { ...prev, stats: json.stats } : prev));
-      setMsg("Stats mises à jour");
+      setMsg(
+        json.onceSynced
+          ? "Stats + statut ONCE / streams synchronisés"
+          : "Stats catalogue OK — ajoute un token ONCE dans Réglages pour sync streams",
+      );
       await load();
     } catch (e) {
       setError(e.message);
@@ -58,7 +84,7 @@ export default function ArtistHub({ slug }) {
     }
   }
 
-  async function createTrack({ variantOf } = {}) {
+  async function createTrack() {
     setBusy(true);
     setError("");
     setMsg("");
@@ -69,7 +95,6 @@ export default function ArtistHub({ slug }) {
         body: JSON.stringify({
           action: "new-track",
           theme: theme.trim(),
-          variantOf: variantOf || null,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -84,6 +109,14 @@ export default function ArtistHub({ slug }) {
   const profile = data?.profile || {};
   const stats = data?.stats || {};
   const releases = data?.releases || [];
+  const streams = stats.streams || {};
+  const deliveryMap = stats.delivery || {};
+  const releaseStreamsMap = stats.releaseStreams || {};
+  const links = stats.links || {
+    once: "https://once.app/",
+    spotifyForArtists: "https://artists.spotify.com/",
+  };
+  const changeLabel = formatPct(streams.periodChangePct);
 
   return (
     <AppShell active="artistes">
@@ -94,11 +127,19 @@ export default function ArtistHub({ slug }) {
         </a>
         <a
           class="btn btn-ghost btn-sm gap-1"
-          href="https://once.app/"
+          href={links.once}
           target="_blank"
           rel="noreferrer"
         >
           ONCE <ExternalLink size={12} />
+        </a>
+        <a
+          class="btn btn-ghost btn-sm gap-1"
+          href={links.spotifyForArtists}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Spotify for Artists <ExternalLink size={12} />
         </a>
       </div>
 
@@ -136,6 +177,14 @@ export default function ArtistHub({ slug }) {
                 {profile.city && <span>· {profile.city}</span>}
                 {profile.mood && <span>· {profile.mood}</span>}
               </div>
+              {releases.some((r) => r.audioUrl) && (
+                <a
+                  class="btn btn-primary gap-2"
+                  href={`/play?artist=${encodeURIComponent(data.slug)}&play=1`}
+                >
+                  <Headphones size={16} /> Écouter dans Play
+                </a>
+              )}
             </div>
           </header>
 
@@ -153,7 +202,7 @@ export default function ArtistHub({ slug }) {
                 ["Morceaux", stats.tracks ?? releases.length],
                 ["Avec audio", stats.withAudio ?? 0],
                 ["Soumis ONCE", stats.submitted ?? 0],
-                ["Distribués", stats.distributed ?? 0],
+                ["Live Spotify", stats.liveOnSpotify ?? "—"],
               ].map(([label, value]) => (
                 <div key={label} class="border border-base-content/10 bg-base-200/40 px-4 py-3">
                   <p class="text-xs uppercase tracking-wider text-base-content/45">{label}</p>
@@ -161,6 +210,55 @@ export default function ArtistHub({ slug }) {
                 </div>
               ))}
             </div>
+
+            {(streams.totalStreams != null || streams.error) && (
+              <div class="space-y-3 border border-base-content/10 bg-base-200/30 p-4">
+                <div class="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <p class="text-xs uppercase tracking-wider text-base-content/45">
+                      Streams ONCE
+                      {streams.fromDate && streams.toDate
+                        ? ` · ${streams.fromDate} → ${streams.toDate}`
+                        : " · 30 j"}
+                    </p>
+                    {streams.error ? (
+                      <p class="mt-1 text-sm text-warning">{streams.error}</p>
+                    ) : (
+                      <p class="font-display text-4xl font-bold">{formatStreams(streams.totalStreams)}</p>
+                    )}
+                  </div>
+                  {!streams.error && (
+                    <div class="text-right text-sm text-base-content/60">
+                      {streams.avgDailyStreams != null && (
+                        <p>~{formatStreams(Math.round(streams.avgDailyStreams))} / jour</p>
+                      )}
+                      {changeLabel && <p class={streams.periodChangePct >= 0 ? "text-success" : "text-error"}>{changeLabel}</p>}
+                      {streams.topStore?.name && (
+                        <p>
+                          Top : {streams.topStore.name}
+                          {streams.topStore.share != null
+                            ? ` (${Math.round(streams.topStore.share * 100)} %)`
+                            : ""}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {!streams.error && Array.isArray(streams.topStores) && streams.topStores.length > 0 && (
+                  <ul class="flex flex-wrap gap-2 text-xs text-base-content/60">
+                    {streams.topStores.slice(0, 6).map((s) => (
+                      <li key={s.id ?? s.name} class="border border-base-content/10 px-2 py-1">
+                        {s.name} · {formatStreams(s.total)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p class="text-xs text-base-content/45">
+                  Les revenus restent chez ONCE (puis Spotify for Artists pour le détail). SONOZZ ne reverse pas.
+                </p>
+              </div>
+            )}
+
             <p class="text-xs text-base-content/45">{stats.streamsNote}</p>
           </section>
 
@@ -178,7 +276,7 @@ export default function ArtistHub({ slug }) {
                 value={theme}
                 onInput={(e) => setTheme(e.currentTarget.value)}
               />
-              <button type="button" class="btn btn-primary gap-2" disabled={busy} onClick={() => createTrack()}>
+              <button type="button" class="btn btn-primary gap-2" disabled={busy} onClick={createTrack}>
                 {busy ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={16} />}
                 Créer dans le studio
               </button>
@@ -193,7 +291,15 @@ export default function ArtistHub({ slug }) {
               <p class="text-sm text-base-content/55">Aucun morceau encore — crée le premier ci-dessus.</p>
             ) : (
               <ul class="space-y-3">
-                {releases.map((r) => (
+                {releases.map((r) => {
+                  const delivery = r.releaseId
+                    ? deliveryMap[r.releaseId] || stats.releases?.find((x) => x.id === r.id)?.delivery
+                    : null;
+                  const rStreams = r.releaseId
+                    ? releaseStreamsMap[r.releaseId] ||
+                      stats.releases?.find((x) => x.id === r.id)?.streams
+                    : null;
+                  return (
                   <li
                     key={r.id}
                     class="flex flex-wrap items-center gap-4 border border-base-content/10 bg-base-200/30 p-3"
@@ -212,27 +318,62 @@ export default function ArtistHub({ slug }) {
                         {r.releaseId ? ` · ONCE ${r.releaseId}` : ""}
                         {r.hasAudio ? " · audio" : ""}
                       </p>
+                      {delivery && !delivery.error && (
+                        <p class={`mt-1 text-xs ${storeBadgeClass(delivery.spotifyStatus || delivery.aggregateStatus)}`}>
+                          {delivery.aggregateStatus ? `${delivery.aggregateStatus}` : ""}
+                          {delivery.spotifyStatus ? ` · Spotify: ${delivery.spotifyStatus}` : ""}
+                          {rStreams?.totalStreams != null && !rStreams.error
+                            ? ` · ${formatStreams(rStreams.totalStreams)} streams`
+                            : ""}
+                        </p>
+                      )}
+                      {delivery?.error && (
+                        <p class="mt-1 text-xs text-warning">{delivery.error}</p>
+                      )}
+                      {delivery?.stores?.length > 0 && (
+                        <ul class="mt-1 flex flex-wrap gap-1.5 text-[11px] text-base-content/50">
+                          {delivery.stores.slice(0, 5).map((s) => (
+                            <li key={`${s.name}-${s.status}`}>
+                              {s.url ? (
+                                <a href={s.url} target="_blank" rel="noreferrer" class="underline-offset-2 hover:underline">
+                                  {s.name}: {s.status}
+                                </a>
+                              ) : (
+                                <span>
+                                  {s.name}: {s.status}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                     <div class="flex flex-wrap gap-2">
+                      {delivery?.spotifyUrl && (
+                        <a
+                          class="btn btn-ghost btn-sm gap-1"
+                          href={delivery.spotifyUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Spotify <ExternalLink size={12} />
+                        </a>
+                      )}
                       <a class="btn btn-ghost btn-sm" href={`/?project=${r.id}`}>
                         Ouvrir
                       </a>
-                      <button
-                        type="button"
-                        class="btn btn-outline btn-sm"
-                        disabled={busy}
-                        onClick={() =>
-                          createTrack({ variantOf: r.trackTitle || r.title })
-                        }
-                      >
-                        Variante / suite
-                      </button>
                       {r.audioUrl && (
-                        <audio controls class="h-8 max-w-[180px]" src={r.audioUrl} />
+                        <a
+                          class="btn btn-primary btn-sm gap-1"
+                          href={`/play?artist=${encodeURIComponent(data.slug)}&track=${encodeURIComponent(r.id)}&play=1`}
+                        >
+                          <Headphones size={12} /> Lire
+                        </a>
                       )}
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </section>

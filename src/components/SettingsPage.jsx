@@ -13,6 +13,7 @@ import {
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import { KEY_FIELDS, loadKeys, saveKeys, keysReady, tiktokRedirectUri } from "../lib/keys.js";
+import { formatQuotaReset, getTikTokQuota } from "../lib/tiktokQuota.js";
 import { api } from "../lib/apiClient.js";
 
 const TIKTOK_STATE_KEY = "sonozz.tiktok.oauth.state";
@@ -134,6 +135,44 @@ export default function SettingsPage() {
     }
   }
 
+  /** Un clic : invalide l’ancien token et ouvre TikTok avec video.upload. */
+  async function handleReconnectTikTok() {
+    setMessage("");
+    setTiktokPreview(null);
+    const clientKey = keys.tiktokClientKey?.trim();
+    const clientSecret = keys.tiktokClientSecret?.trim();
+    if (!clientKey || !clientSecret) {
+      setMessage("Renseigne d’abord Client Key + Secret, puis Enregistrer.");
+      selectSection("reseaux");
+      return;
+    }
+
+    const cleared = {
+      ...keys,
+      tiktokAccessToken: "",
+      tiktokRefreshToken: "",
+      tiktokScope: "",
+    };
+    setKeys(cleared);
+    saveKeys(cleared);
+    setConnectingTikTok(true);
+    try {
+      const data = await api.tiktokAuthUrl();
+      if (!data?.url) throw new Error("URL OAuth TikTok manquante");
+      sessionStorage.setItem(TIKTOK_STATE_KEY, data.state);
+      if (data.codeVerifier) {
+        sessionStorage.setItem(TIKTOK_VERIFIER_KEY, data.codeVerifier);
+      } else {
+        sessionStorage.removeItem(TIKTOK_VERIFIER_KEY);
+      }
+      setMessage(`Redirection TikTok (scopes : ${data.scopes})…`);
+      window.location.href = data.url;
+    } catch (e) {
+      setMessage(e.message);
+      setConnectingTikTok(false);
+    }
+  }
+
   function handleConfirmTikTokRedirect() {
     if (!tiktokPreview?.url) return;
     sessionStorage.setItem(TIKTOK_STATE_KEY, tiktokPreview.state);
@@ -195,7 +234,13 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <div class="space-y-5">
+          <form
+            class="space-y-5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSave();
+            }}
+          >
             {activeGroup.items.map((field) => (
               <label key={field.id} class="form-control block w-full max-w-xl">
                 <span class="mb-1 flex items-center justify-between gap-2 text-sm">
@@ -230,6 +275,7 @@ export default function SettingsPage() {
                   <input
                     type={field.inputType || "password"}
                     autocomplete="off"
+                    name={field.id}
                     class="input input-bordered w-full bg-base-200 font-mono text-sm"
                     placeholder={field.placeholder}
                     value={keys[field.id] || ""}
@@ -239,7 +285,7 @@ export default function SettingsPage() {
                 <span class="mt-1 text-xs text-base-content/45">{field.help}</span>
               </label>
             ))}
-          </div>
+          </form>
 
           {section === "reseaux" && redirectUri && (
             <div class="mt-6 max-w-xl space-y-3 border border-warning/30 bg-warning/5 p-4 text-xs text-base-content/80">
@@ -259,34 +305,34 @@ export default function SettingsPage() {
                   Secret).
                 </li>
                 <li>
-                  Produits → ajoute <strong>Login Kit</strong>.
+                  Produits → <strong>Login Kit</strong> + <strong>Content Posting API</strong> avec
+                  <strong> Direct Post</strong> ON. Scope <code>video.publish</code> obligatoire.
+                </li>
+                <li>
                   {isLocalhost ? (
                     <>
-                      {" "}
-                      En local, active la plateforme <strong>Desktop</strong> et enregistre cette URI{" "}
+                      En local, Login Kit plateforme <strong>Desktop</strong> avec cette URI{" "}
                       <em>exactement</em> :
                     </>
                   ) : (
                     <>
-                      {" "}
-                      En prod, active la plateforme <strong>Web</strong> et enregistre cette URI{" "}
+                      En prod, Login Kit plateforme <strong>Web</strong> avec cette URI{" "}
                       <em>exactement</em> :
                     </>
                   )}
                   <code class="mt-1 block break-all font-mono text-[11px] text-primary">{redirectUri}</code>
                 </li>
                 <li>
-                  Si Login Kit n’a que <strong>Web</strong> (HTTPS), le flux <code>localhost</code> échoue avec
-                  « client_key ». Connecte-toi alors sur{" "}
+                  Si Login Kit n’a que <strong>Web</strong> (HTTPS), le flux <code>localhost</code> échoue.
+                  Connecte-toi alors sur{" "}
                   <a class="link text-secondary" href="https://sonozz.briseteia.me/parametres?section=reseaux">
                     sonozz.briseteia.me
                   </a>{" "}
-                  avec Redirect URI{" "}
-                  <code class="text-primary">https://sonozz.briseteia.me/tiktok/callback</code>.
+                  (<code class="text-primary">https://sonozz.briseteia.me/tiktok/callback</code>).
                 </li>
                 <li>
-                  Scope OAuth actuel : <code>user.info.basic</code> seulement (évite le rejet tant que Content
-                  Posting / video.upload n’est pas approuvé).
+                  Content Posting activé ≠ token à jour. Clique <strong>Reconnecter</strong> et accepte
+                  <code>video.publish</code> (Direct Post). Sans ça, rien ne part sur le profil.
                 </li>
               </ol>
             </div>
@@ -330,21 +376,61 @@ export default function SettingsPage() {
 
           {message && <p class="mt-4 text-sm text-primary">{message}</p>}
 
+          {section === "reseaux" && (
+            <div class="mt-4 max-w-xl border border-base-content/10 bg-base-200/40 p-3 text-xs space-y-1">
+              <p>
+                Scope token actuel :{" "}
+                <code class={/video\.publish/i.test(keys.tiktokScope || "") ? "text-success" : "text-warning"}>
+                  {keys.tiktokScope?.trim() || "(vide — reconnecte)"}
+                </code>
+              </p>
+              {!/video\.publish/i.test(keys.tiktokScope || "") && (
+                <p class="text-warning">
+                  Il manque <code>video.publish</code>. Clique Reconnecter et accepte Direct Post.
+                  Sur developers.tiktok.com → ton app → <strong>Scopes</strong> : coche video.publish.
+                </p>
+              )}
+              {(() => {
+                const q = getTikTokQuota();
+                return (
+                  <p class={q.blocked ? "text-error" : "text-base-content/70"}>
+                    Compteur envois TikTok (24 h) : {q.used}/{q.limit}
+                    {q.blocked ? ` — reset ${formatQuotaReset(q.resetsAt)}` : ` — ${q.remaining} restant(s)`}
+                  </p>
+                );
+              })()}
+            </div>
+          )}
+
           <div class="mt-8 flex flex-wrap gap-3">
             <button type="button" class="btn btn-primary gap-2" onClick={handleSave} disabled={saving}>
               <Save size={16} />
               Enregistrer
             </button>
             {section === "reseaux" && (
-              <button
-                type="button"
-                class="btn btn-secondary gap-2"
-                onClick={handlePrepareTikTok}
-                disabled={connectingTikTok}
-              >
-                {connectingTikTok ? <span class="loading loading-spinner loading-sm" /> : <Link2 size={16} />}
-                Préparer connexion TikTok
-              </button>
+              <>
+                <button
+                  type="button"
+                  class="btn btn-secondary gap-2"
+                  onClick={handleReconnectTikTok}
+                  disabled={connectingTikTok}
+                >
+                  {connectingTikTok ? (
+                    <span class="loading loading-spinner loading-sm" />
+                  ) : (
+                    <Link2 size={16} />
+                  )}
+                  Reconnecter
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm gap-2"
+                  onClick={handlePrepareTikTok}
+                  disabled={connectingTikTok}
+                >
+                  Prévisualiser OAuth
+                </button>
+              </>
             )}
             <button type="button" class="btn btn-outline gap-2" onClick={handleTest} disabled={testing}>
               {testing ? <span class="loading loading-spinner loading-sm" /> : <PlugZap size={16} />}

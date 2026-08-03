@@ -25,8 +25,9 @@ export async function POST({ params, request }) {
     const action = body.action || "new-track";
 
     if (action === "refresh-stats") {
-      const stats = await computeArtistStats(slug);
-      return json({ stats });
+      const onceToken = body.keys?.onceApiToken?.trim() || body.onceApiToken?.trim() || "";
+      const stats = await computeArtistStats(slug, { onceToken });
+      return json({ stats, onceSynced: Boolean(onceToken) });
     }
 
     if (action === "new-track") {

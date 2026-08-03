@@ -1,0 +1,11 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PlayerPage from "../components/PlayerPage.jsx";
+---
+
+<Layout
+  title="SONOZZ — Play"
+  description="Lecteur multimedia SONOZZ : tous les titres, un artiste ou une file d’attente."
+>
+  <PlayerPage client:load />
+</Layout>

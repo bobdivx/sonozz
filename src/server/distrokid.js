@@ -1,4 +1,5 @@
 import { isUsableRasterImage } from "./imagePersist.js";
+import { languageLabel } from "../lib/studio.js";
 
 const DISTROKID_UPLOAD_URL = "https://distrokid.com/upload/";
 const DISTROKID_DASHBOARD_URL = "https://distrokid.com/";
@@ -56,7 +57,7 @@ export function buildDistroKidPackage({ keys, artist, track, cover, lyrics }) {
     featuring: "",
     genre,
     subgenre,
-    lyricsLanguage: lyrics?.language || "French",
+    lyricsLanguage: languageLabel(lyrics?.language || artist?.language || "fr"),
     explicitLyrics: explicit ? "Yes" : "No",
     instrumental: "No",
     primaryGenre: genre,

@@ -14,21 +14,21 @@ export const KEY_FIELDS = [
         id: "geminiModel",
         label: "Modèle Gemini",
         placeholder: "gemini-2.5-flash-lite",
-        help: "Si 429 / quota 0 sur 2.0-flash, utilise 2.5-flash-lite (recommandé free tier)",
+        help: "1.5 / 2.0 sont retirés par Google — 2.5-flash-lite recommandé (free tier)",
         required: false,
         inputType: "select",
         options: [
           { value: "gemini-2.5-flash-lite", label: "2.5 Flash Lite (free, recommandé)" },
           { value: "gemini-2.5-flash", label: "2.5 Flash (free)" },
-          { value: "gemini-2.0-flash", label: "2.0 Flash (souvent quota 0)" },
-          { value: "gemini-1.5-flash", label: "1.5 Flash (legacy)" },
+          { value: "gemini-flash-lite-latest", label: "Flash Lite (alias latest)" },
+          { value: "gemini-flash-latest", label: "Flash (alias latest)" },
         ],
       },
       {
         id: "replicateApiToken",
         label: "Replicate API Token",
         placeholder: "r8_...",
-        help: "Audio MiniMax 2.6 (voix+paroles) + Flux images. Billing Replicate recommandé.",
+        help: "Audio MiniMax 2.6 + images Flux + Seedance 2.0 (shorts sync audio). Billing Replicate recommandé.",
         required: false,
         url: "https://replicate.com/account/api-tokens",
       },
@@ -137,7 +137,7 @@ export const KEY_FIELDS = [
         id: "tiktokAccessToken",
         label: "TikTok Access Token",
         placeholder: "rempli automatiquement après OAuth",
-        help: "Résultat de la connexion OAuth (scope video.upload). Ne colle pas le Client Key ici.",
+        help: "Résultat de « Reconnecter ». Doit inclure video.publish (Direct Post).",
         required: false,
       },
       {
@@ -146,6 +146,31 @@ export const KEY_FIELDS = [
         placeholder: "rempli automatiquement après OAuth",
         help: "Permet de renouveler l’access token (~24 h). Rempli par « Connecter TikTok ».",
         required: false,
+      },
+      {
+        id: "tiktokPrivacyLevel",
+        label: "Visibilité TikTok (Direct Post)",
+        help: "App non auditée : « Uniquement moi ». Public = audit app requis. Compte TikTok privé parfois obligatoire pour Direct Post.",
+        required: false,
+        inputType: "select",
+        options: [
+          { value: "SELF_ONLY", label: "Uniquement moi (recommandé sans audit)" },
+          { value: "MUTUAL_FOLLOW_FRIENDS", label: "Amis (follow mutuel)" },
+          { value: "FOLLOWER_OF_CREATOR", label: "Abonnés" },
+          { value: "PUBLIC_TO_EVERYONE", label: "Public (nécessite audit app)" },
+        ],
+      },
+      {
+        id: "tiktokPostMode",
+        label: "Mode publication TikTok",
+        help: "Direct = profil tout de suite. Inbox = brouillon à valider dans l’app. Auto = Direct, puis Inbox si TikTok bloque (app non auditée).",
+        required: false,
+        inputType: "select",
+        options: [
+          { value: "direct", label: "Direct Post (profil) — recommandé" },
+          { value: "auto", label: "Auto (Direct seulement ; pas d’Inbox auto)" },
+          { value: "inbox", label: "Inbox (brouillon — max ~5 / 24 h)" },
+        ],
       },
       {
         id: "socialWebhookUrl",
@@ -159,11 +184,40 @@ export const KEY_FIELDS = [
   },
 ];
 
+const RETIRED_GEMINI_MODELS = new Set([
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
+  "gemini-1.5-flash-latest",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-001",
+  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash-lite-001",
+]);
+
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
+
 export const EMPTY_KEYS = () => {
   const base = Object.fromEntries(KEY_FIELDS.flatMap((g) => g.items.map((i) => [i.id, ""])));
-  base.geminiModel = "gemini-2.5-flash-lite";
+  base.geminiModel = DEFAULT_GEMINI_MODEL;
+  base.tiktokPrivacyLevel = "SELF_ONLY";
+  base.tiktokPostMode = "direct";
   return base;
 };
+
+function migrateKeys(keys) {
+  const next = { ...keys };
+  if (!next.geminiModel?.trim() || RETIRED_GEMINI_MODELS.has(next.geminiModel.trim())) {
+    next.geminiModel = DEFAULT_GEMINI_MODEL;
+  }
+  if (!next.tiktokPrivacyLevel?.trim()) {
+    next.tiktokPrivacyLevel = "SELF_ONLY";
+  }
+  if (!next.tiktokPostMode?.trim() || next.tiktokPostMode === "auto") {
+    // Auto brûlait le quota Inbox ; Direct = chemin principal
+    next.tiktokPostMode = "direct";
+  }
+  return next;
+}
 
 /** URI à coller dans le portail TikTok (Login Kit / Redirect URI). */
 export function tiktokRedirectUri() {
@@ -178,14 +232,18 @@ export function loadKeys() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return EMPTY_KEYS();
-    return { ...EMPTY_KEYS(), ...JSON.parse(raw) };
+    const migrated = migrateKeys({ ...EMPTY_KEYS(), ...JSON.parse(raw) });
+    if (raw !== JSON.stringify(migrated)) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+    }
+    return migrated;
   } catch {
     return EMPTY_KEYS();
   }
 }
 
 export function saveKeys(keys) {
-  const next = { ...EMPTY_KEYS(), ...keys };
+  const next = migrateKeys({ ...EMPTY_KEYS(), ...keys });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   return next;
 }

@@ -86,7 +86,7 @@ function extractOutputUrl(out) {
   return null;
 }
 
-async function waitPrediction(token, prediction, { maxPolls = 180 } = {}) {
+export async function waitPrediction(token, prediction, { maxPolls = 180 } = {}) {
   let current = prediction;
 
   for (let i = 0; i < maxPolls; i++) {
@@ -310,7 +310,7 @@ function isAdapterError(message = "") {
  * (sinon Replicate peut renvoyer "No adapter found for model").
  * Si l’endpoint modèle échoue, tente /predictions avec le hash de version.
  */
-async function createModelPrediction(token, modelPath, input) {
+export async function createModelPrediction(token, modelPath, input) {
   let { res, data } = await replicateJson(token, `/models/${modelPath}/predictions`, {
     method: "POST",
     wait: false,

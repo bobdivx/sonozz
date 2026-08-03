@@ -11,11 +11,12 @@ import { createHash, randomBytes } from "node:crypto";
 const AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/";
 const TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/";
 /**
- * Scope Login Kit de base uniquement.
- * `video.upload` casse souvent l’auth si Content Posting API n’est pas encore approuvé.
- * On pourra l’ajouter après connexion réussie / review TikTok.
+ * Scopes Login Kit + Content Posting Direct Post.
+ * `video.publish` = publication directe sur le profil (pas seulement inbox).
+ * À activer dans TikTok Developers → Content Posting API → Direct Post + scopes.
  */
-const DEFAULT_SCOPES = "user.info.basic";
+export const TIKTOK_SCOPES = "user.info.basic,video.publish,video.upload";
+const DEFAULT_SCOPES = TIKTOK_SCOPES;
 
 export function defaultRedirectUri(origin) {
   const base = (origin || "").replace(/\/$/, "");
@@ -75,6 +76,9 @@ export function buildAuthorizeUrl({
       .join(",")}`,
     `redirect_uri=${encodeURIComponent(redirectUri)}`,
     `state=${encodeURIComponent(state || crypto.randomUUID())}`,
+    // Force le consentement à nouveau (sinon l’ancien token reste sans video.publish)
+    `disable_auto_auth=1`,
+    `force_verify=1`,
   ];
   if (codeChallenge) {
     parts.push(`code_challenge=${encodeURIComponent(codeChallenge)}`);
