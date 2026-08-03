@@ -103,7 +103,7 @@ export function isPublicPath(pathname) {
   if (p === "/api/library" || p === "/api/audio/stream") return true;
   if (p === "/api/auth/login" || p === "/api/auth/logout" || p === "/api/auth/me") return true;
 
-  if (p.startsWith("/_astro/")) return true;
+  if (p.startsWith("/_astro/") || p.startsWith("/assets/")) return true;
   if (p === "/favicon.ico" || p === "/favicon.svg" || p === "/logo.png") return true;
   if (p === "/sonozz-tiktok-app-icon.png") return true;
 

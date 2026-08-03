@@ -1,20 +1,136 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import LoginForm from "../components/LoginForm.jsx";
-import { getSessionFromCookies } from "../server/auth.js";
+import {
+  createSessionToken,
+  getSessionFromCookies,
+  isAuthConfigured,
+  SESSION_COOKIE,
+  sessionCookieOptions,
+  verifyCredentials,
+} from "../server/auth.js";
+
+function safeNext(raw) {
+  if (!raw || typeof raw !== "string") return "/";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
+  if (raw.startsWith("/login")) return "/";
+  return raw;
+}
+
+const nextParam = Astro.url.searchParams.get("next") || "/";
+const next = safeNext(nextParam);
 
 const session = getSessionFromCookies(Astro.cookies);
-const nextParam = Astro.url.searchParams.get("next") || "/";
-const next =
-  nextParam.startsWith("/") && !nextParam.startsWith("//") && !nextParam.startsWith("/login")
-    ? nextParam
-    : "/";
-
 if (session) {
   return Astro.redirect(next);
+}
+
+let error = "";
+
+if (Astro.request.method === "POST") {
+  if (!isAuthConfigured()) {
+    error = "Auth non configurée sur le serveur";
+  } else {
+    const form = await Astro.request.formData();
+    const email = String(form.get("email") || "").trim();
+    const password = String(form.get("password") || "");
+    const formNext = safeNext(String(form.get("next") || next));
+
+    if (!email || !password) {
+      error = "Email et mot de passe requis";
+    } else if (!verifyCredentials(email, password)) {
+      error = "Identifiants incorrects";
+    } else {
+      Astro.cookies.set(SESSION_COOKIE, createSessionToken(email), sessionCookieOptions());
+      return Astro.redirect(formNext);
+    }
+  }
 }
 ---
 
 <Layout title="SONOZZ — Connexion" description="Connexion au studio SONOZZ.">
-  <LoginForm client:load next={next} />
+  <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12">
+    <div class="mb-8 text-center">
+      <img
+        src="/logo.png"
+        alt="SONOZZ"
+        class="mx-auto mb-6 h-20 w-20 rounded-2xl object-cover shadow-lg shadow-black/40"
+        width="80"
+        height="80"
+      />
+      <h1 class="font-display text-3xl font-bold tracking-tight text-base-content">SONOZZ</h1>
+    </div>
+
+    <a
+      href="/play"
+      class="group mb-8 block rounded-2xl border border-primary/35 bg-gradient-to-br from-primary/25 via-primary/10 to-secondary/15 p-5 text-center shadow-[0_12px_40px_rgba(201,162,39,0.12)] transition hover:border-primary/60 hover:from-primary/35 hover:via-primary/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+    >
+      <span
+        class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-content shadow-md shadow-primary/30 transition group-hover:scale-105"
+        aria-hidden="true"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"></path>
+        </svg>
+      </span>
+      <span class="font-display block text-xl font-bold tracking-tight text-base-content sm:text-2xl">
+        Écouter les titres
+      </span>
+      <span class="mt-1.5 block text-sm text-base-content/70">
+        Accès libre — aucune connexion requise
+      </span>
+      <span class="mt-4 inline-flex items-center justify-center rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-content transition group-hover:bg-primary/90">
+        Ouvrir le lecteur
+      </span>
+    </a>
+
+    <div
+      class="mb-4 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-base-content/40"
+      aria-hidden="true"
+    >
+      <span class="h-px flex-1 bg-base-content/15"></span>
+      Studio
+      <span class="h-px flex-1 bg-base-content/15"></span>
+    </div>
+
+    <form class="space-y-4" method="POST" action={`/login?next=${encodeURIComponent(next)}`}>
+      <p class="text-center text-sm text-base-content/55">Connexion réservée à l’équipe</p>
+      <input type="hidden" name="next" value={next} />
+
+      <label class="form-control w-full">
+        <span class="label-text mb-1.5 text-xs uppercase tracking-wider text-base-content/50">
+          Email
+        </span>
+        <input
+          type="email"
+          name="email"
+          class="input input-bordered w-full bg-base-200/80"
+          autocomplete="username"
+          required
+        />
+      </label>
+
+      <label class="form-control w-full">
+        <span class="label-text mb-1.5 text-xs uppercase tracking-wider text-base-content/50">
+          Mot de passe
+        </span>
+        <input
+          type="password"
+          name="password"
+          class="input input-bordered w-full bg-base-200/80"
+          autocomplete="current-password"
+          required
+        />
+      </label>
+
+      {error && (
+        <p class="rounded-md bg-error/15 px-3 py-2 text-sm text-error" role="alert">
+          {error}
+        </p>
+      )}
+
+      <button type="submit" class="btn btn-ghost w-full border border-base-content/15">
+        Se connecter au studio
+      </button>
+    </form>
+  </div>
 </Layout>
