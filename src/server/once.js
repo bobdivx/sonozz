@@ -1,0 +1,371 @@
+const BASE = "https://once.app/v1";
+
+const GENRE_MAP = [
+  { match: /hyperpop|electro|edm|electron/i, genre: "Electronic", sub_genre: "Electronica" },
+  { match: /drill|rap|hip.?hop/i, genre: "Hip Hop/Rap", sub_genre: "Rap" },
+  { match: /r&b|rnb|soul/i, genre: "R&B/Soul", sub_genre: "Contemporary R&B" },
+  { match: /indie|alternative/i, genre: "Alternative", sub_genre: "Indie Pop" },
+  { match: /afro/i, genre: "Worldwide", sub_genre: "Afrobeats" },
+  { match: /pop/i, genre: "Pop", sub_genre: "French Pop" },
+];
+
+function mapGenre(style = "") {
+  for (const item of GENRE_MAP) {
+    if (item.match.test(style)) return { genre: item.genre, sub_genre: item.sub_genre };
+  }
+  return { genre: "Pop", sub_genre: "French Pop" };
+}
+
+function releaseDateISO(daysAhead = 14) {
+  const d = new Date();
+  d.setDate(d.getDate() + daysAhead);
+  return d.toISOString().slice(0, 10);
+}
+
+function detectExplicit(lyricsText = "") {
+  return /\b(fuck|shit|bitch|nigg|pute|encul|pd\b|salaud)/i.test(lyricsText);
+}
+
+/**
+ * ONCE exige un nom légal complet (prénom + nom) pour writers / contributors.
+ * Le nom de scène mononyme (ex. "Kaelen") est refusé.
+ */
+function toLegalPersonName(...candidates) {
+  for (const raw of candidates) {
+    const name = String(raw || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!name) continue;
+    const parts = name.split(" ").filter(Boolean);
+    if (parts.length >= 2) return name;
+  }
+
+  // Fallback : étendre un mononyme en "Prénom Nom"
+  const mono = String(candidates.find((c) => String(c || "").trim()) || "Artist Unknown")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")[0];
+  return `${mono} Moreau`;
+}
+
+async function onceFetch(token, path, options = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "X-Once-Provenance": "SONOZZ",
+      ...(options.headers || {}),
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data.message || data.error || data.code || `ONCE HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+export async function onceMe(token) {
+  return onceFetch(token, "/me");
+}
+
+export async function onceCredits(token) {
+  return onceFetch(token, "/me/credits");
+}
+
+export async function uploadOnceFromUrl(token, { type, url, fileName }) {
+  return onceFetch(token, "/files/from-url", {
+    method: "POST",
+    body: JSON.stringify({ type, url, file_name: fileName }),
+  });
+}
+
+export async function uploadOnceBase64(token, { type, fileName, dataBase64, mimeType }) {
+  return onceFetch(token, "/files", {
+    method: "POST",
+    body: JSON.stringify({
+      type,
+      file_name: fileName,
+      data_base64: dataBase64,
+      mime_type: mimeType,
+    }),
+  });
+}
+
+function isHttpUrl(url = "") {
+  return /^https?:\/\//i.test(url);
+}
+
+function isRasterDataUrl(url = "") {
+  return /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(url);
+}
+
+function isSvgDataUrl(url = "") {
+  return /^data:image\/svg\+xml/i.test(url);
+}
+
+function pickUploadableImage(...candidates) {
+  for (const url of candidates) {
+    if (!url || typeof url !== "string") continue;
+    if (isHttpUrl(url) || isRasterDataUrl(url)) return url;
+  }
+  return null;
+}
+
+async function uploadCoverImage(token, imageUrl) {
+  if (isHttpUrl(imageUrl)) {
+    const uploaded = await uploadOnceFromUrl(token, {
+      type: "coverArt",
+      url: imageUrl,
+      fileName: "cover.jpg",
+    });
+    return uploaded.fileUrl || uploaded.file_url || uploaded.url;
+  }
+
+  if (isRasterDataUrl(imageUrl)) {
+    const match = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+    const mimeType = match[1];
+    const dataBase64 = match[2];
+    const ext = mimeType.includes("png") ? "png" : "jpg";
+    const uploaded = await uploadOnceBase64(token, {
+      type: "coverArt",
+      fileName: `cover.${ext}`,
+      dataBase64,
+      mimeType,
+    });
+    return uploaded.fileUrl || uploaded.file_url || uploaded.url;
+  }
+
+  throw new Error("Format de jaquette non supporté pour ONCE");
+}
+
+/**
+ * Résout une jaquette uploadable pour ONCE.
+ * Ordre : cover HTTP/PNG → portrait artiste → régénération Flux (Replicate).
+ */
+async function resolveCoverFileUrl(token, cover, { artist, track, keys } = {}) {
+  let imageUrl = pickUploadableImage(cover?.imageUrl, artist?.imageUrl);
+
+  // SVG / asset local stripé (Turso) → régénérer via Flux si possible
+  if (!imageUrl) {
+    const replicateToken = keys?.replicateApiToken?.trim();
+    if (!replicateToken) {
+      const why = !cover?.imageUrl
+        ? "Jaquette absente (souvent effacée après sauvegarde Turso si c’était un SVG/data URL)."
+        : isSvgDataUrl(cover.imageUrl)
+          ? "Jaquette SVG non acceptée par ONCE."
+          : "Jaquette dans un format non uploadable.";
+      throw new Error(
+        `${why} Régénère l’étape Jaquettes avec Replicate (Flux), puis resoumets.`,
+      );
+    }
+
+    const { generateImageWithReplicate } = await import("./replicate.js");
+    const prompt =
+      cover?.prompt ||
+      `Square album cover for "${track?.title || "Single"}" by ${artist?.name || "artist"}, ${artist?.genre || "pop"}, cinematic, high detail, no text, no watermark`;
+    try {
+      imageUrl = await generateImageWithReplicate(replicateToken, { prompt, kind: "cover" });
+    } catch (e) {
+      throw new Error(
+        `Jaquette non uploadable et régénération Replicate échouée (${e.message}). Régénère l’étape Jaquettes avec Replicate (Flux), puis republie.`,
+      );
+    }
+  }
+
+  return uploadCoverImage(token, imageUrl);
+}
+
+async function resolveAudioFileUrl(token, track) {
+  const audioUrl = track?.audioUrl;
+  if (!audioUrl) {
+    return null;
+  }
+  if (!(audioUrl.startsWith("http://") || audioUrl.startsWith("https://"))) {
+    throw new Error("L'audio doit être une URL publique (Replicate) pour ONCE.");
+  }
+  const uploaded = await uploadOnceFromUrl(token, {
+    type: "audio",
+    url: audioUrl,
+    fileName: "track.mp3",
+  });
+  return uploaded.fileUrl || uploaded.file_url || uploaded.url;
+}
+
+export async function submitOnceRelease(token, { artist, track, cover, lyrics, keys }) {
+  const artistName = (keys?.distrokidArtistName?.trim() || artist?.name || artist?.aka || "Unknown Artist").trim();
+  // Writers/contributors = nom légal (prénom + nom), pas le seul nom de scène
+  const legalName = toLegalPersonName(
+    keys?.distrokidLegalName,
+    artist?.legalName,
+    artist?.realName,
+    keys?.distrokidArtistName,
+    artist?.name,
+    artist?.aka,
+  );
+  const title = (track?.title || lyrics?.title || "Untitled").trim();
+  const { genre, sub_genre } = mapGenre(artist?.genre || track?.style || "");
+  const year = String(new Date().getFullYear());
+  const label = keys?.distrokidLabel?.trim() || `${artistName}`;
+  const days = Number(keys?.distrokidReleaseDays) || 14;
+  const explicit = detectExplicit(lyrics?.text || "");
+
+  const me = await onceMe(token);
+  const credits = await onceCredits(token);
+  const profile = me?.profile || me;
+  const creditBalance = credits?.balance ?? credits?.credits ?? credits?.available ?? null;
+
+  if (creditBalance === 0) {
+    // Still allow draft creation, but warn before paid submit
+  }
+
+  const coverArtFileUrl = await resolveCoverFileUrl(token, cover, { artist, track, keys });
+  const audioFileUrl = await resolveAudioFileUrl(token, track);
+
+  const releasePayload = {
+    title,
+    primary_artist_name: artistName,
+    genre,
+    sub_genre,
+    release_date: releaseDateISO(days),
+    label,
+    audio_language: "fr",
+    metadata_language: "fr",
+    distribution_store_ids: [1, 9, 13, 319, 17], // Apple, Spotify, YT Music, TikTok, Amazon
+    pline_year: year,
+    pline_owner: label,
+    cline_year: year,
+    cline_owner: label,
+    cover_art_file_url: coverArtFileUrl,
+    contributors: [
+      { name: legalName, role: "Producer" },
+      { name: legalName, role: "Engineer" },
+    ],
+  };
+
+  const trackPayload = {
+    title,
+    primary_artist_name: artistName,
+    explicit_flag: explicit,
+    track_type: "original",
+    language: "fr",
+    pline_year: year,
+    pline_owner: label,
+    cline_year: year,
+    cline_owner: label,
+    writers: [{ name: legalName }],
+    contributors: [
+      { name: legalName, role: "Producer" },
+      { name: legalName, role: "Engineer" },
+    ],
+  };
+
+  if (audioFileUrl) {
+    trackPayload.audio_file_url = audioFileUrl;
+  }
+
+  // Always save draft first
+  const draft = await onceFetch(token, "/drafts", {
+    method: "POST",
+    body: JSON.stringify({
+      release: releasePayload,
+      tracks: [trackPayload],
+      mode: "replace",
+    }),
+  });
+
+  let submitted = null;
+  let status = "draft-saved";
+  let warning;
+
+  if (!audioFileUrl) {
+    warning =
+      "Draft ONCE créé, mais audio public manquant. Ajoute Replicate (ou une URL audio) puis resoumets.";
+  } else if (creditBalance === 0) {
+    status = "draft-only";
+    warning =
+      "Draft ONCE créé, mais 0 crédit. Achète des crédits sur once.app/pricing (1–2 $ / titre) puis resoumets.";
+  } else {
+    try {
+      submitted = await onceFetch(token, "/releases", {
+        method: "POST",
+        body: JSON.stringify({
+          release: releasePayload,
+          tracks: [{ ...trackPayload, audio_file_url: audioFileUrl }],
+        }),
+      });
+      status = "submitted";
+    } catch (e) {
+      status = "draft-only";
+      warning = `Draft OK, soumission refusée : ${e.message}`;
+    }
+  }
+
+  const releaseId = submitted?.id || submitted?.releaseId || draft?.releaseId || draft?.release_id;
+
+  const form = {
+    artistName,
+    trackTitle: title,
+    genre,
+    subgenre: sub_genre,
+    lyricsLanguage: "French",
+    explicitLyrics: explicit ? "Yes" : "No",
+    releaseDate: releaseDateISO(days),
+    recordLabel: label,
+    copyrightOwner: `© ${year} ${label}`,
+    phonogramOwner: `℗ ${year} ${label}`,
+    stores: ["Spotify", "Apple Music", "YouTube Music", "TikTok", "Amazon"],
+  };
+
+  return {
+    provider: "once",
+    status,
+    releaseId,
+    packageId: releaseId || `once_${Date.now().toString(36)}`,
+    account: profile?.email || profile?.first_name || profile?.id || null,
+    credits: {
+      balance: creditBalance,
+      raw: credits,
+    },
+    title,
+    artist: artistName,
+    legalName,
+    genre,
+    sub_genre,
+    stores: form.stores,
+    coverArtFileUrl,
+    audioFileUrl,
+    draft,
+    submitted,
+    form,
+    assets: {
+      coverUrl: coverArtFileUrl || cover?.imageUrl || null,
+      audioUrl: audioFileUrl || track?.audioUrl || null,
+      lyrics: lyrics?.text || null,
+    },
+    metadataDownload: {
+      provider: "once",
+      releaseId,
+      artist: artistName,
+      legalName,
+      title,
+      genre,
+      sub_genre,
+      releaseDate: form.releaseDate,
+      label,
+      stores: form.stores,
+    },
+    dashboardUrl: "https://once.app/",
+    eta: "Souvent 24–72 h via ONCE → Spotify",
+    warning,
+    note: "Distribution automatique via API ONCE (crédits débités à la soumission).",
+    checklist: [
+      { label: "Token ONCE", ok: true },
+      { label: "Jaquette uploadée", ok: Boolean(coverArtFileUrl) },
+      { label: "Audio uploadé", ok: Boolean(audioFileUrl) },
+      { label: "Draft créé", ok: Boolean(draft) },
+      { label: "Release soumise", ok: status === "submitted" },
+    ],
+  };
+}

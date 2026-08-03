@@ -1,0 +1,122 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: sonozz --default;
+}
+
+@plugin "daisyui/theme" {
+  name: "sonozz";
+  default: true;
+  color-scheme: dark;
+  --color-base-100: #111418;
+  --color-base-200: #0c0f12;
+  --color-base-300: #1a1f26;
+  --color-base-content: #f2efe6;
+  --color-primary: #c9a227;
+  --color-primary-content: #141108;
+  --color-secondary: #3d6b5a;
+  --color-secondary-content: #e8f2ed;
+  --color-accent: #d4784a;
+  --color-accent-content: #1a0e08;
+  --color-neutral: #242a32;
+  --color-neutral-content: #e8e4d9;
+  --color-info: #6a8fad;
+  --color-success: #5f9e72;
+  --color-warning: #c9a227;
+  --color-error: #c45c4a;
+  --radius-selector: 0.35rem;
+  --radius-field: 0.35rem;
+  --radius-box: 0.5rem;
+}
+
+:root {
+  --ink: #0c0f12;
+  --brass: #c9a227;
+  --brass-soft: #e8d5a3;
+  --moss: #3d6b5a;
+  --ember: #d4784a;
+  --fog: #f2efe6;
+  --font-display: "Syne", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Figtree", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  font-family: var(--font-body);
+  background: var(--ink);
+  color: var(--fog);
+}
+
+body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(201, 162, 39, 0.18), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 90% 0%, rgba(61, 107, 90, 0.2), transparent 50%),
+    radial-gradient(ellipse 50% 30% at 50% 100%, rgba(212, 120, 74, 0.12), transparent 55%),
+    linear-gradient(180deg, #0c0f12 0%, #111418 40%, #0a0d10 100%);
+  background-attachment: fixed;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  z-index: 0;
+}
+
+#root-app,
+main {
+  position: relative;
+  z-index: 1;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes bar-sweep {
+  from {
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+  to {
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+}
+
+.animate-rise {
+  animation: rise-in 0.45s ease-out both;
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+
+.progress-fill {
+  animation: bar-sweep 0.6s ease-out both;
+}

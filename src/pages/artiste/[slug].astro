@@ -1,0 +1,12 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import ArtistHub from "../../components/ArtistHub.jsx";
+
+export const prerender = false;
+
+const { slug } = Astro.params;
+---
+
+<Layout title={`SONOZZ — ${slug}`} description={`Fiche artiste ${slug} : catalogue, stats, nouveaux morceaux.`}>
+  <ArtistHub client:load slug={slug} />
+</Layout>
