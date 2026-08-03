@@ -4,6 +4,7 @@ import {
   unregisterOnceWebhook,
   getOnceWebhookConfig,
   listOnceWebhooks,
+  setOnceWebhookSecret,
 } from "../../../server/onceWebhooks.js";
 
 export const prerender = false;
@@ -42,6 +43,20 @@ export async function POST({ request }) {
       return json({ ok: true, config: await getOnceWebhookConfig() });
     }
 
+    if (action === "set_secret") {
+      const config = await setOnceWebhookSecret({
+        secret: body.secret || body.signingSecret || "",
+        webhookId: body.webhookId || "",
+        url: body.webhookUrl || body.url || "",
+        token,
+      });
+      return json({
+        ok: true,
+        config,
+        note: "Secret enregistré. Les prochains release.status_changed seront vérifiés en HMAC.",
+      });
+    }
+
     if (action === "register") {
       if (!token) return error("Token ONCE manquant", 400);
       const publicBaseUrl =
@@ -64,6 +79,19 @@ export async function POST({ request }) {
 
     return error("Action inconnue", 400);
   } catch (e) {
+    if (e.code === "ONCE_WEBHOOK_SECRET_MISSING") {
+      return json(
+        {
+          error: e.message || "Secret manquant",
+          code: e.code,
+          webhookId: e.webhookId || null,
+          url: e.url || null,
+          responseKeys: e.responseKeys || [],
+          config: await getOnceWebhookConfig(),
+        },
+        422,
+      );
+    }
     return error(e.message || "Webhook ONCE KO", 500);
   }
 }

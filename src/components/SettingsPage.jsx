@@ -50,6 +50,7 @@ export default function SettingsPage() {
   const [tiktokPreview, setTiktokPreview] = useState(null);
   const [webhookBusy, setWebhookBusy] = useState(false);
   const [webhookConfig, setWebhookConfig] = useState(null);
+  const [webhookSecretDraft, setWebhookSecretDraft] = useState("");
   const [tests, setTests] = useState(null);
   const [message, setMessage] = useState("");
   const redirectUri = typeof window !== "undefined" ? tiktokRedirectUri() : "";
@@ -105,9 +106,37 @@ export default function SettingsPage() {
         }),
       });
       const json = await res.json().catch(() => ({}));
+      if (json.config) setWebhookConfig(json.config);
       if (!res.ok) throw new Error(json.error || "Enregistrement webhook KO");
       setWebhookConfig(json.config || null);
       setMessage(`Webhook ONCE actif → ${json.url || json.config?.url}`);
+    } catch (e) {
+      setMessage(e.message);
+    } finally {
+      setWebhookBusy(false);
+    }
+  }
+
+  async function saveOnceWebhookSecret() {
+    setWebhookBusy(true);
+    setMessage("");
+    try {
+      const k = loadKeys();
+      const res = await fetch("/api/once/webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "set_secret",
+          keys: k,
+          secret: webhookSecretDraft,
+          webhookUrl: `${window.location.origin}/api/once/webhook`,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Secret non enregistré");
+      setWebhookConfig(json.config || null);
+      setWebhookSecretDraft("");
+      setMessage("Secret webhook ONCE enregistré.");
     } catch (e) {
       setMessage(e.message);
     } finally {
@@ -372,7 +401,7 @@ export default function SettingsPage() {
               </p>
               {webhookConfig?.registered ? (
                 <div class="space-y-2 text-sm">
-                  <p class="text-success">Actif</p>
+                  <p class="text-success">Actif{webhookConfig.hasSecret ? "" : " — secret manquant"}</p>
                   <p class="break-all font-mono text-xs text-base-content/55">{webhookConfig.url}</p>
                   {webhookConfig.lastEvent && (
                     <p class="text-xs text-base-content/50">
@@ -395,23 +424,55 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  class="btn btn-primary btn-sm gap-2"
-                  disabled={webhookBusy}
-                  onClick={registerOnceWebhook}
-                >
-                  {webhookBusy ? (
-                    <span class="loading loading-spinner loading-sm" />
-                  ) : (
-                    <PlugZap size={14} />
-                  )}
-                  Activer le webhook ONCE
-                </button>
+                <div class="space-y-3">
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-sm gap-2"
+                    disabled={webhookBusy}
+                    onClick={registerOnceWebhook}
+                  >
+                    {webhookBusy ? (
+                      <span class="loading loading-spinner loading-sm" />
+                    ) : (
+                      <PlugZap size={14} />
+                    )}
+                    Activer le webhook ONCE
+                  </button>
+                  <p class="text-xs text-base-content/50">
+                    Sur once.app tu as déjà 2 endpoints (tunnel + prod) sans secret côté SONOZZ.
+                    Supprime-les, puis réactive ici depuis <code>https://sonozz.briseteia.me</code>
+                    pour n’en garder qu’un avec secret stocké.
+                  </p>
+                </div>
+              )}
+              {!webhookConfig?.hasSecret && (
+                <label class="form-control w-full gap-1">
+                  <span class="text-xs text-base-content/60">
+                    Secret signing (copié une seule fois à la création)
+                  </span>
+                  <div class="flex flex-wrap gap-2">
+                    <input
+                      type="password"
+                      class="input input-bordered input-sm min-w-0 flex-1 font-mono"
+                      placeholder="whsec_…"
+                      value={webhookSecretDraft}
+                      onInput={(e) => setWebhookSecretDraft(e.currentTarget.value)}
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-outline btn-sm"
+                      disabled={webhookBusy || !webhookSecretDraft.trim()}
+                      onClick={saveOnceWebhookSecret}
+                    >
+                      Enregistrer le secret
+                    </button>
+                  </div>
+                </label>
               )}
               <p class="text-xs text-base-content/45">
                 HTTPS obligatoire (prod). Localhost : utilise un tunnel ou enregistre depuis le domaine
-                déployé.
+                déployé. « last delivery never » = aucun changement de statut release depuis
+                l’enregistrement (normal tant qu’aucune release ne bouge).
               </p>
             </div>
           )}
