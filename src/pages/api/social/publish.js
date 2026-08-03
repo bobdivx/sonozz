@@ -1,5 +1,5 @@
-import { json, error, readBody } from "../../server/http.js";
-import { publishShortEverywhere } from "../../server/socialPublish.js";
+import { json, error, readBody } from "../../../server/http.js";
+import { publishShortEverywhere } from "../../../server/socialPublish.js";
 
 export const prerender = false;
 

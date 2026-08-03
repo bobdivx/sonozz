@@ -1,5 +1,5 @@
-import { json, error, readBody } from "../../server/http.js";
-import { generateVeoShort } from "../../server/veo.js";
+import { json, error, readBody } from "../../../server/http.js";
+import { generateVeoShort } from "../../../server/veo.js";
 
 export const prerender = false;
 
