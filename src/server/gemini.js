@@ -128,8 +128,26 @@ export async function resolveReferenceImage(imageUrl) {
   }
 
   if (/^https?:\/\//i.test(imageUrl)) {
-    const res = await fetch(imageUrl);
-    if (!res.ok) throw new Error(`Référence image HTTP ${res.status}`);
+    const ephemeral = /replicate\.delivery|pb\.replicate\.com|fal\.media|oaidalleapiprodscus/i.test(
+      imageUrl,
+    );
+    let res;
+    try {
+      res = await fetch(imageUrl);
+    } catch {
+      throw new Error(
+        ephemeral
+          ? "Portrait/jaquette inaccessible (URL temporaire morte). Régénère l’étape Artiste ou Jaquette."
+          : "Impossible de télécharger l’image de référence.",
+      );
+    }
+    if (!res.ok) {
+      throw new Error(
+        ephemeral || res.status === 404
+          ? `Portrait/jaquette expiré (HTTP ${res.status}). Régénère l’étape Artiste (portrait) puis relance Veo.`
+          : `Référence image HTTP ${res.status}`,
+      );
+    }
     const mime = (res.headers.get("content-type") || "image/png").split(";")[0];
     if (/svg/i.test(mime)) return null;
     const buf = Buffer.from(await res.arrayBuffer());

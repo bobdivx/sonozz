@@ -81,7 +81,14 @@ export default function TikTokCallback() {
 
   return (
     <div class="mx-auto max-w-lg px-4 py-16 text-center">
-      <p class="text-xs uppercase tracking-[0.22em] text-primary">SONOZZ × TikTok</p>
+      <img
+        src="/logo.png"
+        alt="SONOZZ"
+        class="mx-auto h-16 w-16 rounded-2xl object-cover"
+        width="64"
+        height="64"
+      />
+      <p class="mt-4 text-xs uppercase tracking-[0.22em] text-primary">SONOZZ × TikTok</p>
       <h1 class="font-display mt-2 text-3xl font-bold">{status}</h1>
       {error ? (
         <p class="mt-4 text-sm text-error">{error}</p>

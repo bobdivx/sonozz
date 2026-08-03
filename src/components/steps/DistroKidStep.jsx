@@ -1,3 +1,4 @@
+import { useState } from "preact/hooks";
 import { Check, Circle, ExternalLink, Download, Copy, PackageOpen, Rocket, ImagePlus } from "lucide-preact";
 
 function downloadJson(filename, data) {
@@ -14,11 +15,29 @@ async function copyText(text) {
   await navigator.clipboard.writeText(text);
 }
 
+function isDurableRaster(url) {
+  return typeof url === "string" && /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(url);
+}
+
+function isEphemeralHttp(url) {
+  return (
+    typeof url === "string" &&
+    /^https?:\/\//i.test(url) &&
+    /replicate\.delivery|pb\.replicate\.com/i.test(url)
+  );
+}
+
 function isUsableRaster(url) {
   if (!url || typeof url !== "string") return false;
   if (/^data:image\/svg\+xml/i.test(url)) return false;
-  if (/^https?:\/\//i.test(url)) return true;
-  return /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(url);
+  if (isDurableRaster(url)) return true;
+  if (isEphemeralHttp(url)) return false; // expirée / non fiable pour l’UI
+  return /^https?:\/\//i.test(url);
+}
+
+function pickArtwork(...candidates) {
+  const list = candidates.filter(Boolean);
+  return list.find((u) => isDurableRaster(u)) || list.find((u) => isUsableRaster(u)) || null;
 }
 
 export default function DistroKidStep({
@@ -34,12 +53,17 @@ export default function DistroKidStep({
 }) {
   const form = distrokid?.form;
   const isOnce = distrokid?.provider === "once";
+  const [artBroken, setArtBroken] = useState(false);
+
+  const rawEphemeral =
+    [cover?.imageUrl, artist?.imageUrl, distrokid?.assets?.coverUrl].find((u) =>
+      isEphemeralHttp(u),
+    ) || null;
 
   const liveArtwork =
-    (isUsableRaster(cover?.imageUrl) && cover.imageUrl) ||
-    (isUsableRaster(artist?.imageUrl) && artist.imageUrl) ||
-    (isUsableRaster(distrokid?.assets?.coverUrl) && distrokid.assets.coverUrl) ||
-    null;
+    pickArtwork(cover?.imageUrl, artist?.imageUrl, distrokid?.assets?.coverUrl) || null;
+
+  const artworkExpired = Boolean(rawEphemeral) && !liveArtwork;
 
   // Ignore l’ancien package DistroKid persisté (Turso / local) — distribution = ONCE uniquement
   const showResult = Boolean(distrokid) && isOnce;
@@ -107,21 +131,47 @@ export default function DistroKidStep({
       </div>
 
       {!track && <p class="text-sm text-warning">Morceau requis avant distribution.</p>}
-      {track && !liveArtwork && (
+      {track && artworkExpired && (
+        <p class="text-sm text-warning">
+          Artwork Replicate expiré (URL temporaire). Régénère la jaquette à l’étape Jaquettes, puis republie sur ONCE.
+        </p>
+      )}
+      {track && !liveArtwork && !artworkExpired && (
         <p class="text-sm text-warning">
           Artwork manquant : va à l’étape Jaquettes et génère depuis le portrait artiste, puis reviens ici.
         </p>
       )}
 
-      {liveArtwork && (
+      {liveArtwork && !artBroken && (
         <div class="flex items-center gap-3 border border-base-content/10 bg-base-200/40 p-3">
-          <img src={liveArtwork} alt="Artwork" class="h-16 w-16 object-cover" />
+          <img
+            src={liveArtwork}
+            alt="Artwork"
+            class="h-16 w-16 object-cover"
+            onError={() => setArtBroken(true)}
+          />
           <p class="text-sm text-base-content/70">
             Artwork prêt
             {liveArtwork === artist?.imageUrl && liveArtwork !== cover?.imageUrl
               ? " (portrait — jaquette dédiée recommandée)"
               : ""}
           </p>
+        </div>
+      )}
+      {(artworkExpired || artBroken) && (
+        <div class="flex items-center gap-3 border border-warning/30 bg-warning/10 p-3">
+          <div class="flex h-16 w-16 items-center justify-center bg-base-300 text-[10px] text-warning">
+            Expiré
+          </div>
+          <div class="text-sm">
+            <p class="text-warning">Artwork indisponible</p>
+            <p class="text-base-content/60">
+              L’URL Replicate a expiré. Clique « Créer la jaquette » pour en générer une nouvelle (persistée en base64).
+            </p>
+            <button type="button" class="btn btn-secondary btn-sm mt-2 gap-1" onClick={onGoToCover}>
+              <ImagePlus size={14} /> Régénérer la jaquette
+            </button>
+          </div>
         </div>
       )}
 

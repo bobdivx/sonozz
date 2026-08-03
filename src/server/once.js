@@ -1,3 +1,5 @@
+import { isEphemeralImageUrl, materializeImageForStorage } from "./imagePersist.js";
+
 const BASE = "https://once.app/v1";
 
 const GENRE_MAP = [
@@ -106,25 +108,38 @@ function isSvgDataUrl(url = "") {
 }
 
 function pickUploadableImage(...candidates) {
-  for (const url of candidates) {
-    if (!url || typeof url !== "string") continue;
+  // Préférer les data URL durables aux URL Replicate (qui expirent)
+  const list = candidates.filter((url) => url && typeof url === "string");
+  const durable = list.find((url) => isRasterDataUrl(url));
+  if (durable) return durable;
+  for (const url of list) {
     if (isHttpUrl(url) || isRasterDataUrl(url)) return url;
   }
   return null;
 }
 
+function extractOnceFileUrl(uploaded) {
+  return uploaded?.fileUrl || uploaded?.file_url || uploaded?.url || null;
+}
+
 async function uploadCoverImage(token, imageUrl) {
-  if (isHttpUrl(imageUrl)) {
-    const uploaded = await uploadOnceFromUrl(token, {
-      type: "coverArt",
-      url: imageUrl,
-      fileName: "cover.jpg",
-    });
-    return uploaded.fileUrl || uploaded.file_url || uploaded.url;
+  // Toujours matérialiser → base64 : évite from-url sur replicate.delivery (expire)
+  let dataUrl = isRasterDataUrl(imageUrl) ? imageUrl : null;
+  if (!dataUrl && isHttpUrl(imageUrl)) {
+    try {
+      dataUrl = await materializeImageForStorage(imageUrl);
+    } catch (e) {
+      if (isEphemeralImageUrl(imageUrl)) {
+        throw new Error(
+          `Jaquette Replicate expirée — régénère l’étape Jaquettes puis republie. (${e.message})`,
+        );
+      }
+      throw e;
+    }
   }
 
-  if (isRasterDataUrl(imageUrl)) {
-    const match = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (isRasterDataUrl(dataUrl)) {
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     const mimeType = match[1];
     const dataBase64 = match[2];
     const ext = mimeType.includes("png") ? "png" : "jpg";
@@ -134,42 +149,78 @@ async function uploadCoverImage(token, imageUrl) {
       dataBase64,
       mimeType,
     });
-    return uploaded.fileUrl || uploaded.file_url || uploaded.url;
+    const fileUrl = extractOnceFileUrl(uploaded);
+    if (!fileUrl) throw new Error("ONCE n’a pas renvoyé de fileUrl pour la jaquette");
+    return fileUrl;
   }
 
-  throw new Error("Format de jaquette non supporté pour ONCE");
+  // Dernier recours : URL publique non-éphémère
+  if (isHttpUrl(imageUrl) && !isEphemeralImageUrl(imageUrl)) {
+    const uploaded = await uploadOnceFromUrl(token, {
+      type: "coverArt",
+      url: imageUrl,
+      fileName: "cover.jpg",
+    });
+    const fileUrl = extractOnceFileUrl(uploaded);
+    if (!fileUrl) throw new Error("ONCE n’a pas renvoyé de fileUrl pour la jaquette");
+    return fileUrl;
+  }
+
+  throw new Error(
+    "Format de jaquette non supporté pour ONCE — régénère l’étape Jaquettes (data URL JPEG).",
+  );
+}
+
+async function regenerateCoverImage({ cover, artist, track, keys }) {
+  const replicateToken = keys?.replicateApiToken?.trim();
+  if (!replicateToken) {
+    throw new Error(
+      "Jaquette Replicate expirée ou absente. Régénère l’étape Jaquettes (token Replicate requis), puis republie.",
+    );
+  }
+  const { generateImageWithReplicate } = await import("./replicate.js");
+  const prompt =
+    cover?.prompt ||
+    `Square album cover for "${track?.title || "Single"}" by ${artist?.name || "artist"}, ${artist?.genre || "pop"}, cinematic, high detail, no text, no watermark`;
+  const fresh = await generateImageWithReplicate(replicateToken, {
+    prompt,
+    kind: "cover",
+    referenceImageUrl: isRasterDataUrl(artist?.imageUrl) ? artist.imageUrl : undefined,
+  });
+  return (await materializeImageForStorage(fresh)) || fresh;
 }
 
 /**
  * Résout une jaquette uploadable pour ONCE.
- * Ordre : cover HTTP/PNG → portrait artiste → régénération Flux (Replicate).
+ * Ordre : data URL durable → HTTP encore vivante → régénération Flux.
  */
 async function resolveCoverFileUrl(token, cover, { artist, track, keys } = {}) {
   let imageUrl = pickUploadableImage(cover?.imageUrl, artist?.imageUrl);
 
-  // SVG / asset local stripé (Turso) → régénérer via Flux si possible
   if (!imageUrl) {
-    const replicateToken = keys?.replicateApiToken?.trim();
-    if (!replicateToken) {
-      const why = !cover?.imageUrl
-        ? "Jaquette absente (souvent effacée après sauvegarde Turso si c’était un SVG/data URL)."
-        : isSvgDataUrl(cover.imageUrl)
-          ? "Jaquette SVG non acceptée par ONCE."
-          : "Jaquette dans un format non uploadable.";
-      throw new Error(
-        `${why} Régénère l’étape Jaquettes avec Replicate (Flux), puis resoumets.`,
-      );
-    }
-
-    const { generateImageWithReplicate } = await import("./replicate.js");
-    const prompt =
-      cover?.prompt ||
-      `Square album cover for "${track?.title || "Single"}" by ${artist?.name || "artist"}, ${artist?.genre || "pop"}, cinematic, high detail, no text, no watermark`;
+    const why = !cover?.imageUrl
+      ? "Jaquette absente."
+      : isSvgDataUrl(cover.imageUrl)
+        ? "Jaquette SVG non acceptée par ONCE."
+        : "Jaquette dans un format non uploadable.";
     try {
-      imageUrl = await generateImageWithReplicate(replicateToken, { prompt, kind: "cover" });
+      imageUrl = await regenerateCoverImage({ cover, artist, track, keys });
+    } catch (e) {
+      throw new Error(`${why} ${e.message}`);
+    }
+  } else if (isEphemeralImageUrl(imageUrl)) {
+    // replicate.delivery : tenter le fetch tant qu’il est vivant, sinon régénérer
+    try {
+      const persisted = await materializeImageForStorage(imageUrl);
+      if (persisted) return uploadCoverImage(token, persisted);
+    } catch {
+      /* expirée */
+    }
+    try {
+      imageUrl = await regenerateCoverImage({ cover, artist, track, keys });
     } catch (e) {
       throw new Error(
-        `Jaquette non uploadable et régénération Replicate échouée (${e.message}). Régénère l’étape Jaquettes avec Replicate (Flux), puis republie.`,
+        `URL Replicate expirée et régénération échouée (${e.message}). Régénère l’étape Jaquettes, puis republie.`,
       );
     }
   }

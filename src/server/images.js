@@ -1,6 +1,10 @@
 import { geminiImage, normalizeGeminiImage } from "./gemini.js";
 import { generateImageWithReplicate } from "./replicate.js";
-import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
+import {
+  isEphemeralImageUrl,
+  isUsableRasterImage,
+  materializeImageForStorage,
+} from "./imagePersist.js";
 
 /**
  * Gemini Image + Replicate → vraie photo/raster uniquement.
@@ -16,23 +20,37 @@ export async function generateVisual({
   const replicateToken = keys?.replicateApiToken?.trim();
   const errors = [];
 
-  if (kind === "cover" && !isUsableRasterImage(referenceImageUrl)) {
-    throw new Error(
-      "Jaquette impossible sans portrait photo. Régénère l’étape Artiste (Replicate Flux).",
-    );
+  let refUrl = referenceImageUrl;
+  if (kind === "cover") {
+    if (!isUsableRasterImage(refUrl)) {
+      throw new Error(
+        "Jaquette impossible sans portrait photo. Régénère l’étape Artiste (Replicate Flux).",
+      );
+    }
+    if (isEphemeralImageUrl(refUrl)) {
+      try {
+        refUrl = await materializeImageForStorage(refUrl);
+      } catch {
+        throw new Error(
+          "Portrait Replicate expiré — régénère l’étape Artiste, puis la jaquette.",
+        );
+      }
+    }
   }
 
   async function finish(imageUrl, provider, extra = {}) {
+    // Toujours matérialiser en data URL — les URL replicate.delivery expirent (~1 h)
     const persisted = await materializeImageForStorage(imageUrl);
-    const finalUrl = persisted || imageUrl;
-    if (!isUsableRasterImage(finalUrl)) {
-      throw new Error("Image générée inutilisable (SVG ou vide)");
+    if (!persisted || !isUsableRasterImage(persisted)) {
+      throw new Error(
+        "Impossible de persister l’image (URL expirée ou format invalide). Régénère le visuel.",
+      );
     }
     return {
-      imageUrl: finalUrl,
+      imageUrl: persisted,
       fallback: false,
       provider,
-      basedOnArtist: Boolean(referenceImageUrl),
+      basedOnArtist: Boolean(refUrl),
       ...extra,
     };
   }
@@ -45,9 +63,9 @@ export async function generateVisual({
       const url = await generateImageWithReplicate(replicateToken, {
         prompt,
         kind,
-        referenceImageUrl: kind === "cover" ? referenceImageUrl : undefined,
+        referenceImageUrl: kind === "cover" ? refUrl : undefined,
       });
-      return await finish(url, kind === "cover" && referenceImageUrl ? "replicate-kontext" : "replicate-flux");
+      return await finish(url, kind === "cover" && refUrl ? "replicate-kontext" : "replicate-flux");
     } catch (e) {
       errors.push(`Replicate: ${e.message}`);
     }
@@ -57,7 +75,7 @@ export async function generateVisual({
     try {
       const raw = await geminiImage(geminiKey, prompt, {
         kind,
-        referenceImageUrl: kind === "cover" ? referenceImageUrl : undefined,
+        referenceImageUrl: kind === "cover" ? refUrl : undefined,
       });
       const image = normalizeGeminiImage(raw);
       if (image.imageUrl && !image.fallback && isUsableRasterImage(image.imageUrl)) {
@@ -76,7 +94,7 @@ export async function generateVisual({
       const url = await generateImageWithReplicate(replicateToken, {
         prompt,
         kind,
-        referenceImageUrl: kind === "cover" ? referenceImageUrl : undefined,
+        referenceImageUrl: kind === "cover" ? refUrl : undefined,
       });
       return await finish(url, "replicate-flux");
     } catch (e) {

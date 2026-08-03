@@ -1,6 +1,10 @@
 import { json, error, readBody } from "../../../server/http.js";
 import { listProjects, saveProject } from "../../../server/db.js";
 import { linkProjectToArtist, slugify } from "../../../server/artists.js";
+import {
+  isEphemeralImageUrl,
+  materializeImageForStorage,
+} from "../../../server/imagePersist.js";
 
 export const prerender = false;
 
@@ -23,17 +27,55 @@ function isHttpUrl(value = "") {
   return typeof value === "string" && /^https?:\/\//i.test(value);
 }
 
-function sanitizeImageField(entity, field = "imageUrl") {
+/**
+ * Persiste une image en JPEG data URL durable.
+ * Les URL Replicate (replicate.delivery) meurent en ~1 h — on les matérialise à la sauvegarde.
+ */
+async function sanitizeImageField(entity, field = "imageUrl") {
   if (!entity || typeof entity !== "object") return entity;
   const url = entity[field];
   if (!url || typeof url !== "string") return entity;
 
   if (isHttpUrl(url)) {
+    try {
+      const persisted = await materializeImageForStorage(url);
+      if (persisted) {
+        return { ...entity, [field]: persisted, localAsset: false, ephemeralFixed: true };
+      }
+    } catch {
+      /* URL déjà morte */
+    }
+    // Ne jamais garder une URL éphémère morte en base
+    if (isEphemeralImageUrl(url)) {
+      return {
+        ...entity,
+        [field]: null,
+        localAsset: true,
+        assetMissingReason: "ephemeral-url-expired",
+      };
+    }
+    // Autre HTTP (CDN stable) : on garde, mais on préfère data URL
     return { ...entity, localAsset: false };
   }
 
   if (isRasterDataUrl(url) && url.length <= MAX_DATA_URL_CHARS) {
     return { ...entity, localAsset: false };
+  }
+
+  // Data URL trop lourde → recompresser
+  if (isRasterDataUrl(url) && url.length > MAX_DATA_URL_CHARS) {
+    try {
+      const persisted = await materializeImageForStorage(url);
+      if (persisted) return { ...entity, [field]: persisted, localAsset: false };
+    } catch {
+      /* fallthrough */
+    }
+    return {
+      ...entity,
+      [field]: null,
+      localAsset: true,
+      assetMissingReason: "data-url-too-large",
+    };
   }
 
   if (isSvgDataUrl(url) || isBlobUrl(url) || url.startsWith("data:")) {
@@ -52,18 +94,18 @@ function sanitizeImageField(entity, field = "imageUrl") {
   return entity;
 }
 
-function sanitizeProject(project = {}) {
+async function sanitizeProject(project = {}) {
   const clone = structuredClone(project);
 
   if (clone.artist) {
-    clone.artist = sanitizeImageField(clone.artist, "imageUrl");
+    clone.artist = await sanitizeImageField(clone.artist, "imageUrl");
     if (!clone.artist.slug && clone.artist.name) {
       clone.artist.slug = slugify(clone.artist.aka || clone.artist.name);
     }
   }
 
   if (clone.cover) {
-    clone.cover = sanitizeImageField(clone.cover, "imageUrl");
+    clone.cover = await sanitizeImageField(clone.cover, "imageUrl");
   }
 
   const audio = clone.track?.audioUrl;
@@ -92,7 +134,7 @@ export async function GET() {
 export async function POST({ request }) {
   try {
     const body = await readBody(request);
-    const project = sanitizeProject(body.project || {});
+    const project = await sanitizeProject(body.project || {});
     const saved = await saveProject({
       id: body.id || null,
       project,

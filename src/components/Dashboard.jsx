@@ -6,7 +6,8 @@ import {
   AudioLines,
   ImagePlus,
   Music2,
-  Clapperboard,
+  Film,
+  Share2,
   ChevronRight,
   Waves,
   Settings2,
@@ -20,6 +21,7 @@ import LyricsStep from "./steps/LyricsStep.jsx";
 import TracksStep from "./steps/TracksStep.jsx";
 import CoverStep from "./steps/CoverStep.jsx";
 import DistroKidStep from "./steps/DistroKidStep.jsx";
+import ClipStep from "./steps/ClipStep.jsx";
 import SocialStep from "./steps/SocialStep.jsx";
 import HistoryPanel from "./HistoryPanel.jsx";
 import AppShell from "./AppShell.jsx";
@@ -34,7 +36,8 @@ const ICONS = {
   4: AudioLines,
   5: ImagePlus,
   6: Music2,
-  7: Clapperboard,
+  7: Film,
+  8: Share2,
 };
 
 const STEP_STATUS_LABEL = {
@@ -44,6 +47,7 @@ const STEP_STATUS_LABEL = {
   track: "Morceau",
   cover: "Jaquette",
   distrokid: "ONCE",
+  clip: "Clip",
   social: "Réseaux",
   done: "Terminé",
 };
@@ -79,7 +83,7 @@ export default function Dashboard() {
         setProjectId(saved.id);
         setProject({ ...emptyProject(), ...(saved.project || {}) });
         if (saved.seed) setSeed((s) => ({ ...s, ...saved.seed }));
-        if (stepParam >= 1 && stepParam <= 7) setStep(stepParam);
+        if (stepParam >= 1 && stepParam <= STEPS.length) setStep(stepParam);
         else if (!saved.project?.lyrics) setStep(3);
         else if (!saved.project?.track) setStep(4);
         setSaveMsg(`Projet ${saved.title}`);
@@ -100,7 +104,11 @@ export default function Dashboard() {
     4: Boolean(project.track),
     5: Boolean(project.cover),
     6: Boolean(project.distrokid),
-    7: Boolean(project.social),
+    7: Boolean(
+      (project.clip?.videoBase64 || project.clip?.videoUrl) &&
+        project.clip?.provider !== "canvas-fallback",
+    ),
+    8: Boolean(project.social?.publishedAt || project.social?.publish),
   };
   const completed = Object.values(doneMap).filter(Boolean).length;
   const progress = Math.round((completed / STEPS.length) * 100);
@@ -183,6 +191,7 @@ export default function Dashboard() {
         cover: data.cover,
         distrokid: data.distrokid,
         social: data.social,
+        clip: null,
       };
       setProject(next);
       setLog(data.log || []);
@@ -197,7 +206,7 @@ export default function Dashboard() {
       } else {
         setStep(4);
         setError(
-          "Pipeline OK jusqu'au morceau, mais sans fichier audio. Ajoute Replicate (ou finalise Suno) à l'étape 4 avant les shorts.",
+          "Pipeline OK jusqu'au morceau, mais sans fichier audio. Ajoute Replicate (ou finalise Suno) à l'étape 4 avant le clip.",
         );
       }
     } catch (e) {
@@ -219,7 +228,9 @@ export default function Dashboard() {
       setHistoryOpen(false);
       setSaveMsg(`Chargé : ${saved.title}`);
       // Place l'utilisateur sur la dernière étape utile
-      if (saved.project?.social) setStep(7);
+      if (saved.project?.social?.publishedAt || saved.project?.social?.publish) setStep(8);
+      else if (saved.project?.clip?.videoBase64 || saved.project?.clip?.videoUrl) setStep(8);
+      else if (saved.project?.social) setStep(7);
       else if (saved.project?.distrokid) setStep(6);
       else if (saved.project?.cover) setStep(5);
       else if (saved.project?.track) setStep(4);
@@ -272,11 +283,20 @@ export default function Dashboard() {
             </button>
             {saveMsg && <span class="text-xs text-base-content/45">{saveMsg}</span>}
           </div>
-          <h1 class="font-display text-5xl font-extrabold leading-[0.95] tracking-tight md:text-7xl">
-            SONOZZ
-          </h1>
+          <h1 class="sr-only">{project.artist?.name || "SONOZZ"}</h1>
+          <img
+            src={
+              project.artist?.imageUrl && !/^data:image\/svg/i.test(project.artist.imageUrl)
+                ? project.artist.imageUrl
+                : "/logo.png"
+            }
+            alt={project.artist?.name || "SONOZZ"}
+            class="h-28 w-28 rounded-2xl object-cover shadow-lg shadow-black/30 md:h-36 md:w-36"
+            width="144"
+            height="144"
+          />
           <p class="max-w-md text-base text-base-content/70 md:text-lg">
-            Pipeline A→Z : Deezer + Gemini + ONCE → Spotify + shorts.
+            Pipeline A→Z : Deezer + Gemini + ONCE → Spotify + clip + réseaux.
           </p>
         </div>
 
@@ -506,19 +526,22 @@ export default function Dashboard() {
           />
         )}
         {step === 7 && (
-          <SocialStep
+          <ClipStep
             social={project.social}
+            clip={project.clip}
             artist={project.artist}
             track={project.track}
             cover={project.cover || (project.artist?.imageUrl ? { imageUrl: project.artist.imageUrl } : null)}
             lyrics={project.lyrics}
             loading={loading}
-            published={published}
             onGoToTracks={() => setStep(4)}
-            onGenerate={() => {
+            onGoToArtist={() => setStep(2)}
+            onGoToCover={() => setStep(5)}
+            onGoToSocial={() => setStep(8)}
+            onGeneratePack={() => {
               if (!project.track?.audioUrl) {
                 setStep(4);
-                setError("Crée d'abord le morceau audio (étape 4) avant les shorts.");
+                setError("Crée d'abord le morceau audio (étape 4) avant le clip.");
                 return;
               }
               return runStep(
@@ -533,6 +556,64 @@ export default function Dashboard() {
                 7,
               );
             }}
+            onClipReady={(nextClip) => {
+              setProject((prev) => {
+                const next = {
+                  ...prev,
+                  clip: nextClip,
+                  social: prev.social
+                    ? {
+                        ...prev.social,
+                        veo: {
+                          provider: nextClip.provider,
+                          prompt: nextClip.prompt,
+                          mode: nextClip.mode,
+                          at: nextClip.at,
+                        },
+                      }
+                    : prev.social,
+                };
+                persist(next, {
+                  stepKey: "clip",
+                  eventType: "clip",
+                  message: "Clip Veo généré",
+                });
+                return next;
+              });
+            }}
+          />
+        )}
+        {step === 8 && (
+          <SocialStep
+            social={project.social}
+            clip={project.clip}
+            artist={project.artist}
+            track={project.track}
+            cover={project.cover || (project.artist?.imageUrl ? { imageUrl: project.artist.imageUrl } : null)}
+            loading={loading}
+            published={published}
+            onGoToClip={() => setStep(7)}
+            onConfigure={() => {
+              window.location.href = "/parametres?section=reseaux";
+            }}
+            onGenerate={() => {
+              if (!project.track?.audioUrl) {
+                setStep(4);
+                setError("Crée d'abord le morceau audio (étape 4).");
+                return;
+              }
+              return runStep(
+                () =>
+                  api.social({
+                    artist: project.artist,
+                    track: project.track,
+                    lyrics: project.lyrics,
+                    cover: project.cover,
+                  }),
+                "social",
+                8,
+              );
+            }}
             onPublish={() => setPublished(true)}
             onSocialUpdate={(nextSocial) => {
               setProject((prev) => {
@@ -540,7 +621,7 @@ export default function Dashboard() {
                 persist(next, {
                   stepKey: "social",
                   eventType: "publish",
-                  message: "Short diffusé / exporté",
+                  message: "Short diffusé",
                 });
                 return next;
               });

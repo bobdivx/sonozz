@@ -25,8 +25,8 @@ export default function AppShell({ active, children, title, subtitle }) {
     <div class="min-h-screen md:flex">
       {/* Mobile top bar */}
       <div class="sticky top-0 z-30 flex items-center justify-between border-b border-base-content/10 bg-base-200/90 px-4 py-3 backdrop-blur md:hidden">
-        <a href="/" class="font-display text-lg font-extrabold tracking-tight">
-          SONOZZ
+        <a href="/" class="inline-flex items-center" aria-label="SONOZZ — Accueil">
+          <img src="/logo.png" alt="SONOZZ" class="h-9 w-9 rounded-lg object-cover" width="36" height="36" />
         </a>
         <button
           type="button"
@@ -51,11 +51,16 @@ export default function AppShell({ active, children, title, subtitle }) {
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div class="hidden border-b border-base-content/10 px-5 py-6 md:block">
-          <a href="/" class="font-display text-2xl font-extrabold tracking-tight">
-            SONOZZ
+        <div class="hidden border-b border-base-content/10 px-5 py-5 md:block">
+          <a href="/" class="block" aria-label="SONOZZ — Accueil">
+            <img
+              src="/logo.png"
+              alt="SONOZZ"
+              class="w-full rounded-2xl object-cover shadow-md shadow-black/25"
+              width="256"
+              height="256"
+            />
           </a>
-          <p class="mt-1 text-xs text-base-content/50">Studio création artiste</p>
         </div>
 
         <nav class="flex flex-1 flex-col gap-1 p-3" aria-label="Navigation principale">

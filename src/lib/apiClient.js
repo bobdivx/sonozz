@@ -24,7 +24,11 @@ export const api = {
   spotify: (payload) => request("/api/spotify", payload),
   distrokid: (payload) => request("/api/distrokid", payload),
   social: (payload) => request("/api/social", payload),
-  veoShort: (payload) => request("/api/social/veo", payload),
+  veoShortStart: (payload) => request("/api/social/veo", { action: "start", ...payload }),
+  veoShortPoll: (operationName) =>
+    request("/api/social/veo", { action: "poll", operationName }),
+  /** @deprecated préférer veoShortStart + veoShortPoll (évite timeout proxy) */
+  veoShort: (payload) => request("/api/social/veo", { action: "start", ...payload }),
   publishShort: (payload) => request("/api/social/publish", payload),
   pipeline: (seed = {}) => request("/api/pipeline", seed),
   testKeys: () => request("/api/test-keys"),

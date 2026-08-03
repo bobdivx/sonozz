@@ -10,6 +10,7 @@ export async function POST({ request }) {
     const { keys = {} } = await readBody(request);
     const results = {
       gemini: { ok: false, message: "Non testé" },
+      veo: { ok: false, message: "Non testé" },
       deezer: { ok: false, message: "Non testé" },
       spotify: { ok: false, message: "Non testé" },
       once: { ok: false, message: "Non testé" },
@@ -37,8 +38,39 @@ export async function POST({ request }) {
       } catch (e) {
         results.gemini = { ok: false, message: e.message };
       }
+
+      // Probe Veo : démarre une op courte (texte) pour vérifier l’accès paid preview
+      try {
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: keys.geminiApiKey.trim() });
+        const op = await ai.models.generateVideos({
+          model: "veo-3.1-fast-generate-preview",
+          prompt: "A single yellow leaf falling slowly, cinematic, 9:16",
+          config: {
+            aspectRatio: "9:16",
+            durationSeconds: 4,
+            numberOfVideos: 1,
+            personGeneration: "allow_adult",
+          },
+        });
+        results.veo = {
+          ok: Boolean(op?.name),
+          message: op?.name
+            ? `Accès OK — Veo facturé à l’usage`
+            : "Réponse Veo sans opération",
+        };
+      } catch (e) {
+        const msg = String(e?.message || e);
+        results.veo = {
+          ok: false,
+          message: /billing|paid|payment|PERMISSION|403|not.+enabled/i.test(msg)
+            ? `Billing Veo requis (paid preview). ${msg.slice(0, 180)}`
+            : msg.slice(0, 280),
+        };
+      }
     } else {
       results.gemini = { ok: false, message: "Clé absente" };
+      results.veo = { ok: false, message: "Clé Gemini absente" };
     }
 
     try {

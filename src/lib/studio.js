@@ -5,7 +5,8 @@ export const STEPS = [
   { id: 4, key: "tracks", label: "Morceaux", short: "Audio" },
   { id: 5, key: "covers", label: "Jaquettes", short: "Visuel" },
   { id: 6, key: "distrokid", label: "ONCE", short: "Release" },
-  { id: 7, key: "social", label: "Réseaux", short: "Shorts" },
+  { id: 7, key: "clip", label: "Clip", short: "Veo" },
+  { id: 8, key: "social", label: "Réseaux", short: "Pub" },
 ];
 
 export const emptyProject = () => ({
@@ -16,4 +17,5 @@ export const emptyProject = () => ({
   cover: null,
   distrokid: null,
   social: null,
+  clip: null,
 });

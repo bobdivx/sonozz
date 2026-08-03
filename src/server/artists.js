@@ -325,6 +325,7 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
     cover: null,
     distrokid: null,
     social: null,
+    clip: null,
   };
 
   const seed = {

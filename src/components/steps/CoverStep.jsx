@@ -7,7 +7,9 @@ export default function CoverStep({ cover, artist, track, loading, onGenerate })
   const hasPortrait =
     Boolean(portraitUrl) &&
     !/^data:image\/svg/i.test(portraitUrl) &&
+    !/replicate\.delivery|pb\.replicate\.com/i.test(portraitUrl) &&
     (/^https?:\/\//i.test(portraitUrl) || /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(portraitUrl));
+  const portraitExpired = /replicate\.delivery|pb\.replicate\.com/i.test(portraitUrl);
 
   return (
     <section class="animate-rise space-y-6">
@@ -35,8 +37,10 @@ export default function CoverStep({ cover, artist, track, loading, onGenerate })
             <p class="font-medium">Référence obligatoire : {artist.name}</p>
             <p class="text-base-content/60">
               {hasPortrait
-                ? "La jaquette partira de ce portrait (Gemini image-à-image)."
-                : "Régénère l’étape Artiste pour obtenir une vraie photo avant la jaquette."}
+                ? "La jaquette partira de ce portrait (image-à-image)."
+                : portraitExpired
+                  ? "Portrait Replicate expiré — retourne à l’étape Artiste et régénère le profil."
+                  : "Régénère l’étape Artiste pour obtenir une vraie photo avant la jaquette."}
             </p>
           </div>
         </div>

@@ -1,5 +1,12 @@
 import { TrendingUp, Users, Sparkles } from "lucide-preact";
 
+function displayScore(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return 0;
+  if (n > 0 && n <= 1) return Math.round(n * 100);
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
 export default function TrendsStep({ trends, loading, onAnalyze }) {
   return (
     <section class="animate-rise space-y-6">
@@ -20,18 +27,21 @@ export default function TrendsStep({ trends, loading, onAnalyze }) {
           <p class="text-sm text-primary/90">{trends.opportunity}</p>
 
           <ul class="space-y-3">
-            {(trends.rising || []).map((item) => (
+            {(trends.rising || []).map((item) => {
+              const score = displayScore(item.score);
+              return (
               <li key={item.tag} class="grid gap-2 border-b border-base-content/10 pb-3 last:border-0">
                 <div class="flex items-center justify-between gap-3">
                   <span class="font-medium">{item.tag}</span>
-                  <span class="font-display text-primary">{item.score}%</span>
+                  <span class="font-display text-primary">{score}%</span>
                 </div>
                 <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
-                  <div class="progress-fill h-full rounded-full bg-primary" style={{ width: `${item.score}%` }} />
+                  <div class="progress-fill h-full rounded-full bg-primary" style={{ width: `${score}%` }} />
                 </div>
                 <span class="text-xs text-base-content/55">{item.note}</span>
               </li>
-            ))}
+              );
+            })}
           </ul>
 
           {trends.charts?.topTracks?.length > 0 && (

@@ -15,6 +15,7 @@
   "dependencies": {
     "@astrojs/node": "^11.0.3",
     "@astrojs/preact": "^6.0.2",
+    "@google/genai": "^2.15.0",
     "@google/generative-ai": "^0.24.1",
     "@libsql/client": "^0.17.4",
     "@tailwindcss/vite": "^4.3.3",
@@ -22,6 +23,7 @@
     "daisyui": "^5.7.14",
     "lucide-preact": "^1.28.0",
     "preact": "^10.29.8",
+    "sharp": "^0.35.3",
     "tailwindcss": "^4.3.3"
   }
 }

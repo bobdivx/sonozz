@@ -77,7 +77,9 @@ function summarize(project = {}, seed = {}) {
   const title = [artistName, trackTitle].filter(Boolean).join(" — ") || "Projet SONOZZ";
 
   let status = "draft";
-  if (project.social) status = "shorts";
+  if (project.social?.publishedAt || project.social?.publish) status = "published";
+  else if (project.clip?.videoBase64 || project.clip?.videoUrl) status = "clip";
+  else if (project.social) status = "shorts";
   else if (project.distrokid) status = "distribution";
   else if (project.cover) status = "cover";
   else if (project.track?.audioUrl) status = "audio";

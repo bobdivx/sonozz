@@ -16,6 +16,21 @@ function geminiOpts(keys) {
   return { model: keys?.geminiModel?.trim() || "gemini-2.5-flash-lite" };
 }
 
+/** Gemini renvoie parfois un score 0–1 ; l'UI attend un pourcentage 0–100. */
+function normalizeTrendScore(score) {
+  let n = Number(score);
+  if (!Number.isFinite(n)) return 0;
+  if (n > 0 && n <= 1) n *= 100;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function normalizeRising(rising = []) {
+  return rising.map((item) => ({
+    ...item,
+    score: normalizeTrendScore(item.score),
+  }));
+}
+
 /** Retire data URLs / gros binaires avant envoi à Gemini (évite >1M tokens). */
 function forPrompt(value, depth = 0) {
   if (value == null) return value;
@@ -117,7 +132,13 @@ Réponds en JSON strict:
   "mood": string,
   "genre": string,
   "hooks": string[]
-}`,
+}
+
+Règles pour "rising":
+- 3 à 5 tendances concrètes (genres / sons / formats) détectables dans les charts.
+- "score" = force relative de l'opportunité sur une échelle ENTIÈRE de 0 à 100 (jamais une fraction 0–1).
+- Les scores doivent refléter la conviction A&R : une tendance clairement soutenue par les charts ≥ 60, une piste intéressante 40–59, une intuition faible < 40.
+- Au moins une tendance doit avoir un score ≥ 65 si les charts le permettent.`,
     geminiOpts(keys),
   );
 
@@ -129,6 +150,7 @@ Réponds en JSON strict:
       topArtists: charts.artists.slice(0, 5),
     },
     ...analysis,
+    rising: normalizeRising(analysis?.rising),
   };
 }
 
@@ -374,8 +396,8 @@ scenes = 3 battements visuels cohérents avec le look de l'artiste.`,
     tiktokReady: Boolean(keys?.tiktokAccessToken?.trim()),
     webhookReady: Boolean(keys?.socialWebhookUrl?.trim()),
     publishNote: keys?.tiktokAccessToken?.trim() || keys?.socialWebhookUrl?.trim()
-      ? "Prêt pour Veo 3 + diffusion auto (TikTok / webhook)."
-      : "Génère le clip Veo 3, puis ajoute TikTok/webhook pour diffuser auto.",
+      ? "Prêt pour Clip Veo 3 puis diffusion (TikTok / webhook)."
+      : "Génère le clip Veo 3, puis configure TikTok/webhook pour diffuser.",
   };
 }
 

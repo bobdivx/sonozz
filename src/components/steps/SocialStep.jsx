@@ -1,12 +1,16 @@
-import { useState } from "preact/hooks";
-import { Clapperboard, Share2, Download, Copy, Film, AudioLines, Rocket, Sparkles } from "lucide-preact";
-import { renderShortVideo, downloadBlob } from "../../lib/renderShort.js";
+import { useEffect, useState } from "preact/hooks";
+import {
+  Share2,
+  Download,
+  Copy,
+  Film,
+  Rocket,
+  Clapperboard,
+  Settings2,
+} from "lucide-preact";
+import { downloadBlob } from "../../lib/renderShort.js";
 import { api } from "../../lib/apiClient.js";
 import { loadKeys, saveKeys } from "../../lib/keys.js";
-
-function hasAudio(track) {
-  return Boolean(track?.audioUrl);
-}
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -28,23 +32,21 @@ function dataUrlToBlob(dataUrl) {
 
 export default function SocialStep({
   social,
+  clip,
   artist,
   track,
   cover,
-  lyrics,
   loading,
   onGenerate,
   onPublish,
   published,
-  onGoToTracks,
+  onGoToClip,
+  onConfigure,
   onSocialUpdate,
 }) {
-  const [rendering, setRendering] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [videoUrl, setVideoUrl] = useState(null);
   const [videoBlob, setVideoBlob] = useState(null);
-  const [videoMeta, setVideoMeta] = useState(null);
   const [error, setError] = useState("");
   const [publishResult, setPublishResult] = useState(null);
 
@@ -55,11 +57,37 @@ export default function SocialStep({
   );
   const hasWebhook = Boolean(keys.socialWebhookUrl?.trim());
   const canAutoPublish = hasTikTok || hasWebhook;
-  const hasPortrait = Boolean(artist?.imageUrl && !/^data:image\/svg/i.test(artist.imageUrl));
-  const hasCover = Boolean(cover?.imageUrl && !/^data:image\/svg/i.test(cover.imageUrl));
+  const hasClip = Boolean(clip?.videoBase64 || clip?.videoUrl);
 
-  const trackReady = Boolean(track);
-  const audioReady = hasAudio(track);
+  useEffect(() => {
+    const src = clip?.videoBase64 || clip?.videoUrl;
+    if (!src) {
+      setVideoBlob(null);
+      setVideoUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return undefined;
+    }
+    try {
+      const blob = dataUrlToBlob(src);
+      const url = URL.createObjectURL(blob);
+      setVideoBlob(blob);
+      setVideoUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+    } catch {
+      setError("Clip vidéo illisible — régénère-le à l’étape Clip.");
+    }
+    return undefined;
+  }, [clip?.videoBase64, clip?.videoUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+    };
+  }, [videoUrl]);
 
   async function copyCaption() {
     if (!social?.caption) return;
@@ -69,116 +97,35 @@ export default function SocialStep({
     await navigator.clipboard.writeText(`${social.caption}\n\n${tags}`.trim());
   }
 
-  async function renderWithVeo() {
-    setError("");
-    setPublishResult(null);
-    setRendering(true);
-    setProgress(5);
-    try {
-      const data = await api.veoShort({
-        artist,
-        track,
-        cover,
-        social,
-        lyrics,
-      });
-      setProgress(100);
-      const blob = dataUrlToBlob(data.videoBase64 || data.videoUrl);
-      if (videoUrl) URL.revokeObjectURL(videoUrl);
-      const url = URL.createObjectURL(blob);
-      setVideoUrl(url);
-      setVideoBlob(blob);
-      setVideoMeta({
-        provider: data.provider,
-        usedPortrait: data.usedPortrait,
-        usedCover: data.usedCover,
-        warning: data.warning,
-      });
-      onSocialUpdate?.({
-        ...social,
-        veo: {
-          provider: data.provider,
-          prompt: data.prompt,
-          at: new Date().toISOString(),
-        },
-      });
-      return blob;
-    } catch (e) {
-      throw e;
-    } finally {
-      setRendering(false);
+  function exportFile() {
+    if (!videoBlob) {
+      setError("Aucun clip — génère-le d’abord à l’étape Clip.");
+      return;
     }
+    const ext = videoBlob.type.includes("mp4") ? "mp4" : "webm";
+    const safe = (track?.title || "short").replace(/[^\w\-]+/g, "_").slice(0, 40);
+    downloadBlob(videoBlob, `${safe}-9x16.${ext}`);
   }
 
-  async function renderWithCanvas() {
-    setError("");
-    setRendering(true);
-    setProgress(0);
-    try {
-      const blob = await renderShortVideo({
-        artist,
-        track,
-        coverUrl: cover?.imageUrl || artist?.imageUrl,
-        social,
-        onProgress: setProgress,
-      });
-      if (videoUrl) URL.revokeObjectURL(videoUrl);
-      const url = URL.createObjectURL(blob);
-      setVideoUrl(url);
-      setVideoBlob(blob);
-      setVideoMeta({ provider: "canvas-fallback" });
-      return blob;
-    } finally {
-      setRendering(false);
+  async function publishNetworks() {
+    if (!canAutoPublish) {
+      setError("Configure TikTok et/ou un webhook dans Paramètres.");
+      return;
     }
-  }
-
-  async function renderVideo({ preferVeo = true } = {}) {
-    if (!audioReady) {
-      setError("Crée d'abord le morceau audio (étape 4).");
-      return null;
+    if (!videoBlob && !clip?.videoBase64) {
+      setError("Aucun clip — génère-le d’abord à l’étape Clip.");
+      return;
     }
     if (!social) {
-      setError("Génère d’abord le pack short (bouton 1).");
-      return null;
-    }
-    if (preferVeo && !hasPortrait) {
-      setError("Portrait artiste photo requis pour Veo 3 — régénère l’étape Artiste.");
-      return null;
+      setError("Génère d’abord le pack caption.");
+      return;
     }
 
-    try {
-      if (preferVeo) return await renderWithVeo();
-      return await renderWithCanvas();
-    } catch (e) {
-      if (preferVeo) {
-        setError(`Veo: ${e.message} — bascule sur rendu local…`);
-        try {
-          return await renderWithCanvas();
-        } catch (e2) {
-          setError(`Veo KO · Canvas KO: ${e2.message}`);
-          return null;
-        }
-      }
-      setError(e.message || "Rendu vidéo impossible");
-      return null;
-    }
-  }
-
-  async function exportOnly() {
-    const blob = videoBlob || (await renderVideo({ preferVeo: true }));
-    if (!blob) return;
-    const ext = blob.type.includes("mp4") ? "mp4" : "webm";
-    const safe = (track?.title || "short").replace(/[^\w\-]+/g, "_").slice(0, 40);
-    downloadBlob(blob, `${safe}-9x16.${ext}`);
-    onPublish?.();
-  }
-
-  async function publishNetworks(blob) {
     setPublishing(true);
     setError("");
     try {
-      const videoBase64 = await blobToBase64(blob);
+      const videoBase64 =
+        clip?.videoBase64 || clip?.videoUrl || (await blobToBase64(videoBlob));
       const result = await api.publishShort({
         videoBase64,
         social,
@@ -203,32 +150,23 @@ export default function SocialStep({
     }
   }
 
-  async function renderAndPublish() {
-    if (!canAutoPublish) {
-      setError("Configure TikTok (Client Key + Secret, puis Connecter) et/ou un webhook dans Paramètres.");
-      return;
-    }
-    const blob = videoBlob || (await renderVideo({ preferVeo: true }));
-    if (!blob) return;
-    await publishNetworks(blob);
-  }
-
-  if (!trackReady || !audioReady) {
+  if (!hasClip) {
     return (
       <section class="animate-rise space-y-6">
         <header class="space-y-2">
-          <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Shorts Veo & diffusion</h2>
+          <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Réseaux</h2>
           <p class="max-w-xl text-base-content/70">
-            Audio + portrait + jaquette → clip Veo 3 (9:16) fidèle à l’artiste.
+            Diffuse le clip vers TikTok ou un webhook (Activepieces / Make).
           </p>
         </header>
         <div class="border border-warning/40 bg-warning/10 p-5">
-          <p class="font-display text-lg font-semibold text-warning">
-            {!trackReady ? "Aucun morceau créé" : "Morceau sans fichier audio"}
+          <p class="font-display text-lg font-semibold text-warning">Aucun clip prêt</p>
+          <p class="mt-1 text-sm text-base-content/70">
+            Génère d’abord le short à l’étape Clip (Veo 3).
           </p>
-          <button type="button" class="btn btn-primary mt-4 gap-2" onClick={onGoToTracks}>
-            <AudioLines size={18} />
-            Aller créer le morceau
+          <button type="button" class="btn btn-primary mt-4 gap-2" onClick={onGoToClip}>
+            <Film size={18} />
+            Aller à l’étape Clip
           </button>
         </div>
       </section>
@@ -238,18 +176,16 @@ export default function SocialStep({
   return (
     <section class="animate-rise space-y-6">
       <header class="space-y-2">
-        <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Shorts Veo & diffusion</h2>
+        <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Réseaux</h2>
         <p class="max-w-xl text-base-content/70">
-          Veo 3.1 génère le clip en respectant le <strong>portrait</strong>, la <strong>jaquette</strong> et le thème du titre.
+          Caption + hashtags, puis diffusion auto TikTok / webhook.
         </p>
       </header>
 
       <div class="grid gap-2 border border-base-content/10 bg-base-200/40 p-3 text-sm sm:grid-cols-3">
-        <p class={hasPortrait ? "text-success" : "text-warning"}>
-          Portrait artiste {hasPortrait ? "✓" : "✗ requis"}
-        </p>
-        <p class={hasCover ? "text-success" : "text-base-content/50"}>
-          Jaquette {hasCover ? "✓" : "· optionnelle"}
+        <p class="text-success">Clip prêt ✓</p>
+        <p class={social?.caption ? "text-success" : "text-warning"}>
+          Caption {social?.caption ? "✓" : "✗ à générer"}
         </p>
         <p class={canAutoPublish ? "text-success" : "text-warning"}>
           Diffusion {canAutoPublish ? "✓" : "✗ (TikTok/webhook)"}
@@ -257,58 +193,32 @@ export default function SocialStep({
       </div>
 
       <div class="flex flex-wrap gap-3">
-        <button class="btn btn-outline gap-2" disabled={loading} onClick={onGenerate}>
+        <button class="btn btn-outline gap-2" disabled={loading || publishing} onClick={onGenerate}>
           {loading ? <span class="loading loading-spinner loading-sm" /> : <Clapperboard size={18} />}
-          {loading ? "Script…" : "1. Pack caption / scènes"}
-        </button>
-        <button
-          class="btn btn-secondary gap-2"
-          disabled={!social || rendering || publishing || !hasPortrait}
-          onClick={() => renderVideo({ preferVeo: true })}
-        >
-          {rendering ? <span class="loading loading-spinner loading-sm" /> : <Sparkles size={18} />}
-          {rendering ? `Veo ${progress}%…` : "2. Générer clip Veo 3"}
+          {loading ? "Caption…" : social ? "Regénérer caption" : "1. Pack caption"}
         </button>
         <button
           class="btn btn-primary gap-2"
-          disabled={!social || rendering || publishing || !canAutoPublish || !hasPortrait}
-          onClick={renderAndPublish}
+          disabled={!social || publishing || !canAutoPublish}
+          onClick={publishNetworks}
         >
-          {rendering || publishing ? (
-            <span class="loading loading-spinner loading-sm" />
-          ) : (
-            <Rocket size={18} />
-          )}
-          {publishing ? "Diffusion…" : rendering ? `Veo ${progress}%…` : "3. Veo + diffuser auto"}
+          {publishing ? <span class="loading loading-spinner loading-sm" /> : <Rocket size={18} />}
+          {publishing ? "Diffusion…" : "2. Diffuser auto"}
         </button>
-        <button class="btn btn-ghost gap-2" disabled={!social || rendering} onClick={exportOnly}>
-          <Film size={18} /> Export fichier
+        <button class="btn btn-ghost gap-2" disabled={!videoBlob} onClick={exportFile}>
+          <Download size={18} /> Export fichier
         </button>
         <button class="btn btn-ghost gap-2" disabled={!social} onClick={copyCaption}>
-          <Copy size={18} /> Caption
+          <Copy size={18} /> Copier caption
         </button>
+        {!canAutoPublish && (
+          <button type="button" class="btn btn-ghost gap-2" onClick={onConfigure}>
+            <Settings2 size={18} /> Configurer TikTok
+          </button>
+        )}
       </div>
 
       {error && <p class="text-sm text-error">{error}</p>}
-      {rendering && (
-        <div class="space-y-1">
-          <p class="text-xs text-base-content/50">Veo peut prendre 1–3 min…</p>
-          <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
-            <div class="h-full bg-primary transition-all" style={{ width: `${Math.max(progress, 8)}%` }} />
-          </div>
-        </div>
-      )}
-
-      <audio controls class="w-full max-w-md" src={track.audioUrl} />
-
-      {videoMeta && (
-        <p class="text-xs text-base-content/55">
-          Source : {videoMeta.provider}
-          {videoMeta.usedPortrait ? " · portrait" : ""}
-          {videoMeta.usedCover ? " · jaquette" : ""}
-          {videoMeta.warning ? ` — ${videoMeta.warning}` : ""}
-        </p>
-      )}
 
       {publishResult && (
         <div class="border border-base-content/10 bg-base-200/50 p-4 space-y-2">
@@ -324,59 +234,55 @@ export default function SocialStep({
         </div>
       )}
 
-      {social && (
-        <div class="animate-rise grid gap-6 border-t border-base-content/10 pt-5 md:grid-cols-[220px_1fr]">
-          <div class="space-y-3">
-            {videoUrl ? (
-              <video
-                class="mx-auto aspect-[9/16] w-full max-w-[220px] rounded-xl bg-base-200 object-cover shadow-xl"
-                src={videoUrl}
-                controls
-                playsInline
-              />
-            ) : (
-              <div class="relative mx-auto aspect-[9/16] w-full max-w-[220px] overflow-hidden rounded-xl bg-gradient-to-b from-secondary/40 via-primary/30 to-base-200 shadow-xl">
-                {(cover?.imageUrl || artist?.imageUrl) && (
-                  <img
-                    src={cover?.imageUrl || artist?.imageUrl}
-                    alt=""
-                    class="absolute inset-0 h-full w-full object-cover opacity-50"
-                  />
-                )}
-                <div class="absolute inset-x-3 top-1/3 space-y-2 text-center">
-                  <p class="font-display text-sm font-bold">{track?.title}</p>
-                  <p class="text-[10px] text-base-content/70">{artist?.name}</p>
-                  {social.hook && <p class="text-[10px] text-primary">{social.hook}</p>}
-                </div>
-              </div>
-            )}
-            {videoUrl && (
-              <a class="btn btn-secondary btn-sm w-full gap-1" href={videoUrl} download>
-                <Download size={14} /> Télécharger
-              </a>
-            )}
-          </div>
-
-          <div class="space-y-3">
-            <p class="text-sm text-base-content/55">{(social.platforms || []).join(" · ")}</p>
-            <ol class="list-decimal space-y-1 pl-5 text-sm text-base-content/75">
-              {(social.scenes || []).map((s) => (
-                <li key={s}>{s}</li>
-              ))}
-            </ol>
-            <textarea
-              class="textarea textarea-bordered min-h-28 w-full bg-base-200 text-sm"
-              value={social.caption}
-              readOnly
+      <div class="animate-rise grid gap-6 border-t border-base-content/10 pt-5 md:grid-cols-[220px_1fr]">
+        <div class="space-y-3">
+          {videoUrl ? (
+            <video
+              class="mx-auto aspect-[9/16] w-full max-w-[220px] rounded-xl bg-base-200 object-cover shadow-xl"
+              src={videoUrl}
+              controls
+              playsInline
             />
-            {published && (
-              <p class="inline-flex items-center gap-2 text-xs text-success">
-                <Share2 size={12} /> Export / diffusion marqué
-              </p>
-            )}
-          </div>
+          ) : (
+            <div class="relative mx-auto aspect-[9/16] w-full max-w-[220px] overflow-hidden rounded-xl bg-gradient-to-b from-secondary/40 via-primary/30 to-base-200 shadow-xl">
+              {(cover?.imageUrl || artist?.imageUrl) && (
+                <img
+                  src={cover?.imageUrl || artist?.imageUrl}
+                  alt=""
+                  class="absolute inset-0 h-full w-full object-cover opacity-50"
+                />
+              )}
+            </div>
+          )}
+          {clip?.provider && (
+            <p class="text-center text-[10px] text-base-content/50">{clip.provider}</p>
+          )}
+          <button type="button" class="btn btn-ghost btn-sm w-full gap-1" onClick={onGoToClip}>
+            <Film size={14} /> Modifier le clip
+          </button>
         </div>
-      )}
+
+        <div class="space-y-3">
+          <p class="text-sm text-base-content/55">{(social?.platforms || []).join(" · ")}</p>
+          {social?.hook && <p class="text-sm text-primary">{social.hook}</p>}
+          <textarea
+            class="textarea textarea-bordered min-h-28 w-full bg-base-200 text-sm"
+            value={social?.caption || ""}
+            readOnly
+            placeholder="Génère le pack caption…"
+          />
+          {(social?.hashtags || []).length > 0 && (
+            <p class="text-xs text-base-content/55">
+              {(social.hashtags || []).map((h) => (h.startsWith("#") ? h : `#${h}`)).join(" ")}
+            </p>
+          )}
+          {published && (
+            <p class="inline-flex items-center gap-2 text-xs text-success">
+              <Share2 size={12} /> Diffusion marquée
+            </p>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
