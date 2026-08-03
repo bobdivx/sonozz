@@ -1,6 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
 import {
-  ArrowLeft,
   AudioLines,
   BarChart3,
   ExternalLink,
@@ -9,6 +8,7 @@ import {
   RefreshCw,
   UserRound,
 } from "lucide-preact";
+import AppShell from "./AppShell.jsx";
 
 export default function ArtistHub({ slug }) {
   const [data, setData] = useState(null);
@@ -86,11 +86,9 @@ export default function ArtistHub({ slug }) {
   const releases = data?.releases || [];
 
   return (
-    <div class="mx-auto min-h-screen w-full max-w-5xl px-4 py-8 md:px-8 md:py-12">
+    <AppShell active="artistes">
+    <div class="mx-auto w-full max-w-5xl">
       <div class="mb-8 flex flex-wrap items-center gap-3">
-        <a href="/" class="btn btn-ghost btn-sm gap-1">
-          <ArrowLeft size={14} /> Studio
-        </a>
         <a href="/artistes" class="btn btn-ghost btn-sm">
           Tous les artistes
         </a>
@@ -241,5 +239,6 @@ export default function ArtistHub({ slug }) {
         </div>
       )}
     </div>
+    </AppShell>
   );
 }

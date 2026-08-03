@@ -2,6 +2,8 @@
  * Publication shorts → TikTok (Content Posting) + webhook générique (Activepieces/Make).
  */
 
+import { getTikTokAccess } from "./tiktok.js";
+
 function captionWithTags(social = {}) {
   const tags = (social.hashtags || [])
     .map((h) => (h.startsWith("#") ? h : `#${h}`))
@@ -134,12 +136,21 @@ export async function publishShortEverywhere({ keys, videoBase64, social, artist
   };
 
   const results = [];
+  let tiktokTokens = null;
 
   if (want.tiktok) {
     try {
+      const access = await getTikTokAccess(keys);
+      if (access?.refreshed) {
+        tiktokTokens = {
+          tiktokAccessToken: access.refreshed.access_token,
+          tiktokRefreshToken:
+            access.refreshed.refresh_token || keys?.tiktokRefreshToken || "",
+        };
+      }
       results.push(
         await publishToTikTok({
-          accessToken: keys?.tiktokAccessToken,
+          accessToken: access?.token,
           videoBase64,
           social,
         }),
@@ -176,9 +187,10 @@ export async function publishShortEverywhere({ keys, videoBase64, social, artist
     published: published.length,
     failed: failed.length,
     skipped: skipped.length,
+    tiktokTokens,
     note:
       published.length === 0 && skipped.length
-        ? "Aucun canal configuré — ajoute un token TikTok et/ou un webhook Activepieces dans Paramètres."
+        ? "Aucun canal configuré — connecte TikTok (Client Key + Secret + OAuth) et/ou un webhook dans Paramètres."
         : undefined,
   };
 }

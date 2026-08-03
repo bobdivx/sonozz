@@ -118,12 +118,34 @@ export const KEY_FIELDS = [
     group: "Réseaux",
     items: [
       {
-        id: "tiktokAccessToken",
-        label: "TikTok Access Token",
-        placeholder: "act....",
-        help: "Scope video.upload — envoi auto du short dans l’inbox TikTok (à valider dans l’app).",
+        id: "tiktokClientKey",
+        label: "TikTok Client Key",
+        placeholder: "aw…",
+        help: "Fourni par TikTok Developers (souvent aw…). Pas le Client Secret. Login Kit doit être ajouté à l’app.",
         required: false,
         url: "https://developers.tiktok.com/",
+        inputType: "text",
+      },
+      {
+        id: "tiktokClientSecret",
+        label: "TikTok Client Secret",
+        placeholder: "…",
+        help: "Secret de l’app. Enregistre, puis Connecter TikTok. Localhost = Login Kit Desktop ; prod = Login Kit Web (HTTPS).",
+        required: false,
+      },
+      {
+        id: "tiktokAccessToken",
+        label: "TikTok Access Token",
+        placeholder: "rempli automatiquement après OAuth",
+        help: "Résultat de la connexion OAuth (scope video.upload). Ne colle pas le Client Key ici.",
+        required: false,
+      },
+      {
+        id: "tiktokRefreshToken",
+        label: "TikTok Refresh Token",
+        placeholder: "rempli automatiquement après OAuth",
+        help: "Permet de renouveler l’access token (~24 h). Rempli par « Connecter TikTok ».",
+        required: false,
       },
       {
         id: "socialWebhookUrl",
@@ -142,6 +164,12 @@ export const EMPTY_KEYS = () => {
   base.geminiModel = "gemini-2.5-flash-lite";
   return base;
 };
+
+/** URI à coller dans le portail TikTok (Login Kit / Redirect URI). */
+export function tiktokRedirectUri() {
+  if (typeof window === "undefined") return "";
+  return `${window.location.origin}/tiktok/callback`;
+}
 
 const STORAGE_KEY = "sonozz.keys.v1";
 

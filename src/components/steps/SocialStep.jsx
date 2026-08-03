@@ -2,7 +2,7 @@ import { useState } from "preact/hooks";
 import { Clapperboard, Share2, Download, Copy, Film, AudioLines, Rocket, Sparkles } from "lucide-preact";
 import { renderShortVideo, downloadBlob } from "../../lib/renderShort.js";
 import { api } from "../../lib/apiClient.js";
-import { loadKeys } from "../../lib/keys.js";
+import { loadKeys, saveKeys } from "../../lib/keys.js";
 
 function hasAudio(track) {
   return Boolean(track?.audioUrl);
@@ -49,7 +49,10 @@ export default function SocialStep({
   const [publishResult, setPublishResult] = useState(null);
 
   const keys = loadKeys();
-  const hasTikTok = Boolean(keys.tiktokAccessToken?.trim());
+  const hasTikTok = Boolean(
+    keys.tiktokAccessToken?.trim() ||
+      (keys.tiktokClientKey?.trim() && keys.tiktokRefreshToken?.trim()),
+  );
   const hasWebhook = Boolean(keys.socialWebhookUrl?.trim());
   const canAutoPublish = hasTikTok || hasWebhook;
   const hasPortrait = Boolean(artist?.imageUrl && !/^data:image\/svg/i.test(artist.imageUrl));
@@ -183,6 +186,9 @@ export default function SocialStep({
         track,
         targets: { tiktok: true, webhook: true },
       });
+      if (result.tiktokTokens) {
+        saveKeys({ ...loadKeys(), ...result.tiktokTokens });
+      }
       setPublishResult(result);
       onSocialUpdate?.({
         ...social,
@@ -199,7 +205,7 @@ export default function SocialStep({
 
   async function renderAndPublish() {
     if (!canAutoPublish) {
-      setError("Configure TikTok et/ou un webhook Activepieces dans Paramètres.");
+      setError("Configure TikTok (Client Key + Secret, puis Connecter) et/ou un webhook dans Paramètres.");
       return;
     }
     const blob = videoBlob || (await renderVideo({ preferVeo: true }));

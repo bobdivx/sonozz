@@ -28,6 +28,8 @@ export const api = {
   publishShort: (payload) => request("/api/social/publish", payload),
   pipeline: (seed = {}) => request("/api/pipeline", seed),
   testKeys: () => request("/api/test-keys"),
+  tiktokAuthUrl: () => request("/api/tiktok/auth"),
+  tiktokToken: (payload) => request("/api/tiktok/token", payload),
 
   listProjects: async () => {
     const res = await fetch("/api/projects");

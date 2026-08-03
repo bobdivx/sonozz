@@ -21,8 +21,8 @@ import TracksStep from "./steps/TracksStep.jsx";
 import CoverStep from "./steps/CoverStep.jsx";
 import DistroKidStep from "./steps/DistroKidStep.jsx";
 import SocialStep from "./steps/SocialStep.jsx";
-import SettingsPanel from "./SettingsPanel.jsx";
 import HistoryPanel from "./HistoryPanel.jsx";
+import AppShell from "./AppShell.jsx";
 import { STEPS, emptyProject } from "../lib/studio.js";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys } from "../lib/keys.js";
@@ -53,7 +53,6 @@ export default function Dashboard() {
   const [project, setProject] = useState(emptyProject);
   const [loading, setLoading] = useState(false);
   const [autoRunning, setAutoRunning] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [log, setLog] = useState([]);
@@ -140,8 +139,8 @@ export default function Dashboard() {
 
   async function runStep(fn, key, goTo) {
     if (!keysReady(loadKeys())) {
-      setSettingsOpen(true);
-      setError("Configure d'abord ta clé Gemini.");
+      setError("Configure d'abord ta clé Gemini dans Paramètres.");
+      window.location.href = "/parametres?section=ia";
       return;
     }
     setLoading(true);
@@ -165,8 +164,8 @@ export default function Dashboard() {
 
   async function runFullAuto() {
     if (!keysReady(loadKeys())) {
-      setSettingsOpen(true);
       setError("Configure d'abord ta clé Gemini pour lancer l'auto.");
+      window.location.href = "/parametres?section=ia";
       return;
     }
     setAutoRunning(true);
@@ -235,26 +234,23 @@ export default function Dashboard() {
   }
 
   return (
-    <div class="mx-auto min-h-screen w-full max-w-6xl px-4 py-8 md:px-8 md:py-12">
+    <AppShell active="studio">
+    <div class="mx-auto w-full max-w-6xl">
       <header class="mb-8 grid gap-8 md:grid-cols-[1.15fr_0.85fr] md:items-end">
         <div class="space-y-4 animate-rise">
           <div class="flex flex-wrap items-center gap-3">
             <p class="inline-flex items-center gap-2 text-xs uppercase tracking-[0.28em] text-primary">
               <Waves size={14} /> Studio automatisé
             </p>
-            <button type="button" class="btn btn-ghost btn-xs gap-1" onClick={() => setSettingsOpen(true)}>
+            <a href="/parametres" class="btn btn-ghost btn-xs gap-1">
               <Settings2 size={14} />
-              Clés API
+              Paramètres
               <span class={`ml-1 h-2 w-2 rounded-full ${ready ? "bg-success" : "bg-warning animate-pulse-soft"}`} />
-            </button>
+            </a>
             <button type="button" class="btn btn-ghost btn-xs gap-1" onClick={() => setHistoryOpen(true)}>
               <History size={14} />
               Historique
             </button>
-            <a href="/artistes" class="btn btn-ghost btn-xs gap-1">
-              <UserRound size={14} />
-              Artistes
-            </a>
             {artistSlug && (
               <a href={`/artiste/${artistSlug}`} class="btn btn-ghost btn-xs gap-1 text-primary">
                 /{artistSlug}
@@ -420,7 +416,9 @@ export default function Dashboard() {
             lyrics={project.lyrics}
             artist={project.artist}
             loading={loading}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={() => {
+              window.location.href = "/parametres?section=ia";
+            }}
             onGenerate={() =>
               runStep(() => api.track({ lyrics: project.lyrics, artist: project.artist }), "track", 4)
             }
@@ -476,7 +474,9 @@ export default function Dashboard() {
             artist={project.artist}
             loading={loading}
             configured={Boolean(loadKeys().onceApiToken)}
-            onConfigure={() => setSettingsOpen(true)}
+            onConfigure={() => {
+              window.location.href = "/parametres?section=distribution";
+            }}
             onGoToCover={() => setStep(5)}
             onPrepare={() =>
               runStep(
@@ -568,13 +568,6 @@ export default function Dashboard() {
         </footer>
       </div>
 
-      <SettingsPanel
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onSaved={(keys) => {
-          setReady(keysReady(keys));
-        }}
-      />
       <HistoryPanel
         open={historyOpen}
         currentId={projectId}
@@ -582,5 +575,6 @@ export default function Dashboard() {
         onLoad={loadFromHistory}
       />
     </div>
+    </AppShell>
   );
 }
