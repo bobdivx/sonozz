@@ -267,6 +267,15 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
                     Style non défini
                   </span>
                 )}
+                {artist.gender && (
+                  <span class="inline-flex items-center border border-base-content/15 px-2.5 py-1 text-xs text-base-content/70">
+                    {artist.gender === "female"
+                      ? "Femme"
+                      : artist.gender === "nonbinary"
+                        ? "Non-binaire"
+                        : "Homme"}
+                  </span>
+                )}
                 <span class="inline-flex items-center gap-1.5 border border-secondary/30 bg-secondary/10 px-2.5 py-1 text-xs text-secondary">
                   <Languages size={12} />
                   {languageLabel(artist.language)}

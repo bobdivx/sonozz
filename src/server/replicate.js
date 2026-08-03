@@ -389,10 +389,10 @@ export async function generateImageWithReplicate(
 ) {
   const enhanced =
     kind === "portrait"
-      ? `photorealistic portrait photo, square crop, music artist, ${prompt}, sharp focus, no text, no watermark`
+      ? `photorealistic portrait photo, square crop, music artist, ${prompt}, sharp focus, no text, no watermark, do not change the stated sex or gender of the person`
       : kind === "cover"
         ? referenceImageUrl
-          ? `Transform this artist into a square cinematic album cover, same person clearly recognizable, ${prompt}, high detail, no watermark, no text`
+          ? `Transform this artist into a square cinematic album cover, same person clearly recognizable, same sex/gender as reference, ${prompt}, high detail, no watermark, no text`
           : `square album cover art, cinematic, ${prompt}, high detail, no watermark`
         : prompt;
 
