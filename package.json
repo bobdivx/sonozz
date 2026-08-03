@@ -10,7 +10,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "start": "node ./dist/server/entry.mjs",
-    "astro": "astro"
+    "astro": "astro",
+    "test": "node --test ./tests/career.test.js"
   },
   "dependencies": {
     "@astrojs/node": "^11.0.3",
