@@ -160,6 +160,7 @@ export const api = {
     return result;
   },
   testKeys: () => request("/api/test-keys"),
+  searchStyleArtists: (query) => request("/api/style-artists", { query }),
   tiktokAuthUrl: () => request("/api/tiktok/auth"),
   tiktokToken: (payload) => request("/api/tiktok/token", payload),
 

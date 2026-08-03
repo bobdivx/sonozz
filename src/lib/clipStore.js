@@ -177,8 +177,36 @@ export async function blobToDataUrl(blob) {
   });
 }
 
+async function fetchClipViaProxy({ url, s3Key } = {}) {
+  const qs = new URLSearchParams();
+  if (s3Key) qs.set("key", s3Key);
+  else if (url) qs.set("url", url);
+  else return null;
+  const res = await fetch(`/api/video/fetch?${qs.toString()}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Clip distant HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  if (!blob?.size || blob.size < 1000) throw new Error("Clip distant vide");
+  return blob;
+}
+
+async function cacheResolvedBlob(projectId, clipId, clip, blob) {
+  const cacheKey =
+    clipId && projectId ? clipBlobKey(projectId, clipId) : projectId || null;
+  if (!cacheKey || !blob) return;
+  try {
+    await saveClipBlob(cacheKey, blob, clipMetaOnly(clip));
+  } catch {
+    /* ignore */
+  }
+}
+
 /**
- * Charge le blob clip : mémoire → IndexedDB (multi + legacy) → URL S3/http → data URL legacy.
+ * Charge le blob clip :
+ * mémoire → IndexedDB → S3 (clé) → URL http via proxy serveur → data URL legacy.
+ * Important en prod : IndexedDB est local au navigateur ; S3/proxy est la source de vérité.
  */
 export async function resolveClipBlob(projectId, clip) {
   const clipId = clip?.id || null;
@@ -198,20 +226,25 @@ export async function resolveClipBlob(projectId, clip) {
     }
   }
 
+  const s3Key =
+    typeof clip?.s3Key === "string" && clip.s3Key.startsWith("clips/")
+      ? clip.s3Key
+      : null;
+  if (s3Key) {
+    try {
+      const blob = await fetchClipViaProxy({ s3Key });
+      await cacheResolvedBlob(projectId, clipId, clip, blob);
+      return blob;
+    } catch (e) {
+      // tombe sur videoUrl si encore valide
+      console.warn("[clip] S3 key KO:", e?.message || e);
+    }
+  }
+
   const remote = clip?.videoUrl;
   if (typeof remote === "string" && /^https?:\/\//i.test(remote)) {
-    const res = await fetch(remote);
-    if (!res.ok) throw new Error(`Clip distant HTTP ${res.status}`);
-    const blob = await res.blob();
-    const cacheKey =
-      clipId && projectId ? clipBlobKey(projectId, clipId) : projectId || null;
-    if (cacheKey) {
-      try {
-        await saveClipBlob(cacheKey, blob, clipMetaOnly(clip));
-      } catch {
-        /* ignore */
-      }
-    }
+    const blob = await fetchClipViaProxy({ url: remote });
+    await cacheResolvedBlob(projectId, clipId, clip, blob);
     return blob;
   }
 

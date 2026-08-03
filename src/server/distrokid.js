@@ -5,12 +5,27 @@ const DISTROKID_UPLOAD_URL = "https://distrokid.com/upload/";
 const DISTROKID_DASHBOARD_URL = "https://distrokid.com/";
 
 const GENRE_MAP = [
-  { match: /hyperpop|electro|edm|electron/i, genre: "Electronic", subgenre: "Electronica" },
-  { match: /drill|rap|hip.?hop/i, genre: "Hip Hop/Rap", subgenre: "Rap" },
-  { match: /r&b|rnb|soul/i, genre: "R&B/Soul", subgenre: "Contemporary R&B" },
+  { match: /metal|hard.?rock/i, genre: "Metal", subgenre: "Hard Rock" },
+  { match: /punk|garage/i, genre: "Alternative", subgenre: "Punk" },
+  { match: /jazz/i, genre: "Jazz", subgenre: "Contemporary Jazz" },
+  { match: /blues/i, genre: "Blues", subgenre: "Contemporary Blues" },
+  { match: /funk|disco/i, genre: "R&B/Soul", subgenre: "Funk" },
+  { match: /gospel/i, genre: "Gospel", subgenre: "Contemporary Gospel" },
+  { match: /k-?pop|j-?pop/i, genre: "Pop", subgenre: "K-Pop" },
+  { match: /lo-?fi|chill|synthwave|retrowave/i, genre: "Electronic", subgenre: "Electronica" },
+  { match: /house|techno|edm|festival/i, genre: "Electronic", subgenre: "Dance" },
+  { match: /hyperpop|electro|electron/i, genre: "Electronic", subgenre: "Electronica" },
+  { match: /trap|cloud.?rap|boom.?bap|hip.?hop|drill|rap/i, genre: "Hip Hop/Rap", subgenre: "Rap" },
+  { match: /neo.?soul|quiet.?storm|r&b|rnb|soul/i, genre: "R&B/Soul", subgenre: "Contemporary R&B" },
+  { match: /amapiano|afro.?house|afro/i, genre: "Worldwide", subgenre: "Afrobeats" },
+  { match: /dancehall|reggae/i, genre: "Reggae/Dancehall", subgenre: "Dancehall" },
+  { match: /latin|reggaeton/i, genre: "Latin", subgenre: "Reggaeton" },
+  { match: /country|americana/i, genre: "Country", subgenre: "Contemporary Country" },
+  { match: /folk|acoustique/i, genre: "Folk", subgenre: "Contemporary Folk" },
+  { match: /world|fusion/i, genre: "Worldwide", subgenre: "Worldbeat" },
   { match: /indie|alternative/i, genre: "Alternative", subgenre: "Indie Pop" },
-  { match: /afro/i, genre: "Worldwide", subgenre: "Afrobeats" },
-  { match: /pop/i, genre: "Pop", subgenre: "French Pop" },
+  { match: /rock/i, genre: "Rock", subgenre: "Indie Rock" },
+  { match: /chanson|variété|pop/i, genre: "Pop", subgenre: "French Pop" },
 ];
 
 function mapGenre(style = "") {

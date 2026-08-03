@@ -110,7 +110,11 @@ export default function SocialStep({
         const blob = await resolveClipBlob(projectId, active);
         if (cancelled) return;
         if (!blob) {
-          setError("Clip introuvable localement — régénère-le à l’étape Clip.");
+          setError(
+            active?.s3Key || active?.videoUrl
+              ? "Clip distant inaccessible — vérifie S3 sur le serveur ou régénère."
+              : "Clip introuvable — régénère-le à l’étape Clip (stockage navigateur vide).",
+          );
           setVideoBlob(null);
           return;
         }
@@ -145,6 +149,7 @@ export default function SocialStep({
     active?.provider,
     active?.at,
     active?.videoUrl,
+    active?.s3Key,
     hasClip,
   ]);
 

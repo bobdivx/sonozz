@@ -32,6 +32,7 @@ import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys } from "../lib/keys.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
 import { migrateProjectClipBlobs } from "../lib/clipStore.js";
+import StyleArtistPicker from "./StyleArtistPicker.jsx";
 import {
   isClipReady,
   normalizeProjectClips,
@@ -114,6 +115,8 @@ export default function Dashboard() {
     genre: "",
     genres: [],
     language: "fr",
+    styleArtist: "",
+    styleArtistPick: null,
   });
   const [published, setPublished] = useState(false);
   const [projectId, setProjectId] = useState(null);
@@ -291,6 +294,12 @@ export default function Dashboard() {
     if (!keysReady(loadKeys())) {
       setError("Configure d'abord un LLM (Gemini ou Ollama) pour lancer l'auto.");
       window.location.href = "/parametres?section=ia";
+      return;
+    }
+    if (seed.styleArtist?.trim() && !seed.styleArtistPick?.id) {
+      setError(
+        "Choisis et valide un artiste dans les résultats de recherche avant de lancer l'auto.",
+      );
       return;
     }
     setAutoRunning(true);
@@ -524,20 +533,28 @@ export default function Dashboard() {
             </button>
           </div>
           <div class="grid gap-3 md:grid-cols-2">
-            <input
-              class="input input-bordered bg-base-200"
-              placeholder="Nom artiste (optionnel)"
-              value={seed.name}
-              disabled={autoRunning}
-              onInput={(e) => setSeed((s) => ({ ...s, name: e.currentTarget.value }))}
-            />
-            <input
-              class="input input-bordered bg-base-200"
-              placeholder="Thème / titre (optionnel)"
-              value={seed.theme}
-              disabled={autoRunning}
-              onInput={(e) => setSeed((s) => ({ ...s, theme: e.currentTarget.value }))}
-            />
+            <label class="form-control w-full">
+              <span class="label-text mb-1 text-xs text-base-content/55">
+                Nom de scène (ton artiste fictionnel)
+              </span>
+              <input
+                class="input input-bordered bg-base-200"
+                placeholder="Laisser vide pour inventer un nom"
+                value={seed.name}
+                disabled={autoRunning}
+                onInput={(e) => setSeed((s) => ({ ...s, name: e.currentTarget.value }))}
+              />
+            </label>
+            <label class="form-control w-full">
+              <span class="label-text mb-1 text-xs text-base-content/55">Thème / titre</span>
+              <input
+                class="input input-bordered bg-base-200"
+                placeholder="Optionnel"
+                value={seed.theme}
+                disabled={autoRunning}
+                onInput={(e) => setSeed((s) => ({ ...s, theme: e.currentTarget.value }))}
+              />
+            </label>
             <div class="form-control w-full md:col-span-2">
               <span class="label-text mb-1 text-xs text-base-content/55">
                 Styles musicaux (multi)
@@ -575,6 +592,24 @@ export default function Dashboard() {
               {(seed.genres || []).length > 0 && (
                 <p class="mt-1 text-[11px] text-primary">{formatGenres(seed.genres)}</p>
               )}
+            </div>
+            <div class="md:col-span-2">
+              <StyleArtistPicker
+                value={seed.styleArtist}
+                pick={seed.styleArtistPick}
+                disabled={autoRunning}
+                compact
+                onQueryChange={(q) =>
+                  setSeed((s) => ({ ...s, styleArtist: q, styleArtistPick: null }))
+                }
+                onPickChange={(pick) =>
+                  setSeed((s) => ({
+                    ...s,
+                    styleArtist: pick?.name || s.styleArtist,
+                    styleArtistPick: pick,
+                  }))
+                }
+              />
             </div>
             <label class="form-control w-full">
               <span class="label-text mb-1 text-xs text-base-content/55">Langue des chansons</span>

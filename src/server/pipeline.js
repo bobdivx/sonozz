@@ -1,6 +1,7 @@
 import { generateVisual } from "./images.js";
 import { fetchDeezerCharts } from "./deezer.js";
 import { prepareSpotifyRelease, getSpotifyAccess, spotifySearchContext } from "./spotify.js";
+import { resolveStyleReference } from "./styleReference.js";
 import { submitOnceRelease } from "./once.js";
 import { generateMusicWithReplicate } from "./replicate.js";
 import { isUsableRasterImage } from "./imagePersist.js";
@@ -312,31 +313,106 @@ function withGenderInPrompt(prompt, genderEn) {
   return `${genderEn}. ${base}`.trim();
 }
 
-export async function runArtist({ keys, name, bioHint, trends, genre, genres, language }) {
+export async function runArtist({
+  keys,
+  name,
+  bioHint,
+  trends,
+  genre,
+  genres,
+  language,
+  styleArtist,
+  styleArtistPick,
+}) {
   requireTextLlm(keys);
   const lang = resolveLanguage(language);
   const langName = languagePromptName(lang);
-  const styleList = Array.isArray(genres)
+  const userStyles = Array.isArray(genres)
     ? genres.map((g) => String(g || "").trim()).filter(Boolean)
     : String(genre || "")
         .split(/\s*[×xX|/]\s*|\s*,\s*/)
         .map((x) => x.trim())
         .filter(Boolean);
-  const styleHint = styleList.join(" × ") || String(genre || "").trim();
-  const stylePrompt = styleList.length
-    ? styleList.length === 1
-      ? styleList[0]
-      : `fusion / croisement de: ${styleList.join(" + ")} (garde une identité cohérente, pas un collage arbitraire)`
+  const forcedName = String(name || "")
+    .trim()
+    .slice(0, 80);
+  const styleArtistHint = String(styleArtist || styleArtistPick?.name || "")
+    .trim()
+    .slice(0, 120);
+
+  /** @type {Awaited<ReturnType<typeof resolveStyleReference>> | null} */
+  let styleLock = null;
+  if (styleArtistPick?.source && styleArtistPick?.id) {
+    styleLock = await resolveStyleReference(keys, styleArtistPick);
+  } else if (styleArtistHint) {
+    // Sans validation UI : refuse pour forcer le choix explicite
+    throw new Error(
+      "Valide d'abord un artiste de référence dans les résultats de recherche (Spotify / Deezer).",
+    );
+  }
+
+  // Styles finaux : référence artiste = vérité ; styles user en complément optionnel
+  const finalGenres = styleLock
+    ? userStyles.length
+      ? [...new Set([...styleLock.genres, ...userStyles])].slice(0, 5)
+      : styleLock.genres
+    : userStyles;
+  const finalGenre = styleLock
+    ? styleLock.genreSummary || finalGenres.join(" × ")
+    : finalGenres.join(" × ");
+  const stylePrompt = finalGenres.length
+    ? finalGenres.length === 1
+      ? finalGenres[0]
+      : `fusion cohérente de: ${finalGenres.join(" + ")}`
     : "";
+
   const data = await llmJson(
     keys,
     `Crée un profil d'artiste musical fictionnel mais ultra-réaliste,
 avec une identité visuelle cohérente (look, style photo, wardrobe).
-Nom suggéré: ${name || "génère un nom crédible adapté au marché"}
-Style(s) musical(aux) imposé(s): ${stylePrompt || "choisis un style cohérent avec les tendances (explicite et précis)"}
+
+${
+  forcedName
+    ? `NOM DE SCÈNE OBLIGATOIRE (copie exacte) : "${forcedName}"
+"name" et "aka" = exactement "${forcedName}".`
+    : `Nom de scène : génère un nom crédible adapté au marché et au style ci-dessous (PAS le nom de la référence).`
+}
+
+${
+  styleLock
+    ? `═══ LOCK STYLE — ARTISTE RÉEL TROUVÉ (${styleLock.source}, confiance ${styleLock.confidence}) ═══
+Requête: "${styleLock.query}"
+Match catalogue: "${styleLock.matchedName}"
+${styleLock.url ? `URL: ${styleLock.url}` : ""}
+Titres phares: ${(styleLock.topTracks || []).join(" · ") || "n/a"}
+Albums: ${(styleLock.albums || []).join(" · ") || "n/a"}
+Related: ${(styleLock.related || []).slice(0, 5).join(", ") || "n/a"}
+
+PARAMÈTRES VERROUILLÉS (copie / respecte STRICTEMENT) :
+- genreSummary: ${styleLock.genreSummary}
+- genres: ${JSON.stringify(styleLock.genres)}
+- mood: ${styleLock.mood}
+- energy: ${styleLock.energy}
+- tempoFeel: ${styleLock.tempoFeel}
+- production: ${styleLock.production}
+- vocalStyle: ${styleLock.vocalStyle}
+- sonicKeywords: ${JSON.stringify(styleLock.sonicKeywords)}
+- writingStyle: ${styleLock.writingStyle}
+- visualVibe: ${styleLock.visualVibe}
+- influences OBLIGATOIRES (dans cet ordre): ${JSON.stringify(styleLock.influences)}
+- INTERDIT (doNot): ${JSON.stringify(styleLock.doNot)}
+
+Le nouvel artiste doit sonner comme s'il était dans la MÊME famille que "${styleLock.matchedName}" :
+même groove, même énergie, même type de prod, même approche d'écriture.
+Identité fictionnelle DISTINCTE (nom, visage, bio) — PAS un clone légal / PAS une parody.
+Les tendances charts ci-dessous sont IGNORÉES si elles contredisent ce lock.
+═══════════════════════════════════════════════════════════════════════════════`
+    : `Style(s) musical(aux) imposé(s): ${stylePrompt || "choisis un style cohérent avec les tendances (explicite et précis)"}`
+}
+
 Langue des chansons imposée: ${langName} (code ${lang}) — le catalogue et les paroles seront dans cette langue.
 Indices personnalité / univers (PAS le style musical): ${bioHint || "aucun"}
-Tendances: ${promptJson(trends || {})}
+Tendances (contexte marché${styleLock ? " — SECONDARY, ne pas écraser le lock" : ""}): ${promptJson(styleLock ? {} : trends || {})}
 
 IMPORTANT — SEXE / PRÉSENTATION (à ne PAS confondre avec le style musical « genre ») :
 - Choisis UN seul gender: "male" | "female" | "nonbinary".
@@ -370,26 +446,43 @@ JSON strict:
   }
 }
 ${
-  styleHint
-    ? `Le champ "genre" DOIT résumer le STYLE MUSICAL: "${styleHint}". "genres" liste chaque style (${styleList.map((g) => '"' + g + '"').join(", ") || '"' + styleHint + '"'}). Ce n'est PAS le sexe.`
-    : ""
+  styleLock
+    ? `"genre" DOIT être: "${finalGenre}". "genres" DOIT être: ${JSON.stringify(finalGenres)}. "mood" DOIT être proche de: "${styleLock.mood}". "voice" DOIT coller à: "${styleLock.vocalStyle}".`
+    : finalGenre
+      ? `Le champ "genre" DOIT résumer le STYLE MUSICAL: "${finalGenre}". "genres" = ${JSON.stringify(finalGenres)}. Ce n'est PAS le sexe.`
+      : ""
 }
 "language" doit être exactement "${lang}".
 legalName = prénom + nom de famille réalistes cohérents avec gender (obligatoire pour la distribution).
-portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." ou "adult woman..." ou androgyne), puis âge, traits, coiffure, tenue, lumière, décor ; square photo ; no text in image.`,
+portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." ou "adult woman..." ou androgyne), puis âge, traits, coiffure, tenue, lumière, décor${styleLock?.visualVibe ? ` ; vibe visuelle: ${styleLock.visualVibe}` : ""} ; square photo ; no text in image.`,
   );
 
   const lock = genderVisualLock(data.gender);
-  const finalGenres =
-    styleList.length > 0
-      ? styleList
-      : Array.isArray(data.genres) && data.genres.length
-        ? data.genres.map((g) => String(g).trim()).filter(Boolean)
-        : [data.genre || "Pop"].filter(Boolean);
-  const finalGenre = styleHint || finalGenres.join(" × ") || data.genre || "Pop";
+
+  if (forcedName) {
+    data.name = forcedName;
+    data.aka = forcedName;
+  }
+
+  // Force paramètres depuis le style lock (la vérité catalogue+LLM)
+  const lockedMood = styleLock?.mood || data.mood;
+  const lockedVoice = styleLock?.vocalStyle || data.voice || lock.voiceHint;
+  const lockedInfluences = styleLock?.influences?.length
+    ? styleLock.influences
+    : Array.isArray(data.influences)
+      ? data.influences.map((x) => String(x || "").trim()).filter(Boolean)
+      : [];
+
+  const resolvedGenres = finalGenres.length
+    ? finalGenres
+    : Array.isArray(data.genres) && data.genres.length
+      ? data.genres.map((g) => String(g).trim()).filter(Boolean)
+      : [data.genre || "Pop"].filter(Boolean);
+  const resolvedGenre = finalGenre || resolvedGenres.join(" × ") || data.genre || "Pop";
+
   const rawPortrait =
     data.visualIdentity?.portraitPrompt ||
-    `Cinematic portrait of music artist ${data.name}, ${finalGenre} vibe, ${data.mood} mood, wardrobe ${data.visualIdentity?.wardrobe || "contemporary streetwear"}, ${data.visualIdentity?.photographyStyle || "film grain night portrait"}, square composition, photorealistic`;
+    `Cinematic portrait of music artist ${data.name}, ${resolvedGenre} vibe, ${lockedMood} mood, wardrobe ${data.visualIdentity?.wardrobe || "contemporary streetwear"}, ${data.visualIdentity?.photographyStyle || "film grain night portrait"}, square composition, photorealistic`;
   const portraitPrompt = withGenderInPrompt(rawPortrait, lock.en);
 
   const portrait = await generateVisual({
@@ -400,12 +493,39 @@ portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." o
 
   return {
     ...data,
+    name: forcedName || data.name,
+    aka: forcedName || data.aka,
     gender: lock.code,
-    genre: finalGenre,
-    genres: finalGenres,
+    genre: resolvedGenre,
+    genres: resolvedGenres,
+    mood: lockedMood,
     language: lang,
-    voice: data.voice || lock.voiceHint,
-    slug: slugify(data.aka || data.name || "artiste"),
+    styleArtist: styleLock?.matchedName || styleArtistHint || undefined,
+    styleLock: styleLock
+      ? {
+          query: styleLock.query,
+          matchedName: styleLock.matchedName,
+          source: styleLock.source,
+          sourceId: styleLock.sourceId,
+          confidence: styleLock.confidence,
+          url: styleLock.url,
+          image: styleLock.image,
+          genres: styleLock.genres,
+          genreSummary: styleLock.genreSummary,
+          mood: styleLock.mood,
+          energy: styleLock.energy,
+          production: styleLock.production,
+          vocalStyle: styleLock.vocalStyle,
+          sonicKeywords: styleLock.sonicKeywords,
+          writingStyle: styleLock.writingStyle,
+          doNot: styleLock.doNot,
+          musicPrompt: styleLock.musicPrompt,
+          topTracks: styleLock.topTracks,
+        }
+      : undefined,
+    influences: lockedInfluences,
+    voice: lockedVoice,
+    slug: slugify((forcedName || data.aka || data.name) || "artiste"),
     imageUrl: portrait.imageUrl,
     imageFallback: false,
     imageWarning: portrait.warning,
@@ -415,6 +535,7 @@ portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." o
     visualIdentity: {
       ...(data.visualIdentity || {}),
       genderLock: lock.en,
+      ...(styleLock?.visualVibe ? { vibeFromRef: styleLock.visualVibe } : {}),
     },
   };
 }
@@ -423,14 +544,37 @@ export async function runLyrics({ keys, theme, artist, trends, language }) {
   requireTextLlm(keys);
   const lang = resolveLanguage(language, artist);
   const langName = languagePromptName(lang);
+  const lock = artist?.styleLock;
   const data = await llmJson(
     keys,
     `Écris des paroles de chanson originales en ${langName} pour cet artiste.
-Artiste: ${promptJson(artist)}
-Style musical: ${artist?.genre || "pop contemporain"}
+Artiste: ${promptJson({
+  name: artist?.name,
+  genre: artist?.genre,
+  genres: artist?.genres,
+  mood: artist?.mood,
+  voice: artist?.voice,
+  bio: artist?.bio,
+  influences: artist?.influences,
+  styleArtist: artist?.styleArtist,
+})}
+Style musical VERROUILLÉ: ${artist?.genre || "pop contemporain"}
+${
+  lock
+    ? `Lock référence "${lock.matchedName}":
+- production: ${lock.production}
+- writingStyle: ${lock.writingStyle}
+- mood/energy: ${lock.mood} / ${lock.energy}
+- sonicKeywords: ${(lock.sonicKeywords || []).join(", ")}
+- doNot (styles/écritures interdits): ${(lock.doNot || []).join(", ")}
+Écris dans EXACTEMENT cette lane (hooks, rythme des phrases, vibe) — sans pasticher les paroles de "${lock.matchedName}".`
+    : artist?.styleArtist
+      ? `Boussole style (sans pastiche) : ${artist.styleArtist}`
+      : ""
+}
 Langue obligatoire des paroles: ${langName} (code ${lang}) — aucune autre langue dans le chant.
 Thème/titre: ${theme || "inspire-toi des tendances"}
-Tendances: ${promptJson(trends || {})}
+Tendances: ${promptJson(lock ? {} : trends || {})}
 
 JSON strict:
 {
@@ -450,14 +594,28 @@ export async function runTrack({ keys, lyrics, artist }) {
   const lang = resolveLanguage(lyrics?.language, artist);
   const langName = languagePromptName(lang);
   const genderLock = genderVisualLock(artist?.gender);
-  const prompt = [
-    `${artist?.genre || "pop"}`,
-    `${artist?.mood || "emotional"} mood`,
-    `${artist?.voice || genderLock.voiceHint}`,
-    genderLock.voiceHint,
-    `vocals and lyrics in ${langName}`,
-    "contemporary production, radio-ready, emotional hook",
-  ].join(", ");
+  const styleLock = artist?.styleLock;
+  const prompt = (
+    styleLock?.musicPrompt
+      ? [
+          styleLock.musicPrompt,
+          `${artist?.mood || styleLock.mood || "emotional"} mood`,
+          genderLock.voiceHint,
+          `vocals and lyrics in ${langName}`,
+          "radio-ready, original composition",
+        ]
+      : [
+          `${artist?.genre || "pop"}`,
+          artist?.styleArtist ? `in the sonic lane of ${artist.styleArtist} (original, not a cover)` : "",
+          `${artist?.mood || "emotional"} mood`,
+          `${artist?.voice || genderLock.voiceHint}`,
+          genderLock.voiceHint,
+          `vocals and lyrics in ${langName}`,
+          "contemporary production, radio-ready, emotional hook",
+        ]
+  )
+    .filter(Boolean)
+    .join(", ");
 
   let audioUrl = null;
   let provider = "brief";
@@ -481,7 +639,9 @@ export async function runTrack({ keys, lyrics, artist }) {
       "Aucun token Replicate — aucun fichier audio généré. Importe un mp3 (Suno) ou ajoute le token dans Paramètres.";
   }
 
-  const sunoPrompt = `Style: ${artist?.genre}. Mood: ${artist?.mood}.
+  const sunoPrompt = `Style: ${artist?.genre}${styleLock?.matchedName ? ` (lane of ${styleLock.matchedName})` : ""}. Mood: ${artist?.mood}.
+Production: ${styleLock?.production || "contemporary"}
+Keywords: ${(styleLock?.sonicKeywords || []).join(", ")}
 Title: ${lyrics?.title}
 Lyrics:
 ${lyrics?.text || ""}
@@ -641,7 +801,19 @@ export const PIPELINE_STEPS = [
   { key: "done", label: "Terminé", message: "Pipeline terminé" },
 ];
 
-export async function runFullPipeline({ keys, name, bioHint, theme, market, genre, genres, language, onProgress }) {
+export async function runFullPipeline({
+  keys,
+  name,
+  bioHint,
+  theme,
+  market,
+  genre,
+  genres,
+  language,
+  styleArtist,
+  styleArtistPick,
+  onProgress,
+}) {
   const log = [];
   const total = PIPELINE_STEPS.length;
   const push = (step, message) => {
@@ -658,7 +830,17 @@ export async function runFullPipeline({ keys, name, bioHint, theme, market, genr
   const trends = await runTrends({ keys, market });
 
   push("artist", "Génération profil artiste…");
-  const artist = await runArtist({ keys, name, bioHint, trends, genre, genres, language });
+  const artist = await runArtist({
+    keys,
+    name,
+    bioHint,
+    trends,
+    genre,
+    genres,
+    language,
+    styleArtist,
+    styleArtistPick,
+  });
 
   push("lyrics", "Écriture des paroles…");
   const lyrics = await runLyrics({ keys, theme, artist, trends, language: language || artist.language });

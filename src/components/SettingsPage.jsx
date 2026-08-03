@@ -47,6 +47,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [connectingTikTok, setConnectingTikTok] = useState(false);
+  const [tiktokPreview, setTiktokPreview] = useState(null);
   const [webhookBusy, setWebhookBusy] = useState(false);
   const [webhookConfig, setWebhookConfig] = useState(null);
   const [tests, setTests] = useState(null);

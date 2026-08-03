@@ -193,7 +193,11 @@ export default function ClipStep({
         const blob = await resolveClipBlob(projectId, activeClip);
         if (cancelled) return;
         if (!blob || blob.size < 1000) {
-          setError("Clip introuvable — régénère ou réimporte.");
+          setError(
+            activeClip?.s3Key || activeClip?.storedRemote
+              ? "Clip distant inaccessible — vérifie les variables S3 du conteneur ou régénère."
+              : "Clip introuvable (IndexedDB vide) — régénère ou réimporte.",
+          );
           return;
         }
         const typed =

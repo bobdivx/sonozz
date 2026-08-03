@@ -3,12 +3,27 @@ import { isEphemeralImageUrl, materializeImageForStorage } from "./imagePersist.
 const BASE = "https://once.app/v1";
 
 const GENRE_MAP = [
-  { match: /hyperpop|electro|edm|electron/i, genre: "Electronic", sub_genre: "Electronica" },
-  { match: /drill|rap|hip.?hop/i, genre: "Hip Hop/Rap", sub_genre: "Rap" },
-  { match: /r&b|rnb|soul/i, genre: "R&B/Soul", sub_genre: "Contemporary R&B" },
+  { match: /metal|hard.?rock/i, genre: "Metal", sub_genre: "Hard Rock" },
+  { match: /punk|garage/i, genre: "Alternative", sub_genre: "Punk" },
+  { match: /jazz/i, genre: "Jazz", sub_genre: "Contemporary Jazz" },
+  { match: /blues/i, genre: "Blues", sub_genre: "Contemporary Blues" },
+  { match: /funk|disco/i, genre: "R&B/Soul", sub_genre: "Funk" },
+  { match: /gospel/i, genre: "Gospel", sub_genre: "Contemporary Gospel" },
+  { match: /k-?pop|j-?pop/i, genre: "Pop", sub_genre: "K-Pop" },
+  { match: /lo-?fi|chill|synthwave|retrowave/i, genre: "Electronic", sub_genre: "Electronica" },
+  { match: /house|techno|edm|festival/i, genre: "Electronic", sub_genre: "Dance" },
+  { match: /hyperpop|electro|electron/i, genre: "Electronic", sub_genre: "Electronica" },
+  { match: /trap|cloud.?rap|boom.?bap|hip.?hop|drill|rap/i, genre: "Hip Hop/Rap", sub_genre: "Rap" },
+  { match: /neo.?soul|quiet.?storm|r&b|rnb|soul/i, genre: "R&B/Soul", sub_genre: "Contemporary R&B" },
+  { match: /amapiano|afro.?house|afro/i, genre: "Worldwide", sub_genre: "Afrobeats" },
+  { match: /dancehall|reggae/i, genre: "Reggae/Dancehall", sub_genre: "Dancehall" },
+  { match: /latin|reggaeton/i, genre: "Latin", sub_genre: "Reggaeton" },
+  { match: /country|americana/i, genre: "Country", sub_genre: "Contemporary Country" },
+  { match: /folk|acoustique/i, genre: "Folk", sub_genre: "Contemporary Folk" },
+  { match: /world|fusion/i, genre: "Worldwide", sub_genre: "Worldbeat" },
   { match: /indie|alternative/i, genre: "Alternative", sub_genre: "Indie Pop" },
-  { match: /afro/i, genre: "Worldwide", sub_genre: "Afrobeats" },
-  { match: /pop/i, genre: "Pop", sub_genre: "French Pop" },
+  { match: /rock/i, genre: "Rock", sub_genre: "Indie Rock" },
+  { match: /chanson|variété|pop/i, genre: "Pop", sub_genre: "French Pop" },
 ];
 
 function mapGenre(style = "") {

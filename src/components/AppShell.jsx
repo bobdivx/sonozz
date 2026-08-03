@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import {
   Waves,
   UserRound,
@@ -7,6 +7,7 @@ import {
   X,
   Scale,
   Headphones,
+  LogOut,
 } from "lucide-preact";
 import JobsDock from "./JobsDock.jsx";
 
@@ -23,6 +24,23 @@ const NAV = [
  */
 export default function AppShell({ active, children, title, subtitle }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [authed, setAuthed] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => setAuthed(Boolean(d?.authenticated)))
+      .catch(() => setAuthed(false));
+  }, []);
+
+  async function logout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      /* ignore */
+    }
+    location.assign("/login");
+  }
 
   return (
     <div class="min-h-screen md:flex">
@@ -98,19 +116,32 @@ export default function AppShell({ active, children, title, subtitle }) {
           <a href="/legal/terms" class="flex items-center gap-2 px-3 py-1.5 hover:text-base-content">
             <Scale size={12} /> Conditions
           </a>
+          {authed && (
+            <button
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:text-base-content"
+              onClick={logout}
+            >
+              <LogOut size={12} /> Déconnexion
+            </button>
+          )}
         </div>
       </aside>
 
       <div class="min-w-0 flex-1">
         {(title || subtitle) && (
-          <header class="border-b border-base-content/10 px-4 py-6 md:px-8 md:py-8">
+          <header class="border-b border-base-content/10 px-4 py-4 sm:py-6 md:px-8 md:py-8">
             {title && (
-              <h1 class="font-display text-3xl font-extrabold tracking-tight md:text-4xl">{title}</h1>
+              <h1 class="font-display text-2xl font-extrabold tracking-tight sm:text-3xl md:text-4xl">
+                {title}
+              </h1>
             )}
-            {subtitle && <p class="mt-1 max-w-2xl text-sm text-base-content/60 md:text-base">{subtitle}</p>}
+            {subtitle && (
+              <p class="mt-1 max-w-2xl text-sm text-base-content/60 md:text-base">{subtitle}</p>
+            )}
           </header>
         )}
-        <div class="px-4 py-6 md:px-8 md:py-8">{children}</div>
+        <div class="px-3 py-4 sm:px-4 sm:py-6 md:px-8 md:py-8">{children}</div>
       </div>
     </div>
   );

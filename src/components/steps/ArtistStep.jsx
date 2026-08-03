@@ -7,6 +7,7 @@ import {
   languageLabel,
   parseGenres,
 } from "../../lib/studio.js";
+import StyleArtistPicker from "../StyleArtistPicker.jsx";
 
 export default function ArtistStep({ artist, trends, loading, onGenerate }) {
   const [name, setName] = useState(artist?.name || "");
@@ -15,6 +16,18 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
   const [showCustom, setShowCustom] = useState(false);
   const [language, setLanguage] = useState(artist?.language || "fr");
   const [bioHint, setBioHint] = useState("");
+  const [styleArtist, setStyleArtist] = useState(artist?.styleArtist || "");
+  const [styleArtistPick, setStyleArtistPick] = useState(() =>
+    artist?.styleLock?.sourceId
+      ? {
+          source: artist.styleLock.source,
+          id: artist.styleLock.sourceId,
+          name: artist.styleArtist || artist.styleLock.matchedName,
+          image: artist.styleLock.image || null,
+        }
+      : null,
+  );
+  const [pickError, setPickError] = useState("");
 
   useEffect(() => {
     if (!artist) return;
@@ -32,7 +45,16 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
       setCustomGenre("");
     }
     if (artist.language) setLanguage(artist.language);
-  }, [artist?.name, artist?.genre, artist?.genres, artist?.language]);
+    setStyleArtist(artist.styleArtist || "");
+    if (artist.styleLock?.sourceId) {
+      setStyleArtistPick({
+        source: artist.styleLock.source,
+        id: artist.styleLock.sourceId,
+        name: artist.styleArtist || artist.styleLock.matchedName,
+        image: artist.styleLock.image || null,
+      });
+    }
+  }, [artist?.name, artist?.genre, artist?.genres, artist?.language, artist?.styleArtist]);
 
   function toggleStyle(value) {
     if (!value) {
@@ -54,12 +76,19 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
   const resolvedGenre = formatGenres(resolvedGenres);
 
   function handleGenerate() {
+    if (styleArtist.trim() && !styleArtistPick?.id) {
+      setPickError("Choisis et valide un artiste dans la liste avant de générer.");
+      return;
+    }
+    setPickError("");
     onGenerate({
       name: name.trim(),
       genre: resolvedGenre || undefined,
       genres: resolvedGenres.length ? resolvedGenres : undefined,
       language,
       bioHint: bioHint.trim(),
+      styleArtist: styleArtistPick?.name || styleArtist.trim() || undefined,
+      styleArtistPick: styleArtistPick || undefined,
       trends,
     });
   }
@@ -78,11 +107,13 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
 
       <div class="flex flex-col gap-5">
         <label class="form-control w-full">
-          <span class="label-text mb-1 text-sm text-base-content/60">Nom de l'artiste</span>
+          <span class="label-text mb-1 text-sm text-base-content/60">
+            Nom de scène (ton artiste fictionnel)
+          </span>
           <input
             class="input input-bordered w-full bg-base-200"
             type="text"
-            placeholder="Laisser vide pour générer"
+            placeholder="Laisser vide pour générer un nom"
             value={name}
             onInput={(e) => setName(e.currentTarget.value)}
           />
@@ -138,6 +169,24 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
               onInput={(e) => setCustomGenre(e.currentTarget.value)}
             />
           )}
+          <div class="pt-1">
+            <StyleArtistPicker
+              value={styleArtist}
+              pick={styleArtistPick}
+              disabled={loading}
+              onQueryChange={(q) => {
+                setStyleArtist(q);
+                setStyleArtistPick(null);
+                setPickError("");
+              }}
+              onPickChange={(pick) => {
+                setStyleArtistPick(pick);
+                if (pick?.name) setStyleArtist(pick.name);
+                setPickError("");
+              }}
+            />
+            {pickError && <p class="mt-1 text-xs text-warning">{pickError}</p>}
+          </div>
         </fieldset>
 
         <fieldset class="space-y-2">
@@ -301,6 +350,27 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
               <p class="text-sm text-base-content/55">
                 Influences : {(artist.influences || []).join(" · ")}
               </p>
+              {artist.styleArtist && (
+                <p class="text-sm text-base-content/55">
+                  Référence style : <span class="text-primary">{artist.styleArtist}</span>
+                  {artist.styleLock?.source ? (
+                    <span class="text-base-content/40">
+                      {" "}
+                      · {artist.styleLock.source}
+                      {artist.styleLock.confidence ? ` · ${artist.styleLock.confidence}` : ""}
+                    </span>
+                  ) : null}
+                </p>
+              )}
+              {artist.styleLock?.genreSummary && (
+                <p class="text-sm text-base-content/55">
+                  Style verrouillé :{" "}
+                  <span class="text-secondary">{artist.styleLock.genreSummary}</span>
+                </p>
+              )}
+              {artist.styleLock?.production && (
+                <p class="text-xs text-base-content/45">{artist.styleLock.production}</p>
+              )}
 
               {vi && (
                 <div class="space-y-3 border-t border-base-content/10 pt-4">
