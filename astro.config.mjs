@@ -17,6 +17,16 @@ export default defineConfig({
     assets: 'assets',
   },
 
+  // Derrière Coolify/Cloudflare : Origin https ≠ url interne http → 403 CSRF
+  security: {
+    checkOrigin: true,
+    allowedDomains: [
+      { hostname: 'sonozz.briseteia.me', protocol: 'https' },
+      { hostname: 'localhost', protocol: 'http' },
+      { hostname: '127.0.0.1', protocol: 'http' },
+    ],
+  },
+
   vite: {
     plugins: [tailwindcss()]
   },
