@@ -682,8 +682,9 @@ export default function SettingsPage() {
                   ci-dessus.
                 </li>
                 <li>
-                  URI de redirection autorisée (exacte) :
+                  URI de redirection autorisée (<strong>https</strong>, exacte — pas http) :
                   <code class="mt-1 block break-all font-mono text-[11px] text-primary">{ytRedirectUri}</code>
+                  Dans Google Cloud, ajoute exactement cette URI (sans slash final).
                 </li>
                 <li>
                   Écran de consentement OAuth → type <strong>External</strong> → ajoute ton compte Google

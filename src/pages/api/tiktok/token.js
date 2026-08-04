@@ -1,4 +1,4 @@
-import { json, error, readBody } from "../../../server/http.js";
+import { json, error, readBody, publicOrigin } from "../../../server/http.js";
 import {
   defaultRedirectUri,
   exchangeCodeForToken,
@@ -13,8 +13,9 @@ export async function POST({ request }) {
     const keys = body.keys || {};
     const clientKey = keys.tiktokClientKey?.trim() || body.clientKey?.trim();
     const clientSecret = keys.tiktokClientSecret?.trim() || body.clientSecret?.trim();
-    const origin = new URL(request.url).origin;
-    const redirectUri = body.redirectUri?.trim() || defaultRedirectUri(origin);
+    const origin = publicOrigin(request);
+    let redirectUri = body.redirectUri?.trim() || defaultRedirectUri(origin);
+    redirectUri = redirectUri.replace(/^http:\/\/(?!localhost|127\.0\.0\.1)/i, "https://");
 
     if (!clientKey || !clientSecret) {
       return error("Client Key et Client Secret TikTok requis", 400);

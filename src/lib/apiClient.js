@@ -172,9 +172,29 @@ export const api = {
   },
   saveKeysRemote: (keys) => request("/api/keys", { keys }),
   searchStyleArtists: (query) => request("/api/style-artists", { query }),
-  tiktokAuthUrl: () => request("/api/tiktok/auth"),
+  tiktokAuthUrl: (payload = {}) =>
+    request("/api/tiktok/auth", {
+      redirectUri:
+        typeof window !== "undefined"
+          ? `${window.location.origin}/tiktok/callback`.replace(
+              /^http:\/\/(?!localhost|127\.0\.0\.1)/i,
+              "https://",
+            )
+          : undefined,
+      ...payload,
+    }),
   tiktokToken: (payload) => request("/api/tiktok/token", payload),
-  youtubeAuthUrl: () => request("/api/youtube/auth"),
+  youtubeAuthUrl: (payload = {}) =>
+    request("/api/youtube/auth", {
+      redirectUri:
+        typeof window !== "undefined"
+          ? `${window.location.origin}/youtube/callback`.replace(
+              /^http:\/\/(?!localhost|127\.0\.0\.1)/i,
+              "https://",
+            )
+          : undefined,
+      ...payload,
+    }),
   youtubeToken: (payload) => request("/api/youtube/token", payload),
 
   listProjects: async () => {

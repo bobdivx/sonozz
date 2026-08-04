@@ -1,4 +1,4 @@
-import { json, error, readBody } from "../../../server/http.js";
+import { json, error, readBody, publicOrigin } from "../../../server/http.js";
 import {
   defaultRedirectUri,
   exchangeCodeForToken,
@@ -7,14 +7,22 @@ import {
 
 export const prerender = false;
 
+function normalizeRedirectUri(uri) {
+  return String(uri || "")
+    .trim()
+    .replace(/^http:\/\/(?!localhost|127\.0\.0\.1)/i, "https://");
+}
+
 export async function POST({ request }) {
   try {
     const body = await readBody(request);
     const keys = body.keys || {};
     const clientId = keys.youtubeClientId?.trim() || body.clientId?.trim();
     const clientSecret = keys.youtubeClientSecret?.trim() || body.clientSecret?.trim();
-    const origin = new URL(request.url).origin;
-    const redirectUri = body.redirectUri?.trim() || defaultRedirectUri(origin);
+    const origin = publicOrigin(request);
+    const redirectUri = normalizeRedirectUri(
+      body.redirectUri?.trim() || defaultRedirectUri(origin),
+    );
 
     if (!clientId || !clientSecret) {
       return error("Client ID et Client Secret YouTube requis", 400);

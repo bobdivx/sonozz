@@ -1,4 +1,4 @@
-import { json, error, readBody } from "../../../server/http.js";
+import { json, error, readBody, publicOrigin } from "../../../server/http.js";
 import {
   buildAuthorizeUrl,
   createPkcePair,
@@ -23,8 +23,10 @@ export async function POST({ request }) {
       );
     }
 
-    const origin = new URL(request.url).origin;
+    const origin = publicOrigin(request);
     let redirectUri = body.redirectUri?.trim() || defaultRedirectUri(origin);
+    // Proxy http → forcer https hors localhost
+    redirectUri = redirectUri.replace(/^http:\/\/(?!localhost|127\.0\.0\.1)/i, "https://");
     if (body.trailingSlash && !redirectUri.endsWith("/")) {
       redirectUri = `${redirectUri}/`;
     }
@@ -50,8 +52,9 @@ export async function POST({ request }) {
       clientIdPreview: `${clientId.slice(0, 8)}…${clientId.slice(-6)}`,
       scopes,
       hint:
-        "Google Cloud → APIs → YouTube Data API v3 ON. OAuth consent (External + test users). " +
-        "Identifiants → Application Web → Redirect URI exacte ci-dessous.",
+        "Google Cloud → Identifiants → URI de redirection = EXACTEMENT " +
+        redirectUri +
+        " (https, sans slash final sauf si déclaré).",
     });
   } catch (e) {
     return error(e.message || "Auth YouTube impossible", 500);

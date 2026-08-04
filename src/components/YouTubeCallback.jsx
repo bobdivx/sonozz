@@ -51,7 +51,10 @@ export default function YouTubeCallback() {
           );
         }
 
-        const redirectUri = `${window.location.origin}/youtube/callback`;
+        const redirectUri = `${window.location.origin}/youtube/callback`.replace(
+          /^http:\/\/(?!localhost|127\.0\.0\.1)/i,
+          "https://",
+        );
         const res = await fetch("/api/youtube/token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
