@@ -9,7 +9,7 @@ import {
   Headphones,
   LogOut,
 } from "lucide-preact";
-import JobsDock from "./JobsDock.jsx";
+import JobsDock, { JobsDockMobile } from "./JobsDock.jsx";
 import { ensureKeysHydrated } from "../lib/keys.js";
 
 const NAV = [
@@ -150,7 +150,9 @@ export default function AppShell({ active, children, title, subtitle }) {
         </nav>
 
         <div class="min-h-0 flex-1 overflow-y-auto">
-          <JobsDock />
+          <div class="hidden md:block">
+            <JobsDock />
+          </div>
         </div>
 
         <div class="border-t border-base-content/10 p-3 text-xs text-base-content/45">
@@ -185,6 +187,8 @@ export default function AppShell({ active, children, title, subtitle }) {
         )}
         <div class="px-3 py-4 sm:px-4 sm:py-6 md:px-8 md:py-8">{children}</div>
       </div>
+
+      <JobsDockMobile />
     </div>
   );
 }

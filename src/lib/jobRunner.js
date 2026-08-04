@@ -83,9 +83,15 @@ async function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function pollVeo(operationName, { onTick, safePrompt = false } = {}) {
-  for (let i = 0; i < VEO_MAX_POLLS; i++) {
-    await sleep(10_000);
+/**
+ * @param {number} startFrom index déjà atteint (reprise après navigation)
+ * @param {boolean} resumeImmediate poll tout de suite si on reprend en cours
+ */
+async function pollVeo(operationName, { onTick, startFrom = 0 } = {}) {
+  const from = Math.max(0, Math.min(VEO_MAX_POLLS - 1, Number(startFrom) || 0));
+  for (let i = from; i < VEO_MAX_POLLS; i++) {
+    // Reprise : 1er check immédiat ; sinon attendre entre les polls
+    if (!(from > 0 && i === from)) await sleep(10_000);
     onTick?.(i);
     const poll = await api.veoShortPoll(operationName);
     if (poll?.done) return poll;
@@ -93,9 +99,10 @@ async function pollVeo(operationName, { onTick, safePrompt = false } = {}) {
   throw new Error("Timeout Veo (~10 min)");
 }
 
-async function pollSeedance(predictionId, { onTick } = {}) {
-  for (let i = 0; i < SEEDANCE_MAX_POLLS; i++) {
-    await sleep(8_000);
+async function pollSeedance(predictionId, { onTick, startFrom = 0 } = {}) {
+  const from = Math.max(0, Math.min(SEEDANCE_MAX_POLLS - 1, Number(startFrom) || 0));
+  for (let i = from; i < SEEDANCE_MAX_POLLS; i++) {
+    if (!(from > 0 && i === from)) await sleep(8_000);
     onTick?.(i);
     const poll = await api.seedancePoll(predictionId);
     if (poll?.done && poll.videoUrl) return poll;
@@ -103,9 +110,10 @@ async function pollSeedance(predictionId, { onTick } = {}) {
   throw new Error("Timeout Seedance (~12 min)");
 }
 
-async function pollWan2gp(predictionId, { onTick } = {}) {
-  for (let i = 0; i < WAN2GP_MAX_POLLS; i++) {
-    await sleep(8_000);
+async function pollWan2gp(predictionId, { onTick, startFrom = 0 } = {}) {
+  const from = Math.max(0, Math.min(WAN2GP_MAX_POLLS - 1, Number(startFrom) || 0));
+  for (let i = from; i < WAN2GP_MAX_POLLS; i++) {
+    if (!(from > 0 && i === from)) await sleep(8_000);
     onTick?.(i);
     const poll = await api.wan2gpPoll(predictionId);
     if (poll?.done && poll.videoUrl) return poll;
@@ -600,14 +608,20 @@ async function runVeoJob(job) {
 
   if (!operationName) throw new Error("operationName manquant — relance le short");
 
+  const veoPollFrom = Math.max(0, Number(job.pollCount) || 0);
   patchJob(id, {
     phase: wasExtending ? "extending" : "polling",
-    message: "Attente Veo (arrière-plan)…",
+    message:
+      veoPollFrom > 0
+        ? `Reprise Veo (poll ${veoPollFrom}/${VEO_MAX_POLLS})…`
+        : "Attente Veo (arrière-plan)…",
   });
 
   finished = await pollVeo(operationName, {
+    startFrom: veoPollFrom,
     onTick: (i) => {
       patchJob(id, {
+        pollCount: i + 1,
         progress: Math.min(55, 12 + Math.round(((i + 1) / VEO_MAX_POLLS) * 40)),
         message: `Veo… poll ${i + 1}/${VEO_MAX_POLLS}`,
       });
@@ -636,20 +650,21 @@ async function runVeoJob(job) {
         model,
         social: ctx.social,
       });
-      patchJob(id, { operationName: ext.operationName, phase: "extending" });
+      patchJob(id, { operationName: ext.operationName, phase: "extending", pollCount: 0 });
       finished = await pollVeo(ext.operationName, {
-        safePrompt: true,
+        startFrom: 0,
         onTick: (i) => {
           patchJob(id, {
+            pollCount: i + 1,
             progress: Math.min(75, 60 + Math.round(((i + 1) / VEO_MAX_POLLS) * 12)),
-            message: `Extension ${extendsDone + 1}… poll ${i + 1}`,
+            message: `Extension ${extendsDone + 1}… poll ${i + 1}/${VEO_MAX_POLLS}`,
           });
         },
       });
       videoUri = finished.videoUri || videoUri;
       extendsDone += 1;
       memVideo.set(id, { finished, videoUri });
-      patchJob(id, { extendsDone, videoUri, operationName: ext.operationName });
+      patchJob(id, { extendsDone, videoUri, operationName: ext.operationName, pollCount: 0 });
     } catch (extErr) {
       console.warn("[jobRunner] extend skip:", extErr.message);
       break;
@@ -719,7 +734,7 @@ async function runMultiShotProviderJob(job, { provider, startShot, pollShot, max
     // Reprise : si le plan est déjà en IDB, passer au suivant
     if (!predictionId && shotStorageKeys[shotIndex]) {
       shotIndex += 1;
-      patchJob(id, { shotIndex, predictionId: null });
+      patchJob(id, { shotIndex, predictionId: null, pollCount: 0 });
       continue;
     }
 
@@ -728,6 +743,7 @@ async function runMultiShotProviderJob(job, { provider, startShot, pollShot, max
         phase: "starting_shot",
         message: `${provider} plan ${shotIndex + 1}/${shotTotal}… démarrage`,
         progress: 10 + shotIndex * Math.floor(70 / shotTotal),
+        pollCount: 0,
       });
       const started = await startShot({
         shotIndex,
@@ -742,14 +758,26 @@ async function runMultiShotProviderJob(job, { provider, startShot, pollShot, max
       }
       if (!started?.predictionId) throw new Error(`${provider} sans predictionId`);
       predictionId = started.predictionId;
-      patchJob(id, { predictionId, phase: "polling", shotIndex });
+      patchJob(id, { predictionId, phase: "polling", shotIndex, pollCount: 0 });
+    }
+
+    // Reprise navigation : continuer le compteur (pas repartir à 1/1350)
+    const live = getJob(id);
+    const startFrom = Math.max(0, Number(live?.pollCount) || 0);
+    if (startFrom > 0) {
+      patchJob(id, {
+        phase: "polling",
+        message: `${provider} reprise · poll ${startFrom}/${maxPolls}`,
+      });
     }
 
     const done = await pollShot(predictionId, {
+      startFrom,
       onTick: (i) => {
         const span = Math.floor(70 / shotTotal);
         const base = 10 + shotIndex * span;
         patchJob(id, {
+          pollCount: i + 1,
           progress: Math.min(base + span - 2, base + Math.round(((i + 1) / maxPolls) * (span - 2))),
           message: `${provider} plan ${shotIndex + 1}/${shotTotal} · poll ${i + 1}/${maxPolls}`,
         });
@@ -760,6 +788,7 @@ async function runMultiShotProviderJob(job, { provider, startShot, pollShot, max
     patchJob(id, {
       phase: "saving_shot",
       message: `Sauvegarde plan ${shotIndex + 1}/${shotTotal}…`,
+      pollCount: 0,
     });
     const storageKey = await persistShotBlob(id, shotIndex, done.videoUrl);
     shotStorageKeys = [...shotStorageKeys.slice(0, shotIndex), storageKey];
@@ -771,6 +800,7 @@ async function runMultiShotProviderJob(job, { provider, startShot, pollShot, max
       predictionId: null,
       videoUrls,
       shotStorageKeys,
+      pollCount: 0,
       progress: 10 + shotIndex * Math.floor(70 / shotTotal),
       message:
         shotIndex < shotTotal

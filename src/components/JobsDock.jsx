@@ -9,6 +9,8 @@ import {
   Zap,
   Layers,
   Share2,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-preact";
 import {
   clearFinishedJobs,
@@ -32,39 +34,9 @@ function TypeIcon({ type }) {
   return <Film size={12} />;
 }
 
-/**
- * Panneau jobs dans la sidebar — visible sur toutes les pages.
- */
-export default function JobsDock() {
-  const [jobs, setJobs] = useState(() => listJobs());
-
-  useEffect(() => {
-    bootJobRunner();
-    return subscribeJobs(setJobs);
-  }, []);
-
-  const active = jobs.filter((j) => j.status === "running");
-  const recent = jobs.filter((j) => j.status !== "running").slice(0, 5);
-  const visible = [...active, ...recent].slice(0, 8);
-
-  if (!visible.length) return null;
-
+function JobsList({ visible, active, recent }) {
   return (
-    <div class="border-t border-base-content/10 p-3">
-      <div class="mb-2 flex items-center justify-between gap-2 px-1">
-        <p class="text-[11px] font-semibold uppercase tracking-wider text-base-content/50">
-          Tâches {active.length ? `(${active.length})` : ""}
-        </p>
-        {recent.length > 0 && (
-          <button
-            type="button"
-            class="text-[10px] text-base-content/40 hover:text-base-content"
-            onClick={() => clearFinishedJobs()}
-          >
-            Effacer
-          </button>
-        )}
-      </div>
+    <>
       <ul class="space-y-2">
         {visible.map((job) => (
           <li
@@ -118,6 +90,153 @@ export default function JobsDock() {
           reste sur le Studio.
         </p>
       )}
+      {recent.length > 0 && (
+        <div class="mt-2 flex justify-end px-1">
+          <button
+            type="button"
+            class="text-[10px] text-base-content/40 hover:text-base-content"
+            onClick={() => clearFinishedJobs()}
+          >
+            Effacer terminées
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+function useJobs() {
+  const [jobs, setJobs] = useState(() => listJobs());
+
+  useEffect(() => {
+    bootJobRunner();
+    return subscribeJobs(setJobs);
+  }, []);
+
+  const active = jobs.filter((j) => j.status === "running");
+  const recent = jobs.filter((j) => j.status !== "running").slice(0, 5);
+  const visible = [...active, ...recent].slice(0, 8);
+  return { jobs, active, recent, visible };
+}
+
+/**
+ * Panneau jobs sidebar (desktop).
+ */
+export function JobsDockSidebar() {
+  const { active, recent, visible } = useJobs();
+  if (!visible.length) return null;
+
+  return (
+    <div class="border-t border-base-content/10 p-3">
+      <div class="mb-2 flex items-center justify-between gap-2 px-1">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-base-content/50">
+          Tâches {active.length ? `(${active.length})` : ""}
+        </p>
+        {recent.length > 0 && (
+          <button
+            type="button"
+            class="text-[10px] text-base-content/40 hover:text-base-content"
+            onClick={() => clearFinishedJobs()}
+          >
+            Effacer
+          </button>
+        )}
+      </div>
+      <JobsList visible={visible} active={active} recent={[]} />
     </div>
   );
+}
+
+/**
+ * Tiroir Tâches en bas d’écran (mobile) — barre compacte, déroulable.
+ */
+export function JobsDockMobile() {
+  const { active, recent, visible } = useJobs();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!visible.length) setOpen(false);
+  }, [visible.length]);
+
+  // Auto-ouvrir quand une tâche démarre
+  useEffect(() => {
+    if (active.length > 0) setOpen(true);
+  }, [active.length > 0 ? active[0]?.id : null]);
+
+  if (!visible.length) return null;
+
+  const head = active[0] || visible[0];
+  const label = active.length
+    ? `${active.length} en cours`
+    : `${visible.length} récente${visible.length > 1 ? "s" : ""}`;
+
+  return (
+    <>
+      {/* Espace pour ne pas masquer le contenu sous la barre fixe */}
+      <div class="h-[4.75rem] shrink-0 md:hidden" aria-hidden="true" />
+
+      <div class="pointer-events-none fixed inset-x-0 bottom-0 z-50 md:hidden">
+        {open && (
+          <button
+            type="button"
+            class="pointer-events-auto absolute inset-0 h-[100dvh] w-full bg-black/50"
+            aria-label="Fermer les tâches"
+            onClick={() => setOpen(false)}
+          />
+        )}
+
+        <div
+          class={`pointer-events-auto relative border-t border-base-content/15 bg-base-200/95 shadow-[0_-8px_32px_rgba(0,0,0,0.45)] backdrop-blur-md safe-bottom transition-[max-height] duration-300 ease-out ${
+            open ? "max-h-[70dvh]" : "max-h-none"
+          }`}
+        >
+          <button
+            type="button"
+            class="flex w-full items-center gap-3 px-4 py-3 text-left touch-manipulation active:bg-base-content/5"
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+          >
+            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-base-300">
+              {active.length ? (
+                <Loader2 size={16} class="animate-spin text-primary" />
+              ) : (
+                <CheckCircle2 size={16} class="text-success" />
+              )}
+            </span>
+            <div class="min-w-0 flex-1">
+              <p class="text-[11px] font-semibold uppercase tracking-wider text-base-content/50">
+                Tâches · {label}
+              </p>
+              <p class="truncate text-sm font-medium">{head?.label}</p>
+              {!open && head?.message ? (
+                <p class="truncate text-[11px] text-base-content/50">{head.message}</p>
+              ) : null}
+              {!open && active.length > 0 ? (
+                <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-base-300">
+                  <div
+                    class="h-full bg-primary transition-all"
+                    style={{ width: `${Math.max(4, head?.progress || 0)}%` }}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <span class="text-base-content/50">
+              {open ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
+            </span>
+          </button>
+
+          {open && (
+            <div class="max-h-[min(55dvh,420px)] overflow-y-auto border-t border-base-content/10 px-3 pb-3 pt-2">
+              <JobsList visible={visible} active={active} recent={recent} />
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** @deprecated utilise JobsDockSidebar — alias pour compat */
+export default function JobsDock() {
+  return <JobsDockSidebar />;
 }
