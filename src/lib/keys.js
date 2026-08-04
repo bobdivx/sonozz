@@ -91,7 +91,7 @@ export const KEY_FIELDS = [
         id: "wan2gpBaseUrl",
         label: "URL Wan2GP",
         placeholder: "http://10.1.0.88:PORT",
-        help: "URL Home Server Pinokio de Wan2GP (Start puis coller l’URL LAN). Image→vidéo depuis le portrait.",
+        help: "URL Home Server Pinokio de Wan2GP. Dans l’UI Wan2GP : modèle t2v chargé. sonozz envoie Start Image (I2V) + queue Gradio.",
         required: false,
         inputType: "url",
         when: { videoProvider: "wan2gp" },

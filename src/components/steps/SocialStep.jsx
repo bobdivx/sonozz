@@ -36,6 +36,8 @@ import {
   YOUTUBE_DAILY_LIMIT,
 } from "../../lib/youtubeQuota.js";
 import ClipGallery from "../ClipGallery.jsx";
+import { patchJob } from "../../lib/jobStore.js";
+import { finishStepJob, trackStepJob } from "../../lib/jobRunner.js";
 
 export default function SocialStep({
   social,
@@ -235,11 +237,21 @@ export default function SocialStep({
 
     setPublishing(true);
     setError("");
+    const pubJobId = trackStepJob({
+      type: "publish",
+      label: "Diffusion réseaux",
+      projectId,
+      stepKey: "8",
+      message: "Publication en cours…",
+      progress: 15,
+      href: projectId ? `/?project=${projectId}&step=8` : "/?step=8",
+    });
     try {
       const useRemoteOnly =
         Boolean(active?.s3Key || /^https?:\/\//i.test(active?.videoUrl || "")) &&
         /mp4/i.test(String(active?.mimeType || active?.publishMimeType || "video/mp4"));
 
+      patchJob(pubJobId, { progress: 40, message: "Envoi TikTok / YouTube / webhook…" });
       const result = await api.publishShort({
         videoBlob: useRemoteOnly ? null : videoBlob,
         videoUrl: active?.videoUrl,
@@ -287,8 +299,16 @@ export default function SocialStep({
         publishedClipId: active?.id || null,
       });
       onPublish?.();
+      finishStepJob(pubJobId, {
+        ok: true,
+        message: `Diffusion : ${result.status || "OK"}`,
+      });
     } catch (e) {
       setError(e.message || "Publication impossible");
+      finishStepJob(pubJobId, {
+        ok: false,
+        message: e.message || "Publication impossible",
+      });
     } finally {
       setPublishing(false);
     }

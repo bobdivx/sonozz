@@ -184,7 +184,9 @@ export async function POST({ request }) {
         const info = await testWan2gp(keys);
         results.wan2gp = {
           ok: true,
-          message: `Wan2GP OK @ ${info.base}${info.generateEndpoint ? ` · ${info.generateEndpoint}` : ""}`,
+          message: info.queueOk
+            ? `Wan2GP OK @ ${info.base} · queue Gradio`
+            : `Wan2GP joignable @ ${info.base} mais queue /save_inputs absente`,
         };
       } catch (e) {
         results.wan2gp = { ok: false, message: e.message };

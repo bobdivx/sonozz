@@ -1,5 +1,5 @@
 /**
- * Runner d’arrière-plan : reprend les polls Veo/Seedance après navigation.
+ * Runner d’arrière-plan : reprend les polls Veo/Seedance/Wan2GP après navigation.
  * Ne stocke PAS les bytes vidéo dans localStorage (trop gros) — mémoire session + IDB.
  */
 
@@ -9,11 +9,14 @@ import {
   getJob,
   listActiveJobs,
   patchJob,
+  subscribeJobs,
   upsertJob,
 } from "./jobStore.js";
 import {
   clipMetaOnly,
+  deleteClipBlob,
   ensureClipStorageKey,
+  loadClipBlob,
   saveClipBlob,
 } from "./clipStore.js";
 import {
@@ -24,7 +27,8 @@ import {
 } from "./clipsModel.js";
 import { assemblePromoShort, PROMO_SHORT_SECONDS } from "./assemblePromoShort.js";
 import { detectBeatsFromUrl, pickCutPoints } from "./beatDetect.js";
-import { resolveVideoBlobUrls } from "./videoResolve.js";
+import { resolveVideoBlobUrl, resolveVideoBlobUrls } from "./videoResolve.js";
+import { extractTrackExcerpt } from "./audioExcerpt.js";
 
 /** @type {Map<string, Promise<void>>} */
 const inflight = new Map();
@@ -34,6 +38,9 @@ const memVideo = new Map();
 const EXTEND_COUNT = 1;
 const VEO_MAX_POLLS = 60;
 const SEEDANCE_MAX_POLLS = 90;
+const WAN2GP_MAX_POLLS = 1350; // ~3 h @ 8s — gen locale GPU (chargement modèle + 2 plans)
+
+const HTTP_BOUND_TYPES = new Set(["pipeline", "step", "publish"]);
 
 function slimContext(ctx = {}) {
   return {
@@ -94,6 +101,19 @@ async function pollSeedance(predictionId, { onTick } = {}) {
     if (poll?.done && poll.videoUrl) return poll;
   }
   throw new Error("Timeout Seedance (~12 min)");
+}
+
+async function pollWan2gp(predictionId, { onTick } = {}) {
+  for (let i = 0; i < WAN2GP_MAX_POLLS; i++) {
+    await sleep(8_000);
+    onTick?.(i);
+    const poll = await api.wan2gpPoll(predictionId);
+    if (poll?.done && poll.videoUrl) return poll;
+    if (poll?.status === "failed") {
+      throw new Error(poll.error || "Wan2GP a échoué");
+    }
+  }
+  throw new Error("Timeout Wan2GP (~3 h) — gen locale trop longue ou GPU bloqué sur Demeter.");
 }
 
 async function blobFromVeoResult(finished) {
@@ -218,6 +238,111 @@ async function persistClipToProject({ projectId, clipId, blob, meta }) {
   return { meta: light, storageKey };
 }
 
+async function persistShotBlob(jobId, shotIndex, videoUrl) {
+  const resolved = await resolveVideoBlobUrl(videoUrl);
+  try {
+    const res = await fetch(resolved.url);
+    const blob = await res.blob();
+    if (!blob?.size || blob.size < 1000) throw new Error("Plan vidéo vide");
+    const storageKey = `job-shot::${jobId}::${shotIndex}`;
+    await saveClipBlob(storageKey, blob, { tempShot: true, jobId, shotIndex });
+    return storageKey;
+  } finally {
+    if (resolved.revoke) {
+      try {
+        URL.revokeObjectURL(resolved.url);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+async function loadShotObjectUrls(shotStorageKeys = [], videoUrls = []) {
+  const objectUrls = [];
+  const revokable = [];
+
+  if (shotStorageKeys.length) {
+    for (const key of shotStorageKeys) {
+      const row = await loadClipBlob(key);
+      if (!row?.blob) throw new Error("Plan temporaire perdu — relance le short");
+      const url = URL.createObjectURL(row.blob);
+      objectUrls.push(url);
+      revokable.push(url);
+    }
+    return {
+      urls: objectUrls,
+      revokeAll: () => revokable.forEach((u) => URL.revokeObjectURL(u)),
+    };
+  }
+
+  return resolveVideoBlobUrls(videoUrls);
+}
+
+async function cleanupShotBlobs(shotStorageKeys = []) {
+  for (const key of shotStorageKeys) {
+    try {
+      await deleteClipBlob(key);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function muxMultiShot({
+  shotStorageKeys,
+  videoUrls,
+  track,
+  social,
+  shotSec,
+}) {
+  const resolved = await loadShotObjectUrls(shotStorageKeys, videoUrls);
+  try {
+    let beats = [];
+    try {
+      if (track?.audioUrl) {
+        const analysis = await detectBeatsFromUrl(track.audioUrl, PROMO_SHORT_SECONDS);
+        beats = analysis.beats || [];
+      }
+    } catch {
+      /* ignore */
+    }
+    const cutPoints = (resolved.urls || []).map((_, i) => i * (shotSec || 5));
+    const blob = await assemblePromoShort({
+      veoVideoUrls: resolved.urls,
+      track,
+      social,
+      durationSec: PROMO_SHORT_SECONDS,
+      beats,
+      cutPoints,
+      cinematic: true,
+    });
+    return blob;
+  } finally {
+    resolved.revokeAll();
+  }
+}
+
+/**
+ * Attend la fin d’un job (sidebar / navigation OK pendant ce temps).
+ */
+export function waitForJob(jobId, { onUpdate } = {}) {
+  return new Promise((resolve, reject) => {
+    const unsub = subscribeJobs((jobs) => {
+      const j = jobs.find((x) => x.id === jobId) || getJob(jobId);
+      if (!j) return;
+      onUpdate?.(j);
+      if (j.status === "done") {
+        unsub();
+        resolve(j);
+      } else if (j.status === "error" || j.status === "interrupted") {
+        unsub();
+        reject(new Error(j.message || "Job échoué"));
+      }
+    });
+  });
+}
+
 /**
  * Après veoShortStart réussi : enregistre le job et lance le poll en fond.
  */
@@ -255,14 +380,17 @@ export function continueVeoAfterStart({
   return id;
 }
 
-export function continueSeedanceShot({
+/**
+ * Orchestration multi-plans Seedance en fond (start + poll + mux).
+ */
+export function startSeedanceJob({
   jobId,
-  predictionId,
-  shotIndex = 0,
-  shotTotal = 2,
   context,
+  audioBrief,
+  shotPlan = [],
+  shotSec = 5,
+  shotTotal = 2,
   label,
-  videoUrls = [],
 } = {}) {
   const id = jobId || createJobId("seed");
   const ctx = slimContext(context);
@@ -270,17 +398,65 @@ export function continueSeedanceShot({
     id,
     type: "seedance",
     status: "running",
-    phase: "polling",
-    progress: 15 + shotIndex * 30,
-    message: `Seedance plan ${shotIndex + 1}/${shotTotal}…`,
+    phase: "starting",
+    progress: 8,
+    message: "Seedance démarré — tu peux naviguer",
     label: label || `Seedance${ctx.track?.title ? ` · ${ctx.track.title}` : ""}`,
     projectId: ctx.projectId,
     clipId: ctx.clipId,
     href: ctx.projectId ? `/?project=${ctx.projectId}&step=7` : "/?step=7",
-    predictionId,
-    shotIndex,
+    predictionId: null,
+    shotIndex: 0,
     shotTotal,
-    videoUrls,
+    shotSec,
+    shotPlan,
+    audioBrief: audioBrief || null,
+    videoUrls: [],
+    shotStorageKeys: [],
+    context: ctx,
+  });
+  ensureRunning(id);
+  return id;
+}
+
+/** @deprecated alias — préférer startSeedanceJob */
+export function continueSeedanceShot(opts = {}) {
+  return startSeedanceJob(opts);
+}
+
+/**
+ * Orchestration multi-plans Wan2GP en fond.
+ */
+export function startWan2gpJob({
+  jobId,
+  context,
+  audioBrief,
+  shotPlan = [],
+  shotSec = 5,
+  shotTotal = 2,
+  label,
+} = {}) {
+  const id = jobId || createJobId("wan");
+  const ctx = slimContext(context);
+  upsertJob({
+    id,
+    type: "wan2gp",
+    status: "running",
+    phase: "starting",
+    progress: 8,
+    message: "Wan2GP démarré — tu peux naviguer",
+    label: label || `Wan2GP${ctx.track?.title ? ` · ${ctx.track.title}` : ""}`,
+    projectId: ctx.projectId,
+    clipId: ctx.clipId,
+    href: ctx.projectId ? `/?project=${ctx.projectId}&step=7` : "/?step=7",
+    predictionId: null,
+    shotIndex: 0,
+    shotTotal,
+    shotSec,
+    shotPlan,
+    audioBrief: audioBrief || null,
+    videoUrls: [],
+    shotStorageKeys: [],
     context: ctx,
   });
   ensureRunning(id);
@@ -303,6 +479,68 @@ export function trackPipelineJob({ jobId, label, projectId, message, progress } 
   return id;
 }
 
+/**
+ * Tâche HTTP liée à la page (étape Studio, publish) — visible sidebar,
+ * interrompue si navigation / reload (pas de worker serveur).
+ */
+export function trackStepJob({
+  jobId,
+  type = "step",
+  label,
+  projectId,
+  stepKey,
+  message,
+  progress,
+  href,
+} = {}) {
+  const id = jobId || createJobId(type === "publish" ? "pub" : "step");
+  const stepHref =
+    href ||
+    (projectId && stepKey
+      ? `/?project=${projectId}&step=${stepKey}`
+      : projectId
+        ? `/?project=${projectId}`
+        : "/");
+  upsertJob({
+    id,
+    type: type === "publish" ? "publish" : "step",
+    status: "running",
+    phase: "running",
+    progress: progress ?? 8,
+    message: message || "En cours…",
+    label: label || "Tâche",
+    projectId: projectId || null,
+    stepKey: stepKey || null,
+    href: stepHref,
+  });
+  return id;
+}
+
+export function finishStepJob(jobId, { ok, message, progress } = {}) {
+  if (!jobId) return;
+  patchJob(jobId, {
+    status: ok ? "done" : "error",
+    phase: ok ? "done" : "error",
+    progress: ok ? (progress ?? 100) : undefined,
+    message: message || (ok ? "Terminé" : "Échec"),
+  });
+}
+
+export function interruptHttpBoundJob(jobId, message) {
+  if (!jobId) return;
+  const job = getJob(jobId);
+  if (!job || job.status !== "running" || !HTTP_BOUND_TYPES.has(job.type)) return;
+  patchJob(jobId, {
+    status: "interrupted",
+    phase: "interrupted",
+    message:
+      message ||
+      (job.type === "pipeline"
+        ? "Pipeline interrompu (navigation). Relance Auto A→Z depuis le Studio."
+        : "Tâche interrompue par la navigation — relance depuis le Studio."),
+  });
+}
+
 export function finishPipelineJob(jobId, { ok, message, projectId } = {}) {
   if (!jobId) return;
   patchJob(jobId, {
@@ -315,16 +553,11 @@ export function finishPipelineJob(jobId, { ok, message, projectId } = {}) {
 }
 
 export function interruptPipelineJob(jobId, message) {
-  if (!jobId) return;
-  const job = getJob(jobId);
-  if (!job || job.status !== "running" || job.type !== "pipeline") return;
-  patchJob(jobId, {
-    status: "interrupted",
-    phase: "interrupted",
-    message:
-      message ||
+  interruptHttpBoundJob(
+    jobId,
+    message ||
       "Pipeline interrompu (navigation). Relance Auto A→Z depuis le Studio — les tokens déjà utilisés ne sont pas récupérés.",
-  });
+  );
 }
 
 function ensureRunning(jobId) {
@@ -340,6 +573,7 @@ async function runJob(jobId) {
   try {
     if (job.type === "veo") await runVeoJob(job);
     else if (job.type === "seedance") await runSeedanceJob(job);
+    else if (job.type === "wan2gp") await runWan2gpJob(job);
   } catch (e) {
     patchJob(jobId, {
       status: "error",
@@ -347,6 +581,11 @@ async function runJob(jobId) {
       message: e?.message || "Échec du job",
     });
     memVideo.delete(jobId);
+    try {
+      await cleanupShotBlobs(job.shotStorageKeys || getJob(jobId)?.shotStorageKeys || []);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -377,7 +616,6 @@ async function runVeoJob(job) {
   videoUri = finished.videoUri || videoUri;
   memVideo.set(id, { finished, videoUri });
 
-  // Reprise au milieu d’une extension : ce poll = l’extend en cours
   if (wasExtending) {
     extendsDone = Math.max(extendsDone + 1, 1);
     patchJob(id, { extendsDone, videoUri });
@@ -466,118 +704,201 @@ async function runVeoJob(job) {
   });
 }
 
-async function runSeedanceJob(job) {
+async function runMultiShotProviderJob(job, { provider, startShot, pollShot, maxPolls, providerLabel }) {
   const id = job.id;
-  if (!job.predictionId) throw new Error("predictionId manquant");
+  const ctx = job.context || {};
+  const shotTotal = job.shotTotal || 2;
+  const shotSec = job.shotSec || 5;
+  let shotIndex = job.shotIndex || 0;
+  let predictionId = job.predictionId || null;
+  let videoUrls = [...(job.videoUrls || [])];
+  let shotStorageKeys = [...(job.shotStorageKeys || [])];
+  let audioBrief = job.audioBrief || null;
 
-  patchJob(id, { message: `Seedance poll plan ${(job.shotIndex || 0) + 1}…` });
-  const done = await pollSeedance(job.predictionId, {
-    onTick: (i) => {
-      const base = 15 + (job.shotIndex || 0) * 30;
+  while (shotIndex < shotTotal) {
+    // Reprise : si le plan est déjà en IDB, passer au suivant
+    if (!predictionId && shotStorageKeys[shotIndex]) {
+      shotIndex += 1;
+      patchJob(id, { shotIndex, predictionId: null });
+      continue;
+    }
+
+    if (!predictionId) {
       patchJob(id, {
-        progress: Math.min(base + 25, base + Math.round(((i + 1) / SEEDANCE_MAX_POLLS) * 25)),
-        message: `Seedance… poll ${i + 1}/${SEEDANCE_MAX_POLLS}`,
+        phase: "starting_shot",
+        message: `${provider} plan ${shotIndex + 1}/${shotTotal}… démarrage`,
+        progress: 10 + shotIndex * Math.floor(70 / shotTotal),
+      });
+      const started = await startShot({
+        shotIndex,
+        shotSec,
+        audioBrief,
+        shotBrief: job.shotPlan?.[shotIndex] || null,
+        ctx,
+      });
+      if (started?.audioBrief) {
+        audioBrief = started.audioBrief;
+        patchJob(id, { audioBrief });
+      }
+      if (!started?.predictionId) throw new Error(`${provider} sans predictionId`);
+      predictionId = started.predictionId;
+      patchJob(id, { predictionId, phase: "polling", shotIndex });
+    }
+
+    const done = await pollShot(predictionId, {
+      onTick: (i) => {
+        const span = Math.floor(70 / shotTotal);
+        const base = 10 + shotIndex * span;
+        patchJob(id, {
+          progress: Math.min(base + span - 2, base + Math.round(((i + 1) / maxPolls) * (span - 2))),
+          message: `${provider} plan ${shotIndex + 1}/${shotTotal} · poll ${i + 1}/${maxPolls}`,
+        });
+      },
+    });
+    if (!done?.videoUrl) throw new Error(`Plan ${shotIndex + 1} sans URL vidéo`);
+
+    patchJob(id, {
+      phase: "saving_shot",
+      message: `Sauvegarde plan ${shotIndex + 1}/${shotTotal}…`,
+    });
+    const storageKey = await persistShotBlob(id, shotIndex, done.videoUrl);
+    shotStorageKeys = [...shotStorageKeys.slice(0, shotIndex), storageKey];
+    videoUrls = [...videoUrls.slice(0, shotIndex), done.videoUrl];
+    shotIndex += 1;
+    predictionId = null;
+    patchJob(id, {
+      shotIndex,
+      predictionId: null,
+      videoUrls,
+      shotStorageKeys,
+      progress: 10 + shotIndex * Math.floor(70 / shotTotal),
+      message:
+        shotIndex < shotTotal
+          ? `Plan ${shotIndex}/${shotTotal} OK`
+          : "Plans OK — montage…",
+    });
+  }
+
+  patchJob(id, { phase: "muxing", progress: 85, message: `Montage ${provider}…` });
+  const blob = await muxMultiShot({
+    shotStorageKeys,
+    videoUrls,
+    track: ctx.track,
+    social: ctx.social,
+    shotSec,
+  });
+
+  patchJob(id, { phase: "saving", progress: 92, message: "Sauvegarde clip…" });
+  const meta = {
+    id: job.clipId || createClipId(),
+    kind: CLIP_KIND_SHORT,
+    provider: providerLabel,
+    warning: `${provider} · job fond · ${shotTotal} plans`,
+    durationSec: PROMO_SHORT_SECONDS,
+    mimeType: blob.type || "video/mp4",
+    publishMimeType: /mp4/i.test(blob.type || "") ? "video/mp4" : blob.type,
+    muxed: true,
+    audioBrief: audioBrief || null,
+    at: new Date().toISOString(),
+    storedLocally: true,
+    mode: `${provider.toLowerCase()}-short-shots`,
+    shots: shotTotal,
+    shotSec,
+  };
+
+  await persistClipToProject({
+    projectId: job.projectId,
+    clipId: meta.id,
+    blob,
+    meta,
+  });
+
+  await cleanupShotBlobs(shotStorageKeys);
+  patchJob(id, {
+    status: "done",
+    phase: "done",
+    progress: 100,
+    message: `Short ${provider} prêt — ouvre Clips`,
+    predictionId: null,
+    shotStorageKeys: [],
+  });
+}
+
+async function runSeedanceJob(job) {
+  await runMultiShotProviderJob(job, {
+    provider: "Seedance",
+    providerLabel: "seedance-2.0+mux",
+    maxPolls: SEEDANCE_MAX_POLLS,
+    pollShot: pollSeedance,
+    startShot: async ({ shotIndex, shotSec, audioBrief, shotBrief, ctx }) => {
+      if (!ctx.track?.audioUrl) throw new Error("Audio du morceau requis");
+      const excerpt = await extractTrackExcerpt(
+        ctx.track.audioUrl,
+        shotSec,
+        shotIndex * shotSec,
+      );
+      return api.seedanceStart({
+        artist: ctx.artist,
+        track: ctx.track,
+        social: ctx.social,
+        lyrics: ctx.lyrics,
+        audioBrief,
+        audioExcerptBase64: excerpt.base64,
+        audioExcerptMimeType: excerpt.mimeType,
+        shotIndex,
+        shotBrief,
+        projectId: ctx.projectId,
+        duration: shotSec,
       });
     },
   });
+}
 
-  const urls = [...(job.videoUrls || []), done.videoUrl].filter(Boolean);
-  const shotIndex = (job.shotIndex || 0) + 1;
-  const shotTotal = job.shotTotal || 2;
-
-  if (shotIndex < shotTotal) {
-    // Les plans suivants sont encore démarrés depuis ClipStep ; on marque en attente
-    patchJob(id, {
-      phase: "await_next_shot",
-      progress: 15 + shotIndex * 35,
-      message: `Plan ${shotIndex}/${shotTotal} OK — retourne à Clips pour la suite (ou relance)`,
-      videoUrls: urls,
-      predictionId: null,
-      status: "running",
-    });
-    // Ne pas auto-finir : Seedance multi-shot reste orchestré par ClipStep pour l’instant
-    // mais le poll de CE plan a survécu à la nav
-    patchJob(id, {
-      status: "done",
-      phase: "shot_done",
-      progress: Math.round((shotIndex / shotTotal) * 90),
-      message: `Plan ${shotIndex}/${shotTotal} prêt (URL sauvée). Rouvre Clips pour enchaîner.`,
-      videoUrls: urls,
-    });
-    return;
-  }
-
-  // Dernier plan : mux + save
-  patchJob(id, { phase: "muxing", progress: 85, message: "Montage Seedance…" });
-  const ctx = job.context || {};
-  const resolved = await resolveVideoBlobUrls(urls);
-  try {
-    let beats = [];
-    let cutPoints = urls.map((_, i) => i * 5);
-    try {
-      const analysis = await detectBeatsFromUrl(ctx.track.audioUrl, PROMO_SHORT_SECONDS);
-      beats = analysis.beats || [];
-    } catch {
-      /* ignore */
-    }
-    const blob = await assemblePromoShort({
-      veoVideoUrls: resolved.urls,
-      track: ctx.track,
-      social: ctx.social,
-      durationSec: PROMO_SHORT_SECONDS,
-      beats,
-      cutPoints,
-      cinematic: true,
-    });
-    const meta = {
-      id: job.clipId || createClipId(),
-      kind: CLIP_KIND_SHORT,
-      provider: "seedance-2.0+mux",
-      warning: "Seedance · job fond",
-      durationSec: PROMO_SHORT_SECONDS,
-      mimeType: blob.type || "video/mp4",
-      publishMimeType: /mp4/i.test(blob.type || "") ? "video/mp4" : blob.type,
-      muxed: true,
-      at: new Date().toISOString(),
-      storedLocally: true,
-    };
-    await persistClipToProject({
-      projectId: job.projectId,
-      clipId: meta.id,
-      blob,
-      meta,
-    });
-    patchJob(id, {
-      status: "done",
-      phase: "done",
-      progress: 100,
-      message: "Short Seedance prêt",
-    });
-  } finally {
-    resolved.revokeAll();
-  }
+async function runWan2gpJob(job) {
+  await runMultiShotProviderJob(job, {
+    provider: "Wan2GP",
+    providerLabel: "wan2gp+mux",
+    maxPolls: WAN2GP_MAX_POLLS,
+    pollShot: pollWan2gp,
+    startShot: async ({ shotIndex, audioBrief, shotBrief, ctx }) => {
+      return api.wan2gpStart({
+        artist: ctx.artist,
+        track: ctx.track,
+        social: ctx.social,
+        lyrics: ctx.lyrics,
+        audioBrief,
+        shotIndex,
+        shotBrief,
+        projectId: ctx.projectId,
+      });
+    },
+  });
 }
 
 /** Au chargement de chaque page : reprend les jobs running. */
 export function resumeAllJobs() {
   for (const job of listActiveJobs()) {
-    if (job.type === "pipeline") {
-      // Le stream HTTP ne survit pas au reload
-      interruptPipelineJob(
+    if (HTTP_BOUND_TYPES.has(job.type)) {
+      interruptHttpBoundJob(
         job.id,
-        "Pipeline coupé par la navigation. Relance Auto A→Z — évite de quitter le Studio pendant ce run.",
+        job.type === "pipeline"
+          ? "Pipeline coupé par la navigation. Relance Auto A→Z — évite de quitter le Studio pendant ce run."
+          : "Tâche coupée par la navigation — relance depuis le Studio.",
       );
       continue;
     }
-    if (job.type === "veo" && job.operationName) {
+    if (job.type === "veo") {
+      if (job.operationName) ensureRunning(job.id);
+      else {
+        patchJob(job.id, {
+          status: "error",
+          message: "Job Veo sans opération — relance le short",
+        });
+      }
+      continue;
+    }
+    if (job.type === "seedance" || job.type === "wan2gp") {
       ensureRunning(job.id);
-    } else if (job.type === "seedance" && job.predictionId) {
-      ensureRunning(job.id);
-    } else if (job.type === "veo") {
-      patchJob(job.id, {
-        status: "error",
-        message: "Job Veo sans opération — relance le short",
-      });
     }
   }
 }
@@ -589,7 +910,7 @@ export function bootJobRunner() {
   resumeAllJobs();
   window.addEventListener("pagehide", () => {
     for (const job of listActiveJobs()) {
-      if (job.type === "pipeline") interruptPipelineJob(job.id);
+      if (HTTP_BOUND_TYPES.has(job.type)) interruptHttpBoundJob(job.id);
     }
   });
 }

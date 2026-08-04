@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
-  TrendingUp,
+  BarChart3,
   UserRound,
   PenLine,
   AudioLines,
@@ -17,7 +17,7 @@ import {
   Check,
   LoaderCircle,
 } from "lucide-preact";
-import TrendsStep from "./steps/TrendsStep.jsx";
+import StatsStep from "./steps/StatsStep.jsx";
 import ArtistStep from "./steps/ArtistStep.jsx";
 import LyricsStep from "./steps/LyricsStep.jsx";
 import TracksStep from "./steps/TracksStep.jsx";
@@ -27,6 +27,7 @@ import ClipStep from "./steps/ClipStep.jsx";
 import SocialStep from "./steps/SocialStep.jsx";
 import HistoryPanel from "./HistoryPanel.jsx";
 import AppShell from "./AppShell.jsx";
+import ClipTrackPlayer from "./ClipTrackPlayer.jsx";
 import { STEPS, emptyProject, MUSIC_STYLES, MUSIC_LANGUAGES, formatGenres } from "../lib/studio.js";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
@@ -45,11 +46,13 @@ import { patchJob } from "../lib/jobStore.js";
 import {
   bootJobRunner,
   finishPipelineJob,
+  finishStepJob,
   trackPipelineJob,
+  trackStepJob,
 } from "../lib/jobRunner.js";
 
 const ICONS = {
-  1: TrendingUp,
+  1: BarChart3,
   2: UserRound,
   3: PenLine,
   4: AudioLines,
@@ -61,6 +64,7 @@ const ICONS = {
 
 const STEP_STATUS_LABEL = {
   trends: "Tendances",
+  stats: "Stats",
   artist: "Artiste",
   lyrics: "Paroles",
   track: "Morceau",
@@ -178,7 +182,7 @@ export default function Dashboard() {
   const artistSlug = project.artist?.slug;
 
   const doneMap = {
-    1: Boolean(project.trends),
+    1: Boolean(project.track || project.distrokid),
     2: Boolean(project.artist),
     3: Boolean(project.lyrics),
     4: Boolean(project.track),
@@ -250,11 +254,27 @@ export default function Dashboard() {
     }
     setLoading(true);
     setError("");
+    const stepLabel = STEP_STATUS_LABEL[key] || key;
+    const stepJobId = trackStepJob({
+      type: "step",
+      label: `Étape ${stepLabel}`,
+      projectId,
+      stepKey: String(goTo || STEPS.find((s) => s.key === key)?.id || ""),
+      message: `${stepLabel} en cours…`,
+      progress: 12,
+      href: projectId
+        ? `/?project=${projectId}${goTo ? `&step=${goTo}` : ""}`
+        : goTo
+          ? `/?step=${goTo}`
+          : "/",
+    });
     try {
+      patchJob(stepJobId, { progress: 35, message: `Génération ${stepLabel}…` });
       let result = await fn();
 
       // Persiste immédiatement l’audio Replicate sur S3 (sinon expire ~1 h)
       if (key === "track" && result?.audioUrl) {
+        patchJob(stepJobId, { progress: 70, message: "Persistance audio S3…" });
         try {
           const saved = await persistAudioRemote(result.audioUrl, projectId || "anon");
           if (saved?.audioUrl) {
@@ -282,16 +302,25 @@ export default function Dashboard() {
         }
       }
 
+      patchJob(stepJobId, { progress: 88, message: "Sauvegarde projet…" });
       const next = { ...project, [key]: result };
       setProject(next);
       if (goTo) setStep(goTo);
       await persist(next, {
         stepKey: key,
         eventType: "step",
-        message: `Étape ${STEP_STATUS_LABEL[key] || key} générée`,
+        message: `Étape ${stepLabel} générée`,
+      });
+      finishStepJob(stepJobId, {
+        ok: true,
+        message: `${stepLabel} terminé`,
       });
     } catch (e) {
       setError(e.message);
+      finishStepJob(stepJobId, {
+        ok: false,
+        message: e.message || `${stepLabel} en erreur`,
+      });
     } finally {
       setLoading(false);
     }
@@ -324,7 +353,7 @@ export default function Dashboard() {
     const pipeJobId = trackPipelineJob({
       label: "Pipeline Auto A→Z",
       projectId,
-      message: "Démarrage… reste sur le Studio pour ce run",
+      message: "Démarrage… suivi dans la sidebar (reste sur le Studio)",
       progress: 2,
     });
     try {
@@ -450,75 +479,96 @@ export default function Dashboard() {
   return (
     <AppShell active="studio">
     <div class="mx-auto w-full max-w-6xl">
-      <header class="mb-8 grid gap-8 md:grid-cols-[1.15fr_0.85fr] md:items-end">
-        <div class="space-y-4 animate-rise">
-          <div class="flex flex-wrap items-center gap-3">
-            <p class="inline-flex items-center gap-2 text-xs uppercase tracking-[0.28em] text-primary">
-              <Waves size={14} /> Studio automatisé
-            </p>
-            <a href="/parametres" class="btn btn-ghost btn-xs gap-1">
-              <Settings2 size={14} />
-              Paramètres
-              <span class={`ml-1 h-2 w-2 rounded-full ${ready ? "bg-success" : "bg-warning animate-pulse-soft"}`} />
+      <header class="mb-8 space-y-6">
+        <div class="flex flex-wrap items-center gap-3 animate-rise">
+          <p class="inline-flex items-center gap-2 text-xs uppercase tracking-[0.28em] text-primary">
+            <Waves size={14} /> Studio automatisé
+          </p>
+          <a href="/parametres" class="btn btn-ghost btn-xs gap-1">
+            <Settings2 size={14} />
+            Paramètres
+            <span class={`ml-1 h-2 w-2 rounded-full ${ready ? "bg-success" : "bg-warning animate-pulse-soft"}`} />
+          </a>
+          <button type="button" class="btn btn-ghost btn-xs gap-1" onClick={() => setHistoryOpen(true)}>
+            <History size={14} />
+            Historique
+          </button>
+          {artistSlug && (
+            <a href={`/artiste/${artistSlug}`} class="btn btn-ghost btn-xs gap-1 text-primary">
+              /{artistSlug}
             </a>
-            <button type="button" class="btn btn-ghost btn-xs gap-1" onClick={() => setHistoryOpen(true)}>
-              <History size={14} />
-              Historique
-            </button>
-            {artistSlug && (
-              <a href={`/artiste/${artistSlug}`} class="btn btn-ghost btn-xs gap-1 text-primary">
-                /{artistSlug}
-              </a>
-            )}
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs gap-1"
-              disabled={saving}
-              onClick={() =>
-                persist(project, {
-                  eventType: "manual-save",
-                  message: "Sauvegarde manuelle",
-                })
-              }
-            >
-              <Save size={14} />
-              {saving ? "…" : "Sauver"}
-            </button>
-            {saveMsg && <span class="text-xs text-base-content/45">{saveMsg}</span>}
-          </div>
-          <h1 class="sr-only">{project.artist?.name || "SONOZZ"}</h1>
-          <img
-            src={
-              project.artist?.imageUrl && !/^data:image\/svg/i.test(project.artist.imageUrl)
-                ? project.artist.imageUrl
-                : "/logo.png"
-            }
-            alt={project.artist?.name || "SONOZZ"}
-            class="h-28 w-28 rounded-2xl object-cover shadow-lg shadow-black/30 md:h-36 md:w-36"
-            width="144"
-            height="144"
-          />
-          {showHomePipeline && (
-            <p class="max-w-md text-base text-base-content/70 md:text-lg">
-              Pipeline A→Z : Deezer + Gemini + ONCE → Spotify + clip + réseaux.
-            </p>
           )}
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs gap-1"
+            disabled={saving}
+            onClick={() =>
+              persist(project, {
+                eventType: "manual-save",
+                message: "Sauvegarde manuelle",
+              })
+            }
+          >
+            <Save size={14} />
+            {saving ? "…" : "Sauver"}
+          </button>
+          {saveMsg && <span class="text-xs text-base-content/45">{saveMsg}</span>}
         </div>
 
-        <div class="animate-rise space-y-3">
-          <div class="flex items-center justify-between text-sm">
-            <span class="text-base-content/60">Pipeline</span>
-            <span class="font-display text-primary">{progress}%</span>
+        <div class="grid gap-6 md:grid-cols-[auto_minmax(0,1fr)_minmax(200px,0.85fr)] md:items-end md:gap-8">
+          <div class="animate-rise">
+            <h1 class="sr-only">{project.artist?.name || "SONOZZ"}</h1>
+            <img
+              src={
+                project.artist?.imageUrl && !/^data:image\/svg/i.test(project.artist.imageUrl)
+                  ? project.artist.imageUrl
+                  : "/logo.png"
+              }
+              alt={project.artist?.name || "SONOZZ"}
+              class="h-28 w-28 rounded-2xl object-cover shadow-lg shadow-black/30 md:h-36 md:w-36"
+              width="144"
+              height="144"
+            />
           </div>
-          <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
-            <div class="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${progress}%` }} />
+
+          <div class="animate-rise min-w-0 space-y-3">
+            {project.track?.audioUrl ? (
+              <ClipTrackPlayer
+                track={project.track}
+                artist={project.artist}
+                cover={project.cover}
+                compact
+              />
+            ) : null}
+            {showHomePipeline && (
+              <p
+                class={`max-w-md text-base-content/70 ${
+                  project.track?.audioUrl ? "text-sm" : "text-base md:text-lg"
+                }`}
+              >
+                Pipeline A→Z : Deezer + Gemini + ONCE → Spotify + clip + réseaux.
+              </p>
+            )}
           </div>
-          {project.artist && (
-            <p class="text-sm text-base-content/55">
-              Projet : <span class="text-base-content">{project.artist.name}</span>
-              {project.lyrics?.title ? ` — ${project.lyrics.title}` : ""}
-            </p>
-          )}
+
+          <div class="animate-rise space-y-3">
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-base-content/60">Pipeline</span>
+              <span class="font-display text-primary">{progress}%</span>
+            </div>
+            <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
+              <div
+                class="h-full rounded-full bg-primary transition-all duration-500"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            {project.artist && (
+              <p class="text-sm text-base-content/55">
+                Projet : <span class="text-base-content">{project.artist.name}</span>
+                {project.lyrics?.title ? ` — ${project.lyrics.title}` : ""}
+              </p>
+            )}
+          </div>
         </div>
       </header>
 
@@ -789,22 +839,12 @@ export default function Dashboard() {
 
       <div class="border border-base-content/10 bg-base-100/70 p-5 backdrop-blur-sm md:p-8">
         {step === 1 && (
-          <TrendsStep
-            trends={project.trends}
+          <StatsStep
+            track={project.track}
             artist={project.artist}
-            loading={loading}
-            onAnalyze={() =>
-              runStep(
-                () =>
-                  api.trends({
-                    market: seed.market,
-                    artist: project.artist || undefined,
-                    artistSlug: project.artist?.slug || seed.artistSlug || undefined,
-                  }),
-                "trends",
-                1,
-              )
-            }
+            distrokid={project.distrokid}
+            cover={project.cover}
+            projectId={projectId}
           />
         )}
         {step === 2 && (

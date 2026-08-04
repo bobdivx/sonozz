@@ -1,5 +1,5 @@
 export const STEPS = [
-  { id: 1, key: "trends", label: "Tendances", short: "Marché" },
+  { id: 1, key: "stats", label: "Stats", short: "Analytics" },
   { id: 2, key: "artist", label: "Artiste", short: "Profil" },
   { id: 3, key: "lyrics", label: "Paroles", short: "Texte" },
   { id: 4, key: "tracks", label: "Morceaux", short: "Audio" },

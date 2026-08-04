@@ -1,5 +1,15 @@
 import { useEffect, useState } from "preact/hooks";
-import { Loader2, CheckCircle2, XCircle, AlertTriangle, Trash2, Film, Zap } from "lucide-preact";
+import {
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  Trash2,
+  Film,
+  Zap,
+  Layers,
+  Share2,
+} from "lucide-preact";
 import {
   clearFinishedJobs,
   listJobs,
@@ -17,6 +27,8 @@ function StatusIcon({ status }) {
 
 function TypeIcon({ type }) {
   if (type === "pipeline") return <Zap size={12} />;
+  if (type === "step") return <Layers size={12} />;
+  if (type === "publish") return <Share2 size={12} />;
   return <Film size={12} />;
 }
 
@@ -102,7 +114,8 @@ export default function JobsDock() {
       </ul>
       {active.length > 0 && (
         <p class="mt-2 px-1 text-[10px] text-base-content/40">
-          Tu peux naviguer — Veo/Seedance continuent en fond.
+          Clips (Veo / Seedance / Wan2GP) : tu peux naviguer. Étapes Studio / Auto :
+          reste sur le Studio.
         </p>
       )}
     </div>

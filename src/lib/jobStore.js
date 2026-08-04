@@ -1,6 +1,7 @@
 /**
  * Jobs longs persistés (localStorage) — survivent à la navigation MPA Astro.
- * Les opérations Veo/Seedance continuent côté provider ; on reprend le poll au chargement.
+ * Les opérations Veo/Seedance/Wan2GP continuent côté provider ; on reprend le poll au chargement.
+ * Les jobs step/pipeline/publish sont liés au HTTP de la page (interrompus à la navigation).
  */
 
 const STORAGE_KEY = "sonozz-jobs-v1";
@@ -9,7 +10,7 @@ const MAX_JOBS = 20;
 const MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 /** @typedef {'running'|'done'|'error'|'interrupted'} JobStatus */
-/** @typedef {'veo'|'seedance'|'pipeline'} JobType */
+/** @typedef {'veo'|'seedance'|'wan2gp'|'pipeline'|'step'|'publish'} JobType */
 
 function uid(prefix = "job") {
   try {

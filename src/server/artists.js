@@ -437,14 +437,19 @@ async function enrichStatsFromOnce(stats, releases, onceToken) {
     withIds.slice(0, 8).map(async (r) => {
       try {
         const perf = await onceReleasePerformance(onceToken, r.releaseId, {
-          includeTracks: false,
+          includeTracks: true,
         });
+        const kpis = perf?.kpis || {};
         releaseStreams[r.releaseId] = {
-          totalStreams: perf?.kpis?.totalStreams ?? 0,
-          avgDailyStreams: perf?.kpis?.avgDailyStreams ?? null,
-          periodChangePct: perf?.kpis?.periodChangePct ?? null,
-          topStore: perf?.kpis?.topStore || null,
+          fromDate: perf?.fromDate || null,
+          toDate: perf?.toDate || null,
+          totalStreams: kpis.totalStreams ?? 0,
+          avgDailyStreams: kpis.avgDailyStreams ?? null,
+          periodChangePct: kpis.periodChangePct ?? null,
+          topStore: kpis.topStore || null,
+          topStores: perf?.topStores || [],
           distributors: perf?.distributors || [],
+          tracks: Array.isArray(perf?.tracks) ? perf.tracks : [],
           source: perf?.source || "once-mcp",
         };
       } catch (e) {

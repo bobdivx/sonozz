@@ -15,7 +15,7 @@ import { assemblePromoShort, PROMO_SHORT_SECONDS } from "../../lib/assemblePromo
 import { extractTrackExcerpt } from "../../lib/audioExcerpt.js";
 import { detectBeatsFromUrl, pickCutPoints } from "../../lib/beatDetect.js";
 import { planMusicVideoShots } from "../../lib/shotPlan.js";
-import { resolveVideoBlobUrl, resolveVideoBlobUrls } from "../../lib/videoResolve.js";
+import { resolveVideoBlobUrls } from "../../lib/videoResolve.js";
 import { loadKeys } from "../../lib/keys.js";
 import { api } from "../../lib/apiClient.js";
 import {
@@ -35,25 +35,13 @@ import {
   normalizeProjectClips,
 } from "../../lib/clipsModel.js";
 import ClipGallery, { clipLabel } from "../ClipGallery.jsx";
-import { continueVeoAfterStart } from "../../lib/jobRunner.js";
-import { createJobId, getJob, subscribeJobs } from "../../lib/jobStore.js";
-
-function waitForJob(jobId, { onUpdate } = {}) {
-  return new Promise((resolve, reject) => {
-    const unsub = subscribeJobs((jobs) => {
-      const j = jobs.find((x) => x.id === jobId) || getJob(jobId);
-      if (!j) return;
-      onUpdate?.(j);
-      if (j.status === "done") {
-        unsub();
-        resolve(j);
-      } else if (j.status === "error" || j.status === "interrupted") {
-        unsub();
-        reject(new Error(j.message || "Job échoué"));
-      }
-    });
-  });
-}
+import {
+  continueVeoAfterStart,
+  startSeedanceJob,
+  startWan2gpJob,
+  waitForJob,
+} from "../../lib/jobRunner.js";
+import { createJobId } from "../../lib/jobStore.js";
 
 /** Seedance = payant Replicate (~$0.9–2 / plan). Défaut économique = Veo (Gemini). */
 const SEEDANCE_SHOTS = 2;
@@ -61,8 +49,6 @@ const SEEDANCE_SHOT_SEC = 5;
 /** Wan2GP local — mêmes découpes que Seedance, image→vidéo Gradio. */
 const WAN2GP_SHOTS = 2;
 const WAN2GP_SHOT_SEC = 5;
-/** 1 extension Veo (~8s+~7s) — assez pour mux 28s, ~½ du coût vs 2 extends. */
-const EXTEND_COUNT = 1;
 const MAX_IMPORT_BYTES = 80_000_000;
 
 function isUsableSocialBrief(social) {
@@ -261,50 +247,6 @@ export default function ClipStep({
     };
   }, [videoUrl]);
 
-  async function pollUntilDone(operationName, { from = 12, to = 40, safePrompt = false } = {}) {
-    const maxPolls = 60;
-    for (let i = 0; i < maxPolls; i++) {
-      await new Promise((r) => setTimeout(r, 10_000));
-      setProgress(Math.min(to, from + Math.round(((i + 1) / maxPolls) * (to - from))));
-      try {
-        const poll = await api.veoShortPoll(operationName);
-        if (poll?.done) return poll;
-      } catch (pollErr) {
-        const msg = String(pollErr?.message || pollErr);
-        if (!safePrompt && /VEO_CELEBRITY_FILTER|celebrity|likeness|real people/i.test(msg)) {
-          throw Object.assign(new Error(msg), { celebrity: true });
-        }
-        throw pollErr;
-      }
-    }
-    throw new Error("Timeout Veo (~10 min) — réessaie.");
-  }
-
-  async function pollSeedanceUntilDone(predictionId, { from = 20, to = 55 } = {}) {
-    const maxPolls = 90;
-    for (let i = 0; i < maxPolls; i++) {
-      await new Promise((r) => setTimeout(r, 8_000));
-      setProgress(Math.min(to, from + Math.round(((i + 1) / maxPolls) * (to - from))));
-      const poll = await api.seedancePoll(predictionId);
-      if (poll?.done && poll.videoUrl) return poll;
-    }
-    throw new Error("Timeout Seedance (~12 min) — réessaie.");
-  }
-
-  async function pollWan2gpUntilDone(predictionId, { from = 20, to = 55 } = {}) {
-    const maxPolls = 150; // ~20 min (8s interval)
-    for (let i = 0; i < maxPolls; i++) {
-      await new Promise((r) => setTimeout(r, 8_000));
-      setProgress(Math.min(to, from + Math.round(((i + 1) / maxPolls) * (to - from))));
-      const poll = await api.wan2gpPoll(predictionId);
-      if (poll?.done && poll.videoUrl) return poll;
-      if (poll?.status === "failed") {
-        throw new Error(poll.error || "Wan2GP a échoué");
-      }
-    }
-    throw new Error("Timeout Wan2GP (~20 min) — vérifie la queue Gradio sur Demeter.");
-  }
-
   async function analyzeBeatsSafe() {
     try {
       const analysis = await detectBeatsFromUrl(track.audioUrl, PROMO_SHORT_SECONDS);
@@ -410,7 +352,36 @@ export default function ClipStep({
     }
   }
 
-  /** Pipeline local : Wan2GP image→vidéo (Gradio Pinokio) + mux audio. */
+  async function loadClipAfterJob(clipId) {
+    let meta = { id: clipId, kind: CLIP_KIND_SHORT, storedLocally: true };
+    if (projectId) {
+      try {
+        const row = await api.getProject(projectId);
+        const proj = normalizeProjectClips(row.project || row);
+        meta = proj.clips.find((c) => c.id === clipId) || proj.clip || meta;
+      } catch {
+        /* ignore */
+      }
+    }
+    const blob = await resolveClipBlob(projectId, meta);
+    if (!blob) throw new Error("Clip généré introuvable — rouvre Clips depuis la sidebar");
+    const typed =
+      blob.type?.startsWith("video/")
+        ? blob
+        : new Blob([blob], { type: meta.mimeType || "video/mp4" });
+    if (videoUrl) URL.revokeObjectURL(videoUrl);
+    setVideoUrl(blobToObjectUrl(typed));
+    setVideoBlob(typed);
+    setVideoMeta(meta);
+    setProgress(100);
+    setReplaceMode(false);
+    setCreatingNew(false);
+    onClipReady?.(meta, typed, ensureClipStorageKey(projectId, clipId));
+    setStatusMsg("");
+    return typed;
+  }
+
+  /** Pipeline local : Wan2GP image→vidéo (Gradio) — poll + mux en fond. */
   async function renderWithWan2gp() {
     setError("");
     setStatusMsg("");
@@ -451,72 +422,39 @@ export default function ClipStep({
         shotSec: WAN2GP_SHOT_SEC,
       });
 
-      const shotUrls = [];
-      const revokeShots = [];
-      try {
-        for (let s = 0; s < WAN2GP_SHOTS; s++) {
-          const brief = shotPlan[s];
-          setStatusMsg(
-            `Wan2GP plan ${s + 1}/${WAN2GP_SHOTS} (~${WAN2GP_SHOT_SEC}s — GPU Demeter)${
-              brief?.lyricPhrase ? ` · « ${brief.lyricPhrase.slice(0, 40)}… »` : ""
-            }`,
-          );
-          const started = await api.wan2gpStart({
-            artist,
-            track,
-            social,
-            lyrics,
-            audioBrief,
-            shotIndex: s,
-            shotBrief: brief,
-            projectId,
-          });
-          if (started?.audioBrief) audioBrief = started.audioBrief;
-          if (!started?.predictionId) throw new Error("Wan2GP sans predictionId");
-          const done = await pollWan2gpUntilDone(started.predictionId, {
-            from: 10 + s * 35,
-            to: 40 + s * 35,
-          });
-          if (!done?.videoUrl) throw new Error(`Plan ${s + 1} sans URL vidéo`);
-
-          setStatusMsg(`Sauvegarde plan ${s + 1}/${WAN2GP_SHOTS}…`);
-          const local = await resolveVideoBlobUrl(done.videoUrl);
-          if (local.revoke) revokeShots.push(local.url);
-          shotUrls.push(local.url);
-        }
-
-        const result = await muxCinematic({
-          videoUrls: shotUrls,
-          providerLabel: "wan2gp+mux",
-          audioBrief,
+      const jobId = createJobId("wan");
+      startWan2gpJob({
+        jobId,
+        audioBrief,
+        shotPlan,
+        shotSec: WAN2GP_SHOT_SEC,
+        shotTotal: WAN2GP_SHOTS,
+        label: `Wan2GP${track?.title ? ` · ${track.title}` : ""}`,
+        context: {
+          projectId,
           clipId,
-          shotSec: WAN2GP_SHOT_SEC,
-          cutPoints: Array.from({ length: shotUrls.length }, (_, i) => i * WAN2GP_SHOT_SEC),
-          extra: {
-            mode: "wan2gp-short-shots",
-            shots: shotUrls.length,
-            shotSec: WAN2GP_SHOT_SEC,
-            method: "gradio-i2v",
-          },
-        });
-        return result;
-      } finally {
-        revokeShots.forEach((u) => {
-          try {
-            URL.revokeObjectURL(u);
-          } catch {
-            /* ignore */
-          }
-        });
-      }
-    } catch (e) {
+          artist,
+          track,
+          cover,
+          social,
+          lyrics,
+        },
+      });
+
+      setStatusMsg("Wan2GP en arrière-plan — tu peux naviguer (suivi sidebar)");
+      await waitForJob(jobId, {
+        onUpdate: (j) => {
+          if (typeof j.progress === "number") setProgress(j.progress);
+          if (j.message) setStatusMsg(`${j.message} · sidebar`);
+        },
+      });
+      return await loadClipAfterJob(clipId);
+    } finally {
       setRendering(false);
-      setProgress(0);
-      throw e;
     }
   }
 
-  /** Pipeline pro : Seedance entend le morceau (Replicate). */
+  /** Pipeline pro : Seedance — poll + mux en fond. */
   async function renderWithSeedance() {
     setError("");
     setStatusMsg("");
@@ -559,94 +497,36 @@ export default function ClipStep({
         shotSec: SEEDANCE_SHOT_SEC,
       });
 
-      const shotUrls = [];
-      const revokeShots = [];
-      try {
-        for (let s = 0; s < SEEDANCE_SHOTS; s++) {
-          const brief = shotPlan[s];
-          setStatusMsg(
-            `Plan ${s + 1}/${SEEDANCE_SHOTS} (~${SEEDANCE_SHOT_SEC}s)${
-              brief?.lyricPhrase ? ` · « ${brief.lyricPhrase.slice(0, 40)}… »` : ""
-            }`,
-          );
-          const excerpt = await extractTrackExcerpt(
-            track.audioUrl,
-            SEEDANCE_SHOT_SEC,
-            s * SEEDANCE_SHOT_SEC,
-          );
-          const started = await api.seedanceStart({
-            artist,
-            track,
-            social,
-            lyrics,
-            audioBrief,
-            audioExcerptBase64: excerpt.base64,
-            audioExcerptMimeType: excerpt.mimeType,
-            shotIndex: s,
-            shotBrief: brief,
-            projectId,
-            duration: SEEDANCE_SHOT_SEC,
-          });
-          if (started?.audioBrief) audioBrief = started.audioBrief;
-          if (!started?.predictionId) throw new Error("Seedance sans predictionId");
-          const done = await pollSeedanceUntilDone(started.predictionId, {
-            from: 10 + s * 16,
-            to: 24 + s * 16,
-          });
-          if (!done?.videoUrl) throw new Error(`Plan ${s + 1} sans URL vidéo`);
-
-          // Immédiatement en blob local — les liens replicate.delivery expirent vite
-          setStatusMsg(`Sauvegarde plan ${s + 1}/${SEEDANCE_SHOTS} (anti-expiration)…`);
-          const local = await resolveVideoBlobUrl(done.videoUrl);
-          if (local.revoke) revokeShots.push(local.url);
-          shotUrls.push(local.url);
-        }
-
-        const result = await muxCinematic({
-          videoUrls: shotUrls,
-          providerLabel: "seedance-2.0+mux",
-          audioBrief,
+      const jobId = createJobId("seed");
+      startSeedanceJob({
+        jobId,
+        audioBrief,
+        shotPlan,
+        shotSec: SEEDANCE_SHOT_SEC,
+        shotTotal: SEEDANCE_SHOTS,
+        label: `Seedance${track?.title ? ` · ${track.title}` : ""}`,
+        context: {
+          projectId,
           clipId,
-          shotSec: SEEDANCE_SHOT_SEC,
-          cutPoints: Array.from({ length: shotUrls.length }, (_, i) => i * SEEDANCE_SHOT_SEC),
-          extra: {
-            mode: "seedance-short-shots",
-            shots: shotUrls.length,
-            shotSec: SEEDANCE_SHOT_SEC,
-            method: "gemini-short-cuts",
-          },
-        });
-        return result;
-      } finally {
-        revokeShots.forEach((u) => {
-          try {
-            URL.revokeObjectURL(u);
-          } catch {
-            /* ignore */
-          }
-        });
-      }
+          artist,
+          track,
+          cover,
+          social,
+          lyrics,
+        },
+      });
+
+      setStatusMsg("Seedance en arrière-plan — tu peux naviguer (suivi sidebar)");
+      await waitForJob(jobId, {
+        onUpdate: (j) => {
+          if (typeof j.progress === "number") setProgress(j.progress);
+          if (j.message) setStatusMsg(`${j.message} · sidebar`);
+        },
+      });
+      return await loadClipAfterJob(clipId);
     } finally {
       setRendering(false);
     }
-  }
-
-  function extendPromptAt(index) {
-    const scenes = (social?.scenes || []).map((s) => String(s).trim()).filter(Boolean);
-    const genre = track?.style || "";
-    const mood = track?.mood || artist?.mood || "";
-    const vibe = [genre, mood].filter(Boolean).join(", ");
-    const defaults = [
-      `Continue seamlessly: wide/mid environment mirroring the song${vibe ? ` (${vibe})` : ""}, rhythmic camera.`,
-      "Continue seamlessly: silhouette / hands / stage atmosphere — NO mouth close-up, NO lip-sync attempt.",
-    ];
-    const beat = scenes[index + 1] || scenes[index] || defaults[index] || defaults[0];
-    return [
-      "Continue the music video seamlessly, faithful to the song mood and lyric imagery.",
-      "Full-bleed vertical 9:16 TikTok frame, no letterboxing, no black bars.",
-      `Next beat: ${String(beat).slice(0, 140)}.`,
-      "Same fictional character, no celebrities, no text, no logos, no invented song, no singing mouth close-ups.",
-    ].join(" ");
   }
 
   function resolveTargetClipId({ forceNew = false } = {}) {
@@ -766,33 +646,7 @@ export default function ClipStep({
         },
       });
 
-      // Recharge le clip sauvegardé par le runner
-      let meta = { id: clipId, kind: CLIP_KIND_SHORT, storedLocally: true };
-      if (projectId) {
-        try {
-          const row = await api.getProject(projectId);
-          const proj = normalizeProjectClips(row.project || row);
-          meta = proj.clips.find((c) => c.id === clipId) || proj.clip || meta;
-        } catch {
-          /* ignore */
-        }
-      }
-      const blob = await resolveClipBlob(projectId, meta);
-      if (!blob) throw new Error("Clip généré introuvable — rouvre Clips depuis la sidebar");
-      const typed =
-        blob.type?.startsWith("video/")
-          ? blob
-          : new Blob([blob], { type: meta.mimeType || "video/mp4" });
-      if (videoUrl) URL.revokeObjectURL(videoUrl);
-      setVideoUrl(blobToObjectUrl(typed));
-      setVideoBlob(typed);
-      setVideoMeta(meta);
-      setProgress(100);
-      setReplaceMode(false);
-      setCreatingNew(false);
-      onClipReady?.(meta, typed, ensureClipStorageKey(projectId, clipId));
-      setStatusMsg("");
-      return typed;
+      return await loadClipAfterJob(clipId);
     } catch (e) {
       const msg = String(e?.message || e);
       if (
@@ -1381,8 +1235,6 @@ export default function ClipStep({
           )}
         </div>
       )}
-
-      <audio controls class="w-full max-w-md" src={track.audioUrl} />
 
       {videoMeta && activeInTab && !creatingNew && (
         <p class="text-xs text-base-content/55">
