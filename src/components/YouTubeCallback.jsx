@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { loadKeys, saveKeys } from "../lib/keys.js";
+import { loadKeys, saveKeysAsync, ensureKeysHydrated } from "../lib/keys.js";
 
 const STATE_KEY = "sonozz.youtube.oauth.state";
 const VERIFIER_KEY = "sonozz.youtube.oauth.verifier";
@@ -43,10 +43,11 @@ export default function YouTubeCallback() {
 
     (async () => {
       try {
+        await ensureKeysHydrated();
         const keys = loadKeys();
         if (!keys.youtubeClientId?.trim() || !keys.youtubeClientSecret?.trim()) {
           throw new Error(
-            "Client ID / Secret absents du navigateur. Enregistre-les dans Paramètres avant de connecter.",
+            "Client ID / Secret absents. Enregistre-les dans Paramètres avant de connecter.",
           );
         }
 
@@ -59,7 +60,7 @@ export default function YouTubeCallback() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
-        saveKeys({
+        await saveKeysAsync({
           ...keys,
           youtubeAccessToken: data.accessToken || "",
           youtubeRefreshToken: data.refreshToken || keys.youtubeRefreshToken || "",

@@ -5,7 +5,7 @@ import { testOllama } from "../../server/ollama.js";
 import { fetchDeezerCharts } from "../../server/deezer.js";
 import { getSpotifyAccess } from "../../server/spotify.js";
 import { onceCredits, onceMe } from "../../server/once.js";
-import { testDb } from "../../server/db.js";
+import { testDb, getUserKeys } from "../../server/db.js";
 
 export async function POST({ request }) {
   try {
@@ -195,7 +195,14 @@ export async function POST({ request }) {
 
     try {
       const db = await testDb();
-      results.turso = { ok: true, message: `Connecté · ${db.projects} projet(s)` };
+      const stored = await getUserKeys();
+      const fieldCount = stored && typeof stored === "object"
+        ? Object.values(stored).filter((v) => String(v || "").trim()).length
+        : 0;
+      results.turso = {
+        ok: true,
+        message: `Connecté · ${db.projects} projet(s) · clés API : ${fieldCount ? `${fieldCount} champ(s)` : "aucune"}`,
+      };
     } catch (e) {
       results.turso = { ok: false, message: e.message };
     }

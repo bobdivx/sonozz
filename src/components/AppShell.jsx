@@ -10,6 +10,7 @@ import {
   LogOut,
 } from "lucide-preact";
 import JobsDock from "./JobsDock.jsx";
+import { ensureKeysHydrated } from "../lib/keys.js";
 
 const NAV = [
   { href: "/", id: "studio", label: "Studio", icon: Waves },
@@ -30,7 +31,11 @@ export default function AppShell({ active, children, title, subtitle }) {
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
-      .then((d) => setAuthed(Boolean(d?.authenticated)))
+      .then((d) => {
+        const ok = Boolean(d?.authenticated);
+        setAuthed(ok);
+        if (ok) void ensureKeysHydrated();
+      })
       .catch(() => setAuthed(false));
   }, []);
 

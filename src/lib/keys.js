@@ -383,6 +383,25 @@ export function youtubeRedirectUri() {
 }
 
 const STORAGE_KEY = "sonozz.keys.v1";
+const HYDRATED_FLAG = "sonozz.keys.turso.v1";
+
+/** True si au moins une valeur non-défaut (secrets, tokens, URLs custom…). */
+export function keysHaveUserData(keys) {
+  const empty = EMPTY_KEYS();
+  return Object.keys(empty).some((k) => {
+    const v = String(keys?.[k] ?? "").trim();
+    const d = String(empty[k] ?? "").trim();
+    return Boolean(v) && v !== d;
+  });
+}
+
+function writeLocalKeys(keys) {
+  const next = migrateKeys({ ...EMPTY_KEYS(), ...keys });
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  }
+  return next;
+}
 
 export function loadKeys() {
   if (typeof localStorage === "undefined") return EMPTY_KEYS();
@@ -399,10 +418,89 @@ export function loadKeys() {
   }
 }
 
+async function pushKeysToTurso(keys) {
+  const res = await fetch("/api/keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keys }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Sauvegarde Turso HTTP ${res.status}`);
+  }
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(HYDRATED_FLAG, "1");
+  }
+  return data;
+}
+
+/**
+ * Cache local + push Turso (fire-and-forget).
+ * Préférer `saveKeysAsync` quand l’UI doit confirmer la persistance.
+ */
 export function saveKeys(keys) {
-  const next = migrateKeys({ ...EMPTY_KEYS(), ...keys });
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  const next = writeLocalKeys(keys);
+  if (typeof window !== "undefined") {
+    void pushKeysToTurso(next).catch((err) => {
+      console.warn("[sonozz] sync clés → Turso échouée:", err?.message || err);
+    });
+  }
   return next;
+}
+
+/** Cache local + await Turso. */
+export async function saveKeysAsync(keys) {
+  const next = writeLocalKeys(keys);
+  await pushKeysToTurso(next);
+  return next;
+}
+
+let hydratePromise = null;
+
+/**
+ * Source de vérité = Turso.
+ * Si Turso vide et localStorage a des clés → migration unique vers Turso.
+ */
+export async function hydrateKeysFromTurso() {
+  if (typeof window === "undefined") return loadKeys();
+
+  try {
+    const res = await fetch("/api/keys");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `Lecture Turso HTTP ${res.status}`);
+    }
+
+    const remote = data.keys && typeof data.keys === "object" ? data.keys : null;
+    if (remote && keysHaveUserData(remote)) {
+      const next = writeLocalKeys(remote);
+      localStorage.setItem(HYDRATED_FLAG, "1");
+      return next;
+    }
+
+    const local = loadKeys();
+    if (keysHaveUserData(local)) {
+      await pushKeysToTurso(local);
+      return local;
+    }
+
+    localStorage.setItem(HYDRATED_FLAG, "1");
+    return local;
+  } catch (err) {
+    console.warn("[sonozz] hydrate clés Turso échouée:", err?.message || err);
+    return loadKeys();
+  }
+}
+
+/** Une seule hydratation par chargement de page. */
+export function ensureKeysHydrated() {
+  if (typeof window === "undefined") {
+    return Promise.resolve(EMPTY_KEYS());
+  }
+  if (!hydratePromise) {
+    hydratePromise = hydrateKeysFromTurso();
+  }
+  return hydratePromise;
 }
 
 export function keysReady(keys) {

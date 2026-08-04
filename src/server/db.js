@@ -351,3 +351,23 @@ export async function deleteAppMeta(key) {
   });
   return { ok: true };
 }
+
+/** Blob JSON des clés / tokens API utilisateur (Paramètres). */
+export const USER_KEYS_META = "user_api_keys";
+
+export async function getUserKeys() {
+  const raw = await getAppMeta(USER_KEYS_META);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveUserKeys(keys) {
+  const payload = keys && typeof keys === "object" ? keys : {};
+  const result = await setAppMeta(USER_KEYS_META, JSON.stringify(payload));
+  return { ok: true, updatedAt: result.updatedAt };
+}

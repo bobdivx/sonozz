@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { loadKeys, saveKeys } from "../lib/keys.js";
+import { loadKeys, saveKeysAsync, ensureKeysHydrated } from "../lib/keys.js";
 
 const STATE_KEY = "sonozz.tiktok.oauth.state";
 const VERIFIER_KEY = "sonozz.tiktok.oauth.verifier";
@@ -45,10 +45,11 @@ export default function TikTokCallback() {
 
     (async () => {
       try {
+        await ensureKeysHydrated();
         const keys = loadKeys();
         if (!keys.tiktokClientKey?.trim() || !keys.tiktokClientSecret?.trim()) {
           throw new Error(
-            "Client Key / Secret absents du navigateur. Enregistre-les dans Paramètres avant de connecter.",
+            "Client Key / Secret absents. Enregistre-les dans Paramètres avant de connecter.",
           );
         }
 
@@ -61,7 +62,7 @@ export default function TikTokCallback() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
-        saveKeys({
+        await saveKeysAsync({
           ...keys,
           tiktokAccessToken: data.accessToken || "",
           tiktokRefreshToken: data.refreshToken || keys.tiktokRefreshToken || "",

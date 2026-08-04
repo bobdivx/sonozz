@@ -228,8 +228,8 @@ export default function ArtistHub({ slug }) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Exécution agenda KO");
       if (json.tiktokTokens || json.youtubeTokens) {
-        const { saveKeys } = await import("../lib/keys.js");
-        saveKeys({
+        const { saveKeysAsync, loadKeys } = await import("../lib/keys.js");
+        await saveKeysAsync({
           ...loadKeys(),
           ...(json.tiktokTokens || {}),
           ...(json.youtubeTokens || {}),

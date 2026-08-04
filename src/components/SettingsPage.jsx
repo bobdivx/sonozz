@@ -12,7 +12,17 @@ import {
   Share2,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
-import { KEY_FIELDS, loadKeys, saveKeys, keysReady, tiktokRedirectUri, youtubeRedirectUri, fieldVisible } from "../lib/keys.js";
+import {
+  KEY_FIELDS,
+  loadKeys,
+  saveKeys,
+  saveKeysAsync,
+  ensureKeysHydrated,
+  keysReady,
+  tiktokRedirectUri,
+  youtubeRedirectUri,
+  fieldVisible,
+} from "../lib/keys.js";
 import { formatQuotaReset, getTikTokQuota } from "../lib/tiktokQuota.js";
 import { formatYouTubeQuotaReset, getYouTubeQuota } from "../lib/youtubeQuota.js";
 import { api } from "../lib/apiClient.js";
@@ -70,18 +80,25 @@ export default function SettingsPage() {
   );
 
   useEffect(() => {
-    setKeys(loadKeys());
+    let cancelled = false;
+    (async () => {
+      const hydrated = await ensureKeysHydrated();
+      if (!cancelled) setKeys(hydrated);
+    })();
     const params = new URLSearchParams(window.location.search);
     if (params.get("tiktok") === "connected") {
       setSection("reseaux");
-      setMessage("TikTok connecté — access token enregistré.");
+      setMessage("TikTok connecté — access token enregistré sur Turso.");
       window.history.replaceState({}, "", "/parametres?section=reseaux");
     }
     if (params.get("youtube") === "connected") {
       setSection("reseaux");
-      setMessage("YouTube connecté — access token enregistré.");
+      setMessage("YouTube connecté — access token enregistré sur Turso.");
       window.history.replaceState({}, "", "/parametres?section=reseaux");
     }
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -188,24 +205,34 @@ export default function SettingsPage() {
     setKeys((prev) => ({ ...prev, [id]: value }));
   }
 
-  function handleSave() {
+  async function handleSave() {
     setSaving(true);
-    const next = saveKeys(keys);
-    setKeys(next);
-    setMessage(
-      keysReady(next)
-        ? next.llmProvider === "ollama"
-          ? "Clés enregistrées — texte via Ollama."
-          : "Clés enregistrées localement."
-        : next.llmProvider === "ollama"
-          ? "Enregistré — modèle Ollama encore requis."
-          : "Enregistré — Gemini est encore requis pour l’auto.",
-    );
-    setSaving(false);
+    setMessage("");
+    try {
+      const next = await saveKeysAsync(keys);
+      setKeys(next);
+      setMessage(
+        keysReady(next)
+          ? next.llmProvider === "ollama"
+            ? "Clés enregistrées sur Turso — texte via Ollama."
+            : "Clés enregistrées sur Turso."
+          : next.llmProvider === "ollama"
+            ? "Enregistré sur Turso — modèle Ollama encore requis."
+            : "Enregistré sur Turso — Gemini est encore requis pour l’auto.",
+      );
+    } catch (e) {
+      setMessage(e.message || "Échec sauvegarde Turso");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleTest() {
-    saveKeys(keys);
+    try {
+      await saveKeysAsync(keys);
+    } catch {
+      saveKeys(keys);
+    }
     setTesting(true);
     setMessage("");
     try {
@@ -232,7 +259,11 @@ export default function SettingsPage() {
       setMessage("Client Key / Secret invalides — vérifie que tu n’as pas inversé les champs ni collé l’App ID.");
       return;
     }
-    saveKeys(keys);
+    try {
+      await saveKeysAsync(keys);
+    } catch {
+      saveKeys(keys);
+    }
     setConnectingTikTok(true);
     try {
       const data = await api.tiktokAuthUrl();
@@ -264,7 +295,11 @@ export default function SettingsPage() {
       tiktokScope: "",
     };
     setKeys(cleared);
-    saveKeys(cleared);
+    try {
+      await saveKeysAsync(cleared);
+    } catch {
+      saveKeys(cleared);
+    }
     setConnectingTikTok(true);
     try {
       const data = await api.tiktokAuthUrl();
@@ -304,7 +339,11 @@ export default function SettingsPage() {
       selectSection("reseaux");
       return;
     }
-    saveKeys(keys);
+    try {
+      await saveKeysAsync(keys);
+    } catch {
+      saveKeys(keys);
+    }
     setConnectingYouTube(true);
     try {
       const data = await api.youtubeAuthUrl();
@@ -335,7 +374,11 @@ export default function SettingsPage() {
       youtubeScope: "",
     };
     setKeys(cleared);
-    saveKeys(cleared);
+    try {
+      await saveKeysAsync(cleared);
+    } catch {
+      saveKeys(cleared);
+    }
     setConnectingYouTube(true);
     try {
       const data = await api.youtubeAuthUrl();

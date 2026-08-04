@@ -29,7 +29,7 @@ import HistoryPanel from "./HistoryPanel.jsx";
 import AppShell from "./AppShell.jsx";
 import { STEPS, emptyProject, MUSIC_STYLES, MUSIC_LANGUAGES, formatGenres } from "../lib/studio.js";
 import { api } from "../lib/apiClient.js";
-import { keysReady, loadKeys } from "../lib/keys.js";
+import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
 import { migrateProjectClipBlobs } from "../lib/clipStore.js";
 import StyleArtistPicker from "./StyleArtistPicker.jsx";
@@ -127,8 +127,15 @@ export default function Dashboard() {
   const [showHomePipeline, setShowHomePipeline] = useState(true);
 
   useEffect(() => {
-    setReady(keysReady(loadKeys()));
+    let cancelled = false;
+    (async () => {
+      await ensureKeysHydrated();
+      if (!cancelled) setReady(keysReady(loadKeys()));
+    })();
     bootJobRunner();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

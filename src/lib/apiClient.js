@@ -164,6 +164,13 @@ export const api = {
     return result;
   },
   testKeys: () => request("/api/test-keys"),
+  getKeys: async () => {
+    const res = await fetch("/api/keys");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Lecture clés Turso impossible");
+    return data;
+  },
+  saveKeysRemote: (keys) => request("/api/keys", { keys }),
   searchStyleArtists: (query) => request("/api/style-artists", { query }),
   tiktokAuthUrl: () => request("/api/tiktok/auth"),
   tiktokToken: (payload) => request("/api/tiktok/token", payload),

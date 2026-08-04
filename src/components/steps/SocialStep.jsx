@@ -10,7 +10,7 @@ import {
 } from "lucide-preact";
 import { downloadBlob } from "../../lib/renderShort.js";
 import { api } from "../../lib/apiClient.js";
-import { loadKeys, saveKeys } from "../../lib/keys.js";
+import { loadKeys, saveKeysAsync } from "../../lib/keys.js";
 import {
   ensureClipStorageKey,
   resolveClipBlob,
@@ -255,7 +255,7 @@ export default function SocialStep({
         },
       });
       if (result.tiktokTokens || result.youtubeTokens) {
-        saveKeys({
+        await saveKeysAsync({
           ...loadKeys(),
           ...(result.tiktokTokens || {}),
           ...(result.youtubeTokens || {}),
