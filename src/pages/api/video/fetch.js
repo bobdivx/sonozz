@@ -6,6 +6,18 @@ export const prerender = false;
 const ALLOWED_HOST =
   /(^|\.)replicate\.delivery$|(^|\.)replicate\.com$|(^|\.)pb\.replicate\.com$|(^|\.)googleusercontent\.com$|(^|\.)googleapis\.com$|(^|\.)scw\.cloud$|(^|\.)amazonaws\.com$|(^|\.)cloudflarestorage\.com$|(^|\.)r2\.cloudflarestorage\.com$/i;
 
+function isAllowedVideoHost(hostname = "") {
+  const h = String(hostname || "").toLowerCase();
+  if (!h) return false;
+  if (ALLOWED_HOST.test(h)) return true;
+  if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
+  // LAN privé (Pinokio Home Server / Wan2GP / SongGen)
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  return false;
+}
+
 const MAX_BYTES = 80_000_000;
 
 function videoResponse(buf, mimeType) {
@@ -68,7 +80,7 @@ export async function GET({ request }) {
       return error("URL invalide", 400);
     }
     if (!/^https?:$/i.test(target.protocol)) return error("Protocole non autorisé", 400);
-    if (!ALLOWED_HOST.test(target.hostname)) {
+    if (!isAllowedVideoHost(target.hostname)) {
       return error(`Hôte non autorisé: ${target.hostname}`, 403);
     }
 

@@ -29,6 +29,12 @@ import {
   recordTikTokAttempt,
   TIKTOK_PENDING_LIMIT,
 } from "../../lib/tiktokQuota.js";
+import {
+  formatYouTubeQuotaReset,
+  getYouTubeQuota,
+  recordYouTubeAttempt,
+  YOUTUBE_DAILY_LIMIT,
+} from "../../lib/youtubeQuota.js";
 import ClipGallery from "../ClipGallery.jsx";
 
 export default function SocialStep({
@@ -57,6 +63,7 @@ export default function SocialStep({
   const [publishResult, setPublishResult] = useState(null);
   const [loadingClip, setLoadingClip] = useState(false);
   const [tiktokQuota, setTiktokQuota] = useState(() => getTikTokQuota());
+  const [youtubeQuota, setYoutubeQuota] = useState(() => getYouTubeQuota());
 
   const normalized = normalizeProjectClips({ clip, clips, activeClipId });
   const allClips = normalized.clips.filter(
@@ -69,9 +76,15 @@ export default function SocialStep({
     keys.tiktokAccessToken?.trim() ||
       (keys.tiktokClientKey?.trim() && keys.tiktokRefreshToken?.trim()),
   );
+  const hasYouTube = Boolean(
+    keys.youtubeAccessToken?.trim() ||
+      (keys.youtubeClientId?.trim() && keys.youtubeRefreshToken?.trim()),
+  );
   const hasWebhook = Boolean(keys.socialWebhookUrl?.trim());
-  const canAutoPublish = hasTikTok || hasWebhook;
+  const canAutoPublish = hasTikTok || hasYouTube || hasWebhook;
   const tiktokHasPublishScope = /video\.publish/i.test(keys.tiktokScope || "");
+  const youtubeHasUploadScope =
+    !keys.youtubeScope?.trim() || /youtube\.upload/i.test(keys.youtubeScope || "");
   const hasClip = Boolean(
     allClips.length ||
       active?.storedRemote ||
@@ -180,7 +193,7 @@ export default function SocialStep({
 
   async function publishNetworks() {
     if (!canAutoPublish) {
-      setError("Configure TikTok et/ou un webhook dans Paramètres.");
+      setError("Configure TikTok, YouTube et/ou un webhook dans Paramètres.");
       return;
     }
     if (!videoBlob) {
@@ -193,7 +206,7 @@ export default function SocialStep({
     }
     if (clipLooksPromo && !clipIsMp4) {
       setError(
-        "Ce clip est un montage WebM (+promo) : TikTok Inbox n’affiche souvent que la 1ère image. " +
+        "Ce clip est un montage WebM (+promo) : TikTok / YouTube préfèrent un MP4. " +
           "Va à Clip → Générer short Veo (MP4), puis republie.",
       );
       return;
@@ -201,13 +214,21 @@ export default function SocialStep({
 
     const quota = getTikTokQuota();
     setTiktokQuota(quota);
+    const ytQuota = getYouTubeQuota();
+    setYoutubeQuota(ytQuota);
     const mode = (keys.tiktokPostMode || "direct").toLowerCase();
-    // Inbox / Auto brûlent le quota pending ; Direct aussi côté TikTok si non finalisé
-    if (hasTikTok && quota.blocked) {
+    if (hasTikTok && quota.blocked && !hasYouTube && !hasWebhook) {
       setError(
         `Quota TikTok local atteint (${quota.used}/${TIKTOK_PENDING_LIMIT} en 24 h). ` +
           `Prochain créneau ${formatQuotaReset(quota.resetsAt)}. ` +
           `Attends, ou finalise les brouillons Inbox dans l’app TikTok.`,
+      );
+      return;
+    }
+    if (hasYouTube && ytQuota.blocked && !hasTikTok && !hasWebhook) {
+      setError(
+        `Quota YouTube local atteint (${ytQuota.used}/${YOUTUBE_DAILY_LIMIT} / jour). ` +
+          `Reset ~${formatYouTubeQuotaReset(ytQuota.resetsAt)}.`,
       );
       return;
     }
@@ -227,15 +248,22 @@ export default function SocialStep({
         social,
         artist,
         track,
-        targets: { tiktok: true, webhook: true },
+        targets: {
+          tiktok: hasTikTok && !quota.blocked,
+          youtube: hasYouTube && !ytQuota.blocked,
+          webhook: hasWebhook,
+        },
       });
-      if (result.tiktokTokens) {
-        saveKeys({ ...loadKeys(), ...result.tiktokTokens });
+      if (result.tiktokTokens || result.youtubeTokens) {
+        saveKeys({
+          ...loadKeys(),
+          ...(result.tiktokTokens || {}),
+          ...(result.youtubeTokens || {}),
+        });
       }
 
       const tiktok = (result.results || []).find((r) => r.platform === "tiktok");
       if (tiktok && !tiktok.skipped) {
-        // Compte tout appel TikTok non skip (ok ou erreur après init)
         const nextQuota = recordTikTokAttempt({
           mode: tiktok.mode || mode,
           ok: Boolean(tiktok.ok),
@@ -244,6 +272,11 @@ export default function SocialStep({
           message: tiktok.message || "",
         });
         setTiktokQuota(nextQuota);
+      }
+
+      const youtube = (result.results || []).find((r) => r.platform === "youtube");
+      if (youtube && !youtube.skipped) {
+        setYoutubeQuota(recordYouTubeAttempt());
       }
 
       setPublishResult(result);
@@ -267,7 +300,7 @@ export default function SocialStep({
         <header class="space-y-2">
           <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Réseaux</h2>
           <p class="max-w-xl text-base-content/70">
-            Diffuse le clip vers TikTok ou un webhook (Activepieces / Make).
+            Diffuse le clip vers TikTok, YouTube Shorts ou un webhook (Activepieces / Make).
           </p>
         </header>
         <div class="border border-warning/40 bg-warning/10 p-5">
@@ -289,7 +322,7 @@ export default function SocialStep({
       <header class="space-y-2">
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Réseaux</h2>
         <p class="max-w-xl text-base-content/70">
-          Caption + hashtags, puis diffusion auto TikTok / webhook.
+          Caption + hashtags, puis diffusion auto TikTok / YouTube / webhook.
         </p>
       </header>
 
@@ -329,7 +362,7 @@ export default function SocialStep({
         </div>
       )}
 
-      <div class="grid gap-2 border border-base-content/10 bg-base-200/40 p-3 text-sm sm:grid-cols-4">
+      <div class="grid gap-2 border border-base-content/10 bg-base-200/40 p-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
         <p class={videoBlob ? "text-success" : "text-warning"}>
           Clip {videoBlob ? "prêt ✓" : loadingClip ? "chargement…" : "✗ introuvable"}
           {active?.kind === CLIP_KIND_FULL
@@ -357,22 +390,45 @@ export default function SocialStep({
               ? "✗ reconnecte (video.publish)"
               : "✗ non connecté"}
         </p>
-        <p class={tiktokQuota.blocked ? "text-error" : tiktokQuota.remaining <= 2 ? "text-warning" : "text-success"}>
-          Quota API {tiktokQuota.used}/{tiktokQuota.limit}
-          {tiktokQuota.blocked
-            ? ` · reset ${formatQuotaReset(tiktokQuota.resetsAt)}`
-            : ` · ${tiktokQuota.remaining} restant(s)`}
+        <p class={hasYouTube && youtubeHasUploadScope ? "text-success" : "text-warning"}>
+          YouTube{" "}
+          {hasYouTube && youtubeHasUploadScope
+            ? "✓ Shorts"
+            : hasYouTube
+              ? "✗ reconnecte"
+              : "✗ non connecté"}
+        </p>
+        <p
+          class={
+            (hasTikTok && tiktokQuota.blocked) || (hasYouTube && youtubeQuota.blocked)
+              ? "text-error"
+              : "text-base-content/70"
+          }
+        >
+          Quotas TT {tiktokQuota.used}/{tiktokQuota.limit} · YT {youtubeQuota.used}/
+          {youtubeQuota.limit}
         </p>
       </div>
 
-      {tiktokQuota.blocked && (
+      {tiktokQuota.blocked && hasTikTok && (
         <div class="border border-error/40 bg-error/10 p-4 text-sm space-y-1">
           <p class="font-medium text-error">
             Compteur local : {TIKTOK_PENDING_LIMIT} envois TikTok sur 24 h atteints.
           </p>
           <p class="text-base-content/70">
-            TikTok refuse souvent au-delà (même si tu as supprimé un brouillon). Prochain essai{" "}
-            {formatQuotaReset(tiktokQuota.resetsAt)}.
+            TikTok refuse souvent au-delà. Prochain essai {formatQuotaReset(tiktokQuota.resetsAt)}.
+            {hasYouTube || hasWebhook ? " YouTube / webhook restent disponibles." : ""}
+          </p>
+        </div>
+      )}
+
+      {youtubeQuota.blocked && hasYouTube && (
+        <div class="border border-error/40 bg-error/10 p-4 text-sm space-y-1">
+          <p class="font-medium text-error">
+            Compteur local : {YOUTUBE_DAILY_LIMIT} uploads YouTube / jour atteints.
+          </p>
+          <p class="text-base-content/70">
+            Reset ~{formatYouTubeQuotaReset(youtubeQuota.resetsAt)} (quota Data API).
           </p>
         </div>
       )}
@@ -418,7 +474,12 @@ export default function SocialStep({
             publishing ||
             !canAutoPublish ||
             !videoBlob ||
-            (hasTikTok && tiktokQuota.blocked)
+            (hasTikTok && tiktokQuota.blocked && hasYouTube && youtubeQuota.blocked && !hasWebhook) ||
+            (hasTikTok &&
+              tiktokQuota.blocked &&
+              !hasYouTube &&
+              !hasWebhook) ||
+            (hasYouTube && youtubeQuota.blocked && !hasTikTok && !hasWebhook)
           }
           onClick={publishNetworks}
         >
@@ -433,7 +494,7 @@ export default function SocialStep({
         </button>
         {!canAutoPublish && (
           <button type="button" class="btn btn-ghost gap-2" onClick={onConfigure}>
-            <Settings2 size={18} /> Configurer TikTok
+            <Settings2 size={18} /> Configurer réseaux
           </button>
         )}
       </div>
@@ -450,12 +511,26 @@ export default function SocialStep({
             >
               {r.platform} — {r.message}
               {r.status ? ` [${r.status}]` : ""}
+              {r.url ? (
+                <>
+                  {" "}
+                  <a class="link" href={r.url} target="_blank" rel="noreferrer">
+                    ouvrir
+                  </a>
+                </>
+              ) : null}
             </p>
           ))}
           {(publishResult.results || []).some((r) => r.platform === "tiktok" && r.ok) && (
             <p class="text-xs text-base-content/60 pt-1">
               Mode Direct Post : regarde ton <strong>Profil</strong> TikTok (pas l’Inbox). Si
               privacy = SELF_ONLY (app non auditée), la vidéo est privée — visible seulement par toi.
+            </p>
+          )}
+          {(publishResult.results || []).some((r) => r.platform === "youtube" && r.ok) && (
+            <p class="text-xs text-base-content/60 pt-1">
+              YouTube : traitement 1–2 min dans Studio. Privé = visible seulement par toi.
+              Le tag #Shorts est ajouté automatiquement.
             </p>
           )}
         </div>

@@ -1,0 +1,111 @@
+import { useEffect, useState } from "preact/hooks";
+import { loadKeys, saveKeys } from "../lib/keys.js";
+
+const STATE_KEY = "sonozz.youtube.oauth.state";
+const VERIFIER_KEY = "sonozz.youtube.oauth.verifier";
+
+export default function YouTubeCallback() {
+  const [status, setStatus] = useState("Connexion YouTube…");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const state = params.get("state");
+    const err = params.get("error");
+    const errDesc = params.get("error_description");
+
+    if (err) {
+      setError(errDesc || err);
+      setStatus("Échec");
+      return;
+    }
+
+    if (!code) {
+      setError("Aucun code OAuth reçu. Vérifie la Redirect URI dans Google Cloud Console.");
+      setStatus("Échec");
+      return;
+    }
+
+    const expected = sessionStorage.getItem(STATE_KEY);
+    if (expected && state && expected !== state) {
+      setError("State OAuth invalide (CSRF). Relance « Connecter YouTube ».");
+      setStatus("Échec");
+      return;
+    }
+
+    const codeVerifier = sessionStorage.getItem(VERIFIER_KEY);
+    if (!codeVerifier) {
+      setError("code_verifier PKCE manquant. Relance « Connecter YouTube » depuis Paramètres.");
+      setStatus("Échec");
+      return;
+    }
+
+    (async () => {
+      try {
+        const keys = loadKeys();
+        if (!keys.youtubeClientId?.trim() || !keys.youtubeClientSecret?.trim()) {
+          throw new Error(
+            "Client ID / Secret absents du navigateur. Enregistre-les dans Paramètres avant de connecter.",
+          );
+        }
+
+        const redirectUri = `${window.location.origin}/youtube/callback`;
+        const res = await fetch("/api/youtube/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keys, code, redirectUri, codeVerifier }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        saveKeys({
+          ...keys,
+          youtubeAccessToken: data.accessToken || "",
+          youtubeRefreshToken: data.refreshToken || keys.youtubeRefreshToken || "",
+          youtubeScope: data.scope || "",
+        });
+        if (data.scope && !/youtube\.upload/i.test(data.scope)) {
+          setError(
+            `Connecté, mais sans youtube.upload (reçu : ${data.scope}). Vérifie les scopes OAuth, puis reconnecte.`,
+          );
+          setStatus("Scope incomplet");
+          return;
+        }
+        sessionStorage.removeItem(STATE_KEY);
+        sessionStorage.removeItem(VERIFIER_KEY);
+        setStatus("YouTube connecté. Tu peux fermer cet onglet.");
+        setTimeout(() => {
+          window.location.href = "/parametres?youtube=connected&section=reseaux";
+        }, 1200);
+      } catch (e) {
+        setError(e.message || "Échange impossible");
+        setStatus("Échec");
+      }
+    })();
+  }, []);
+
+  return (
+    <div class="mx-auto max-w-lg px-4 py-16 text-center">
+      <img
+        src="/logo.png"
+        alt="SONOZZ"
+        class="mx-auto h-16 w-16 rounded-2xl object-cover"
+        width="64"
+        height="64"
+      />
+      <p class="mt-4 text-xs uppercase tracking-[0.22em] text-primary">SONOZZ × YouTube</p>
+      <h1 class="font-display mt-2 text-3xl font-bold">{status}</h1>
+      {error ? (
+        <p class="mt-4 text-sm text-error">{error}</p>
+      ) : (
+        <p class="mt-4 text-sm text-base-content/60">Échange du code contre un access token…</p>
+      )}
+      <p class="mt-8">
+        <a href="/parametres?section=reseaux" class="link">
+          ← Retour aux paramètres
+        </a>
+      </p>
+    </div>
+  );
+}

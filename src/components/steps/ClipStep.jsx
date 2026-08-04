@@ -58,6 +58,9 @@ function waitForJob(jobId, { onUpdate } = {}) {
 /** Seedance = payant Replicate (~$0.9–2 / plan). Défaut économique = Veo (Gemini). */
 const SEEDANCE_SHOTS = 2;
 const SEEDANCE_SHOT_SEC = 5;
+/** Wan2GP local — mêmes découpes que Seedance, image→vidéo Gradio. */
+const WAN2GP_SHOTS = 2;
+const WAN2GP_SHOT_SEC = 5;
 /** 1 extension Veo (~8s+~7s) — assez pour mux 28s, ~½ du coût vs 2 extends. */
 const EXTEND_COUNT = 1;
 const MAX_IMPORT_BYTES = 80_000_000;
@@ -147,8 +150,15 @@ export default function ClipStep({
   const [videoMeta, setVideoMeta] = useState(null);
   const [error, setError] = useState("");
   const [statusMsg, setStatusMsg] = useState("");
-  /** veo = Gemini (souvent gratuit/quota) · seedance = Replicate payant */
-  const [clipEngine, setClipEngine] = useState("veo");
+  /** veo | seedance | wan2gp */
+  const [clipEngine, setClipEngine] = useState(() => {
+    try {
+      const k = loadKeys();
+      return String(k.videoProvider || "").trim() === "wan2gp" ? "wan2gp" : "veo";
+    } catch {
+      return "veo";
+    }
+  });
 
   const hasPortrait = Boolean(artist?.imageUrl && !/^data:image\/svg/i.test(artist.imageUrl));
   const hasCover = Boolean(cover?.imageUrl && !/^data:image\/svg/i.test(cover.imageUrl));
@@ -281,6 +291,20 @@ export default function ClipStep({
     throw new Error("Timeout Seedance (~12 min) — réessaie.");
   }
 
+  async function pollWan2gpUntilDone(predictionId, { from = 20, to = 55 } = {}) {
+    const maxPolls = 150; // ~20 min (8s interval)
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise((r) => setTimeout(r, 8_000));
+      setProgress(Math.min(to, from + Math.round(((i + 1) / maxPolls) * (to - from))));
+      const poll = await api.wan2gpPoll(predictionId);
+      if (poll?.done && poll.videoUrl) return poll;
+      if (poll?.status === "failed") {
+        throw new Error(poll.error || "Wan2GP a échoué");
+      }
+    }
+    throw new Error("Timeout Wan2GP (~20 min) — vérifie la queue Gradio sur Demeter.");
+  }
+
   async function analyzeBeatsSafe() {
     try {
       const analysis = await detectBeatsFromUrl(track.audioUrl, PROMO_SHORT_SECONDS);
@@ -383,6 +407,112 @@ export default function ClipStep({
       } catch {
         /* ignore */
       }
+    }
+  }
+
+  /** Pipeline local : Wan2GP image→vidéo (Gradio Pinokio) + mux audio. */
+  async function renderWithWan2gp() {
+    setError("");
+    setStatusMsg("");
+    setRendering(true);
+    setProgress(4);
+    const clipId = resolveTargetClipId({ forceNew: !replaceMode });
+    const keys = loadKeys();
+    if (!keys.wan2gpBaseUrl?.trim()) {
+      throw new Error("URL Wan2GP manquante — Paramètres → Provider vidéo = Wan2GP");
+    }
+    if (!track?.audioUrl) throw new Error("Audio du morceau requis");
+
+    try {
+      setStatusMsg("Analyse beats + brief pour Wan2GP…");
+      const listenExcerpt = await extractTrackExcerpt(track.audioUrl, PROMO_SHORT_SECONDS, 0);
+      setProgress(8);
+      let audioBrief = isUsableSocialBrief(social) ? social.audioBrief || social?.veo?.audioBrief : null;
+      if (!audioBrief && keys.geminiApiKey?.trim()) {
+        try {
+          const listened = await api.wan2gpListen({
+            track,
+            lyrics,
+            social,
+            audioExcerptBase64: listenExcerpt.base64,
+            audioExcerptMimeType: listenExcerpt.mimeType,
+          });
+          audioBrief = listened?.audioBrief || null;
+        } catch (e) {
+          console.warn("[clip] wan2gp listen:", e.message);
+        }
+      }
+
+      const shotPlan = planMusicVideoShots({
+        lyrics,
+        social,
+        audioBrief,
+        shotCount: WAN2GP_SHOTS,
+        shotSec: WAN2GP_SHOT_SEC,
+      });
+
+      const shotUrls = [];
+      const revokeShots = [];
+      try {
+        for (let s = 0; s < WAN2GP_SHOTS; s++) {
+          const brief = shotPlan[s];
+          setStatusMsg(
+            `Wan2GP plan ${s + 1}/${WAN2GP_SHOTS} (~${WAN2GP_SHOT_SEC}s — GPU Demeter)${
+              brief?.lyricPhrase ? ` · « ${brief.lyricPhrase.slice(0, 40)}… »` : ""
+            }`,
+          );
+          const started = await api.wan2gpStart({
+            artist,
+            track,
+            social,
+            lyrics,
+            audioBrief,
+            shotIndex: s,
+            shotBrief: brief,
+            projectId,
+          });
+          if (started?.audioBrief) audioBrief = started.audioBrief;
+          if (!started?.predictionId) throw new Error("Wan2GP sans predictionId");
+          const done = await pollWan2gpUntilDone(started.predictionId, {
+            from: 10 + s * 35,
+            to: 40 + s * 35,
+          });
+          if (!done?.videoUrl) throw new Error(`Plan ${s + 1} sans URL vidéo`);
+
+          setStatusMsg(`Sauvegarde plan ${s + 1}/${WAN2GP_SHOTS}…`);
+          const local = await resolveVideoBlobUrl(done.videoUrl);
+          if (local.revoke) revokeShots.push(local.url);
+          shotUrls.push(local.url);
+        }
+
+        const result = await muxCinematic({
+          videoUrls: shotUrls,
+          providerLabel: "wan2gp+mux",
+          audioBrief,
+          clipId,
+          shotSec: WAN2GP_SHOT_SEC,
+          cutPoints: Array.from({ length: shotUrls.length }, (_, i) => i * WAN2GP_SHOT_SEC),
+          extra: {
+            mode: "wan2gp-short-shots",
+            shots: shotUrls.length,
+            shotSec: WAN2GP_SHOT_SEC,
+            method: "gradio-i2v",
+          },
+        });
+        return result;
+      } finally {
+        revokeShots.forEach((u) => {
+          try {
+            URL.revokeObjectURL(u);
+          } catch {
+            /* ignore */
+          }
+        });
+      }
+    } catch (e) {
+      setRendering(false);
+      setProgress(0);
+      throw e;
     }
   }
 
@@ -746,6 +876,16 @@ export default function ClipStep({
     }
 
     const keys = loadKeys();
+    if (clipEngine === "wan2gp") {
+      try {
+        return await renderWithWan2gp();
+      } catch (e) {
+        console.warn("[clip] Wan2GP KO:", e.message);
+        setRendering(false);
+        setError(e.message || "Wan2GP impossible");
+        return null;
+      }
+    }
     // Par défaut Veo (Gemini) — Seedance seulement si choisi (crédits Replicate)
     if (clipEngine === "seedance" && keys.replicateApiToken?.trim()) {
       try {
@@ -1035,7 +1175,7 @@ export default function ClipStep({
                   onChange={() => setClipEngine("veo")}
                   disabled={rendering}
                 />
-                <span>Veo (Gemini) — économique</span>
+                <span>Veo (Gemini)</span>
               </label>
               <label class="label cursor-pointer gap-2 py-0">
                 <input
@@ -1046,7 +1186,18 @@ export default function ClipStep({
                   onChange={() => setClipEngine("seedance")}
                   disabled={rendering}
                 />
-                <span>Seedance (Replicate) — ~$1–2 / short</span>
+                <span>Seedance (Replicate)</span>
+              </label>
+              <label class="label cursor-pointer gap-2 py-0">
+                <input
+                  type="radio"
+                  name="clip-engine"
+                  class="radio radio-sm"
+                  checked={clipEngine === "wan2gp"}
+                  onChange={() => setClipEngine("wan2gp")}
+                  disabled={rendering}
+                />
+                <span>Wan2GP (local GPU)</span>
               </label>
             </div>
             <button
@@ -1066,8 +1217,20 @@ export default function ClipStep({
               {rendering
                 ? `Short ${progress}%…`
                 : replaceMode
-                  ? `Remplacer short (${clipEngine === "seedance" ? "Seedance" : "Veo"} ~${PROMO_SHORT_SECONDS}s)`
-                  : `2. Short ${clipEngine === "seedance" ? "Seedance" : "Veo"} (~${PROMO_SHORT_SECONDS}s)`}
+                  ? `Remplacer short (${
+                      clipEngine === "wan2gp"
+                        ? "Wan2GP"
+                        : clipEngine === "seedance"
+                          ? "Seedance"
+                          : "Veo"
+                    } ~${PROMO_SHORT_SECONDS}s)`
+                  : `2. Short ${
+                      clipEngine === "wan2gp"
+                        ? "Wan2GP"
+                        : clipEngine === "seedance"
+                          ? "Seedance"
+                          : "Veo"
+                    } (~${PROMO_SHORT_SECONDS}s)`}
             </button>
           </>
         )}

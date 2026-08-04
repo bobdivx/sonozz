@@ -30,6 +30,7 @@ L’historique des créations est sauvegardé automatiquement sur **Turso (libSQ
 | ONCE Personal Access Token | Distribution auto vers Spotify (~1–2 $/titre) |
 | DistroKid email / artiste / label | Secours manuel |
 | TikTok | Publication Shorts (optionnel) |
+| YouTube | Publication Shorts via Data API v3 (optionnel) |
 
 Les clés sont stockées dans `localStorage` et envoyées uniquement à ton serveur local qui proxy les APIs.
 

@@ -1,5 +1,5 @@
 /**
- * Exécute les items d’agenda carrière « promote » dus (clip prêt → TikTok / webhook).
+ * Exécute les items d’agenda carrière « promote » dus (clip prêt → TikTok / YouTube / webhook).
  */
 import { getArtistBySlug } from "./artists.js";
 import { getDb, getProject, ensureSchema } from "./db.js";
@@ -116,7 +116,7 @@ export async function previewCareerSchedule(slug) {
 }
 
 /**
- * Publie les items promote dus via TikTok / webhook social.
+ * Publie les items promote dus via TikTok / YouTube / webhook social.
  */
 export async function runCareerSchedule(slug, { keys, dryRun = false } = {}) {
   const artist = await getArtistBySlug(slug);
@@ -183,7 +183,7 @@ export async function runCareerSchedule(slug, { keys, dryRun = false } = {}) {
     social,
     artist: project.artist || { name: artist.name, ...artist.profile },
     track: project.track || { title: full?.trackTitle },
-    targets: { tiktok: true, webhook: true },
+    targets: { tiktok: true, youtube: true, webhook: true },
   });
 
   const ok = publish.status === "published" || publish.status === "partial";
@@ -262,6 +262,7 @@ export async function runCareerSchedule(slug, { keys, dryRun = false } = {}) {
     runs: runEntries,
     career,
     tiktokTokens: publish.tiktokTokens || null,
+    youtubeTokens: publish.youtubeTokens || null,
     focusProjectId: preview.focusProjectId,
     clip,
   };

@@ -20,6 +20,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@google/genai": "^2.15.0",
     "@google/generative-ai": "^0.24.1",
+    "@gradio/client": "^2.4.0",
     "@libsql/client": "^0.17.4",
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.1.6",

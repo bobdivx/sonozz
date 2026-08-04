@@ -18,6 +18,8 @@ export async function POST({ request }) {
       spotify: { ok: false, message: "Non testé" },
       once: { ok: false, message: "Non testé" },
       replicate: { ok: false, message: "Non testé" },
+      songgen: { ok: false, message: "Non testé" },
+      wan2gp: { ok: false, message: "Non testé" },
       turso: { ok: false, message: "Non testé" },
     };
 
@@ -152,7 +154,43 @@ export async function POST({ request }) {
         results.replicate = { ok: false, message: e.message };
       }
     } else {
-      results.replicate = { ok: false, message: "Token absent (optionnel)" };
+      results.replicate = {
+        ok: false,
+        message:
+          String(keys.musicProvider || "").trim() === "songgen"
+            ? "Token absent (optionnel si SongGen local)"
+            : "Token absent (optionnel)",
+      };
+    }
+
+    if (String(keys.musicProvider || "").trim() === "songgen") {
+      try {
+        const { testSongGeneration } = await import("../../server/songGeneration.js");
+        const info = await testSongGeneration(keys);
+        results.songgen = {
+          ok: true,
+          message: `Studio OK @ ${info.base}${info.defaultModel ? ` · ${info.defaultModel}` : ""}`,
+        };
+      } catch (e) {
+        results.songgen = { ok: false, message: e.message };
+      }
+    } else {
+      results.songgen = { ok: false, message: "Provider = Replicate MiniMax" };
+    }
+
+    if (String(keys.videoProvider || "").trim() === "wan2gp") {
+      try {
+        const { testWan2gp } = await import("../../server/wan2gp.js");
+        const info = await testWan2gp(keys);
+        results.wan2gp = {
+          ok: true,
+          message: `Wan2GP OK @ ${info.base}${info.generateEndpoint ? ` · ${info.generateEndpoint}` : ""}`,
+        };
+      } catch (e) {
+        results.wan2gp = { ok: false, message: e.message };
+      }
+    } else {
+      results.wan2gp = { ok: false, message: "Provider vidéo = cloud (Veo/Seedance)" };
     }
 
     try {

@@ -23,6 +23,7 @@ export default function TracksStep({
   onOpenSettings,
 }) {
   const [hasReplicate, setHasReplicate] = useState(false);
+  const [hasSongGen, setHasSongGen] = useState(false);
   const [hasOnce, setHasOnce] = useState(false);
   const [audioUrlInput, setAudioUrlInput] = useState("");
   const [importError, setImportError] = useState("");
@@ -33,7 +34,9 @@ export default function TracksStep({
 
   useEffect(() => {
     const keys = loadKeys();
-    setHasReplicate(Boolean(keys.replicateApiToken?.trim()));
+    const songgen = String(keys.musicProvider || "").trim() === "songgen";
+    setHasSongGen(songgen);
+    setHasReplicate(Boolean(keys.replicateApiToken?.trim()) && !songgen);
     setHasOnce(Boolean(keys.onceApiToken?.trim()));
   }, [track, loading]);
 
@@ -201,6 +204,7 @@ export default function TracksStep({
 
   const audioReady = Boolean(track?.audioUrl);
   const isOnceOriginal = track?.provider === "once-original";
+  const canGenerateAudio = hasSongGen || hasReplicate;
   const onceDashboard =
     distrokid?.dashboardUrl ||
     (onceReleaseId.trim()
@@ -212,19 +216,29 @@ export default function TracksStep({
       <header class="space-y-2">
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Créer les morceaux</h2>
         <p class="max-w-xl text-base-content/70">
-          Replicate → MiniMax Music 2.6 uniquement (voix + paroles, ~2–4 min). Compte 2–5 min par génération.
+          {hasSongGen
+            ? "SongGeneration Studio (LeVo local sur GPU) — voix + paroles, ~3–6 min. Pinokio doit être démarré."
+            : "Replicate → MiniMax Music 2.6 (voix + paroles, ~2–4 min). Ou passe en SongGeneration local dans Paramètres."}
         </p>
       </header>
 
-      {!hasReplicate ? (
+      {hasSongGen ? (
+        <div class="border border-base-content/10 bg-base-200/40 p-4 text-sm text-base-content/70">
+          Provider local actif. URL joignable depuis le serveur Astro (souvent{" "}
+          <code class="text-xs">http://127.0.0.1:7860</code> sur Demeter, ou l’IP LAN).
+          <button type="button" class="btn btn-ghost btn-xs ml-2" onClick={onOpenSettings}>
+            Ajuster l’URL
+          </button>
+        </div>
+      ) : !hasReplicate ? (
         <div class="border border-warning/40 bg-warning/10 p-4">
-          <p class="font-medium text-warning">Token Replicate manquant</p>
+          <p class="font-medium text-warning">Aucun provider audio configuré</p>
           <p class="mt-1 text-sm text-base-content/70">
-            C’est pour ça que le lecteur reste à 0:00. Ajoute un token Replicate, ou génère sur Suno puis importe l’audio ici.
+            Choisis SongGeneration Studio (local) ou un token Replicate, sinon importe un mp3 (Suno).
           </p>
           <div class="mt-3 flex flex-wrap gap-2">
             <button type="button" class="btn btn-warning btn-sm gap-1" onClick={onOpenSettings}>
-              <KeyRound size={14} /> Ajouter le token Replicate
+              <KeyRound size={14} /> Paramètres audio
             </button>
             <a
               class="btn btn-ghost btn-sm gap-1"
@@ -232,7 +246,7 @@ export default function TracksStep({
               target="_blank"
               rel="noreferrer"
             >
-              Obtenir un token <ExternalLink size={12} />
+              Token Replicate <ExternalLink size={12} />
             </a>
           </div>
         </div>
@@ -247,7 +261,7 @@ export default function TracksStep({
           >
             Ajouter un moyen de paiement
           </a>
-          {" "}(MiniMax facturé à l’usage sur Replicate).
+          {" "}(MiniMax facturé à l’usage). Pour du local GPU : Paramètres → SongGeneration Studio.
         </div>
       )}
 
@@ -255,13 +269,23 @@ export default function TracksStep({
         class="btn btn-primary gap-2"
         disabled={loading || !lyrics}
         onClick={onGenerate}
-        title={!hasReplicate ? "Sans Replicate → brief Suno uniquement" : "Génère via MiniMax Music 2.6"}
+        title={
+          hasSongGen
+            ? "Génère via SongGeneration Studio (local)"
+            : !hasReplicate
+              ? "Sans provider → brief Suno uniquement"
+              : "Génère via MiniMax Music 2.6"
+        }
       >
         {loading ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={18} />}
         {loading
-          ? "Composition MiniMax (2–5 min)…"
-          : hasReplicate
-            ? "Générer la chanson (MiniMax + paroles)"
+          ? hasSongGen
+            ? "Composition SongGen (3–6 min)…"
+            : "Composition MiniMax (2–5 min)…"
+          : canGenerateAudio
+            ? hasSongGen
+              ? "Générer la chanson (SongGen local)"
+              : "Générer la chanson (MiniMax + paroles)"
             : "Générer le brief (sans audio)"}
       </button>
       {!lyrics && <p class="text-sm text-warning">Générez d'abord les paroles (étape 3).</p>}
@@ -277,7 +301,9 @@ export default function TracksStep({
                 {track.provider}
               </p>
               <p class={`text-xs ${audioReady ? "text-success" : "text-warning"}`}>
-                {audioReady ? "Audio prêt ✓" : "Pas d’audio — importe un fichier ou configure Replicate"}
+                {audioReady
+                  ? "Audio prêt ✓"
+                  : "Pas d’audio — importe un fichier ou configure SongGen / Replicate"}
               </p>
             </div>
           </div>

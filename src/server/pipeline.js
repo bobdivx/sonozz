@@ -4,6 +4,10 @@ import { prepareSpotifyRelease, getSpotifyAccess, spotifySearchContext } from ".
 import { resolveStyleReference } from "./styleReference.js";
 import { submitOnceRelease } from "./once.js";
 import { generateMusicWithReplicate } from "./replicate.js";
+import {
+  generateMusicWithSongGeneration,
+  isSongGenMusicProvider,
+} from "./songGeneration.js";
 import { isUsableRasterImage } from "./imagePersist.js";
 import { slugify, getArtistBySlug } from "./artists.js";
 import { llmJson, requireTextLlm } from "./llm.js";
@@ -622,8 +626,23 @@ export async function runTrack({ keys, lyrics, artist }) {
   let warning;
   let durationLabel = "3:24";
   let hasVocals = false;
+  const bpmGuess = 95 + Math.floor(Math.random() * 35);
 
-  if (keys?.replicateApiToken?.trim()) {
+  if (isSongGenMusicProvider(keys)) {
+    const result = await generateMusicWithSongGeneration(keys, {
+      prompt,
+      lyrics: lyrics?.text || "",
+      title: lyrics?.title || artist?.name || "SONOZZ",
+      gender: artist?.gender,
+      genre: artist?.genre || styleLock?.genre,
+      mood: artist?.mood || styleLock?.mood,
+      bpm: bpmGuess,
+    });
+    audioUrl = result.url;
+    provider = result.provider;
+    durationLabel = result.durationLabel || "~2–4 min";
+    hasVocals = Boolean(result.hasVocals);
+  } else if (keys?.replicateApiToken?.trim()) {
     // Erreur propagée (pas avalée) pour que l’UI affiche le message rouge
     const result = await generateMusicWithReplicate(keys.replicateApiToken.trim(), {
       prompt,
@@ -636,7 +655,7 @@ export async function runTrack({ keys, lyrics, artist }) {
     warning = typeof result === "string" ? undefined : result.warning;
   } else {
     warning =
-      "Aucun token Replicate — aucun fichier audio généré. Importe un mp3 (Suno) ou ajoute le token dans Paramètres.";
+      "Aucun provider audio — choisis SongGeneration Studio (local) ou un token Replicate dans Paramètres, ou importe un mp3.";
   }
 
   const sunoPrompt = `Style: ${artist?.genre}${styleLock?.matchedName ? ` (lane of ${styleLock.matchedName})` : ""}. Mood: ${artist?.mood}.
@@ -647,10 +666,17 @@ Lyrics:
 ${lyrics?.text || ""}
 `.trim();
 
+  const noteReady =
+    provider === "songgeneration-studio"
+      ? "Chanson générée via SongGeneration Studio (LeVo local)."
+      : hasVocals
+        ? "Chanson générée via MiniMax Music 2.6 (voix + paroles)."
+        : "Piste instrumentale (MusicGen) — pas de chant.";
+
   return {
     title: lyrics?.title || "Untitled Session",
     artist: artist?.name || "Unknown",
-    bpm: 95 + Math.floor(Math.random() * 35),
+    bpm: bpmGuess,
     key: ["Am", "Dm", "Em", "F", "Gm", "C"][Math.floor(Math.random() * 6)],
     duration: audioUrl ? durationLabel : "3:24",
     style: artist?.genre || "Pop",
@@ -662,10 +688,8 @@ ${lyrics?.text || ""}
     hasVocals,
     sunoPrompt,
     note: audioUrl
-      ? hasVocals
-        ? "Chanson générée via MiniMax Music 2.6 (voix + paroles)."
-        : "Piste instrumentale (MusicGen) — pas de chant."
-      : "Métadonnées + prompt Suno prêts — audio manquant jusqu’à import ou Replicate.",
+      ? noteReady
+      : "Métadonnées + prompt Suno prêts — audio manquant jusqu’à import ou provider audio.",
     warning,
   };
 }

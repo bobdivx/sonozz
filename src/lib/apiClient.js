@@ -32,6 +32,10 @@ export const api = {
   seedanceStart: (payload) => request("/api/social/seedance", { action: "start", ...payload }),
   seedancePoll: (predictionId) =>
     request("/api/social/seedance", { action: "poll", predictionId }),
+  wan2gpListen: (payload) => request("/api/social/wan2gp", { action: "listen", ...payload }),
+  wan2gpStart: (payload) => request("/api/social/wan2gp", { action: "start", ...payload }),
+  wan2gpPoll: (predictionId) =>
+    request("/api/social/wan2gp", { action: "poll", predictionId }),
   /** @deprecated préférer veoShortStart + veoShortPoll (évite timeout proxy) */
   veoShort: (payload) => request("/api/social/veo", { action: "start", ...payload }),
   publishShort: async (payload = {}) => {
@@ -48,7 +52,7 @@ export const api = {
       form.append("social", JSON.stringify(payload.social || {}));
       form.append("artist", JSON.stringify(payload.artist || {}));
       form.append("track", JSON.stringify(payload.track || {}));
-      form.append("targets", JSON.stringify(payload.targets || { tiktok: true, webhook: true }));
+      form.append("targets", JSON.stringify(payload.targets || { tiktok: true, youtube: true, webhook: true }));
       if (payload.mimeType) form.append("mimeType", payload.mimeType);
       if (payload.videoUrl) form.append("videoUrl", payload.videoUrl);
       if (payload.s3Key) form.append("s3Key", payload.s3Key);
@@ -163,6 +167,8 @@ export const api = {
   searchStyleArtists: (query) => request("/api/style-artists", { query }),
   tiktokAuthUrl: () => request("/api/tiktok/auth"),
   tiktokToken: (payload) => request("/api/tiktok/token", payload),
+  youtubeAuthUrl: () => request("/api/youtube/auth"),
+  youtubeToken: (payload) => request("/api/youtube/token", payload),
 
   listProjects: async () => {
     const res = await fetch("/api/projects");

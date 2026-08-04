@@ -6,7 +6,7 @@ import Layout from "../../layouts/Layout.astro";
   <article class="mx-auto max-w-3xl px-4 py-12 prose prose-invert">
     <p><a href="/" class="link">← SONOZZ</a></p>
     <h1 class="font-display text-4xl font-bold">Politique de confidentialité</h1>
-    <p class="text-base-content/60">Dernière mise à jour : 3 août 2026</p>
+    <p class="text-base-content/60">Dernière mise à jour : 4 août 2026</p>
 
     <h2>1. Données collectées</h2>
     <p>
@@ -21,18 +21,26 @@ import Layout from "../../layouts/Layout.astro";
       Nous n’utilisons pas ce jeton à d’autres fins.
     </p>
 
-    <h2>3. Sous-traitants</h2>
+    <h2>3. YouTube</h2>
     <p>
-      Des services tiers (Google Gemini / Veo, Replicate, ONCE, Turso, hébergeur) peuvent traiter des données
+      Lors de la connexion Google / YouTube, nous recevons un jeton d’accès pour uploader des Shorts
+      via YouTube Data API v3, dans la limite du scope <code>youtube.upload</code>.
+      Nous n’utilisons pas ce jeton à d’autres fins. Vous pouvez révoquer l’accès dans
+      <a href="https://myaccount.google.com/permissions" target="_blank" rel="noreferrer"> les permissions Google</a>.
+    </p>
+
+    <h2>4. Sous-traitants</h2>
+    <p>
+      Des services tiers (Google Gemini / Veo / YouTube, Replicate, ONCE, Turso, hébergeur) peuvent traiter des données
       techniques nécessaires au fonctionnement. Consultez leurs politiques respectives.
     </p>
 
-    <h2>4. Conservation & suppression</h2>
+    <h2>5. Conservation & suppression</h2>
     <p>
-      Vous pouvez supprimer les clés API du navigateur, révoquer TikTok, et supprimer les projets stockés.
+      Vous pouvez supprimer les clés API du navigateur, révoquer TikTok / YouTube, et supprimer les projets stockés.
     </p>
 
-    <h2>5. Contact</h2>
+    <h2>6. Contact</h2>
     <p>Pour exercer vos droits (accès, suppression) : contactez le propriétaire de l’instance SONOZZ.</p>
   </article>
 </Layout>

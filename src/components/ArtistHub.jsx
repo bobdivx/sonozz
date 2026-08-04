@@ -212,8 +212,13 @@ export default function ArtistHub({ slug }) {
     setMsg("");
     try {
       const keys = loadKeys();
-      if (!keys.tiktokAccessToken?.trim() && !keys.socialWebhookUrl?.trim()) {
-        throw new Error("Configure TikTok et/ou un webhook social dans Paramètres.");
+      if (
+        !keys.tiktokAccessToken?.trim() &&
+        !keys.youtubeAccessToken?.trim() &&
+        !keys.youtubeRefreshToken?.trim() &&
+        !keys.socialWebhookUrl?.trim()
+      ) {
+        throw new Error("Configure TikTok, YouTube et/ou un webhook social dans Paramètres.");
       }
       const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
         method: "POST",
@@ -222,9 +227,13 @@ export default function ArtistHub({ slug }) {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Exécution agenda KO");
-      if (json.tiktokTokens) {
+      if (json.tiktokTokens || json.youtubeTokens) {
         const { saveKeys } = await import("../lib/keys.js");
-        saveKeys({ ...loadKeys(), ...json.tiktokTokens });
+        saveKeys({
+          ...loadKeys(),
+          ...(json.tiktokTokens || {}),
+          ...(json.youtubeTokens || {}),
+        });
       }
       if (json.career) {
         setData((prev) =>
@@ -240,7 +249,7 @@ export default function ArtistHub({ slug }) {
       if (json.skipped && !json.ok) {
         setMsg(json.message || (json.blockers || []).join(" · ") || "Rien à publier");
       } else if (json.ok) {
-        setMsg(`Promo agenda : ${json.status} — clip poussé TikTok/webhook`);
+        setMsg(`Promo agenda : ${json.status} — clip poussé TikTok / YouTube / webhook`);
       } else {
         setError(json.message || `Publication ${json.status || "échouée"}`);
       }
@@ -476,7 +485,7 @@ export default function ArtistHub({ slug }) {
                       title={
                         schedulePreview?.blockers?.length
                           ? schedulePreview.blockers.join(" · ")
-                          : "Publier le clip focus sur TikTok / webhook"
+                          : "Publier le clip focus sur TikTok / YouTube / webhook"
                       }
                     >
                       {scheduleBusy ? (

@@ -56,10 +56,52 @@ export const KEY_FIELDS = [
         ],
       },
       {
+        id: "musicProvider",
+        label: "Provider audio (morceaux)",
+        help: "SongGeneration Studio = local GPU (Pinokio / Demeter). MiniMax = cloud Replicate.",
+        required: false,
+        inputType: "select",
+        options: [
+          { value: "replicate", label: "Replicate MiniMax 2.6 (cloud)" },
+          { value: "songgen", label: "SongGeneration Studio (local)" },
+        ],
+      },
+      {
+        id: "songGenBaseUrl",
+        label: "URL SongGeneration Studio",
+        placeholder: "http://10.1.0.88:42014",
+        help: "Doit être joignable depuis le serveur Astro. Ex. Home Server Pinokio sur Demeter.",
+        required: false,
+        inputType: "url",
+        when: { musicProvider: "songgen" },
+        url: "https://github.com/BazedFrog/SongGeneration-Studio",
+      },
+      {
+        id: "videoProvider",
+        label: "Provider vidéo (clips)",
+        help: "Wan2GP = local GPU Pinokio. Veo/Seedance restent dispo dans l’étape Clip.",
+        required: false,
+        inputType: "select",
+        options: [
+          { value: "cloud", label: "Cloud (Veo / Seedance dans Clip)" },
+          { value: "wan2gp", label: "Wan2GP (local Pinokio)" },
+        ],
+      },
+      {
+        id: "wan2gpBaseUrl",
+        label: "URL Wan2GP",
+        placeholder: "http://10.1.0.88:PORT",
+        help: "URL Home Server Pinokio de Wan2GP (Start puis coller l’URL LAN). Image→vidéo depuis le portrait.",
+        required: false,
+        inputType: "url",
+        when: { videoProvider: "wan2gp" },
+        url: "https://github.com/deepbeepmeep/Wan2GP",
+      },
+      {
         id: "replicateApiToken",
         label: "Replicate API Token",
         placeholder: "r8_...",
-        help: "Audio MiniMax 2.6 + images Flux + Seedance 2.0 (shorts sync audio). Billing Replicate recommandé.",
+        help: "Audio MiniMax (si provider = Replicate) + images Flux + Seedance. Billing recommandé.",
         required: false,
         url: "https://replicate.com/account/api-tokens",
       },
@@ -204,10 +246,52 @@ export const KEY_FIELDS = [
         ],
       },
       {
+        id: "youtubeClientId",
+        label: "YouTube Client ID",
+        placeholder: "….apps.googleusercontent.com",
+        help: "Google Cloud → Identifiants → OAuth 2.0 (Application Web). Active YouTube Data API v3.",
+        required: false,
+        url: "https://console.cloud.google.com/apis/credentials",
+        inputType: "text",
+      },
+      {
+        id: "youtubeClientSecret",
+        label: "YouTube Client Secret",
+        placeholder: "GOCSPX-…",
+        help: "Secret OAuth de l’app Web. Enregistre, puis Connecter YouTube.",
+        required: false,
+      },
+      {
+        id: "youtubeAccessToken",
+        label: "YouTube Access Token",
+        placeholder: "rempli automatiquement après OAuth",
+        help: "Résultat de « Connecter YouTube ». Expire ~1 h — renouvelé via refresh token.",
+        required: false,
+      },
+      {
+        id: "youtubeRefreshToken",
+        label: "YouTube Refresh Token",
+        placeholder: "rempli automatiquement après OAuth",
+        help: "Permet de renouveler l’access token. Rempli par « Connecter YouTube ».",
+        required: false,
+      },
+      {
+        id: "youtubePrivacyStatus",
+        label: "Visibilité YouTube Shorts",
+        help: "Privé recommandé en test. Public nécessite souvent un projet Google vérifié + canal YouTube en règle.",
+        required: false,
+        inputType: "select",
+        options: [
+          { value: "private", label: "Privé (recommandé en test)" },
+          { value: "unlisted", label: "Non listé" },
+          { value: "public", label: "Public" },
+        ],
+      },
+      {
         id: "socialWebhookUrl",
         label: "Webhook diffusion (Activepieces / Make)",
         placeholder: "https://cloud.activepieces.com/api/v1/webhooks/...",
-        help: "POST auto du short + caption pour Instagram Reels / YouTube Shorts / multi-réseaux.",
+        help: "POST auto du short + caption pour Instagram Reels / multi-réseaux (YouTube & TikTok ont une intégration native).",
         required: false,
         inputType: "url",
       },
@@ -228,6 +312,8 @@ const RETIRED_GEMINI_MODELS = new Set([
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "llama3.2";
+const DEFAULT_SONGGEN_BASE = "http://127.0.0.1:7860";
+const DEFAULT_WAN2GP_BASE = "http://127.0.0.1:7860";
 
 export const EMPTY_KEYS = () => {
   const base = Object.fromEntries(KEY_FIELDS.flatMap((g) => g.items.map((i) => [i.id, ""])));
@@ -235,8 +321,13 @@ export const EMPTY_KEYS = () => {
   base.geminiModel = DEFAULT_GEMINI_MODEL;
   base.ollamaBaseUrl = DEFAULT_OLLAMA_BASE;
   base.ollamaModel = DEFAULT_OLLAMA_MODEL;
+  base.musicProvider = "replicate";
+  base.songGenBaseUrl = DEFAULT_SONGGEN_BASE;
+  base.videoProvider = "cloud";
+  base.wan2gpBaseUrl = DEFAULT_WAN2GP_BASE;
   base.tiktokPrivacyLevel = "SELF_ONLY";
   base.tiktokPostMode = "direct";
+  base.youtubePrivacyStatus = "private";
   return base;
 };
 
@@ -254,12 +345,27 @@ function migrateKeys(keys) {
   if (!next.ollamaModel?.trim()) {
     next.ollamaModel = DEFAULT_OLLAMA_MODEL;
   }
+  if (!next.musicProvider?.trim() || !["replicate", "songgen"].includes(next.musicProvider.trim())) {
+    next.musicProvider = "replicate";
+  }
+  if (!next.songGenBaseUrl?.trim()) {
+    next.songGenBaseUrl = DEFAULT_SONGGEN_BASE;
+  }
+  if (!next.videoProvider?.trim() || !["cloud", "wan2gp"].includes(next.videoProvider.trim())) {
+    next.videoProvider = "cloud";
+  }
+  if (!next.wan2gpBaseUrl?.trim()) {
+    next.wan2gpBaseUrl = DEFAULT_WAN2GP_BASE;
+  }
   if (!next.tiktokPrivacyLevel?.trim()) {
     next.tiktokPrivacyLevel = "SELF_ONLY";
   }
   if (!next.tiktokPostMode?.trim() || next.tiktokPostMode === "auto") {
     // Auto brûlait le quota Inbox ; Direct = chemin principal
     next.tiktokPostMode = "direct";
+  }
+  if (!next.youtubePrivacyStatus?.trim()) {
+    next.youtubePrivacyStatus = "private";
   }
   return next;
 }
@@ -268,6 +374,12 @@ function migrateKeys(keys) {
 export function tiktokRedirectUri() {
   if (typeof window === "undefined") return "";
   return `${window.location.origin}/tiktok/callback`;
+}
+
+/** URI à coller dans Google Cloud Console (OAuth → URI de redirection). */
+export function youtubeRedirectUri() {
+  if (typeof window === "undefined") return "";
+  return `${window.location.origin}/youtube/callback`;
 }
 
 const STORAGE_KEY = "sonozz.keys.v1";
@@ -304,7 +416,8 @@ export function keysReady(keys) {
 export function fieldVisible(field, keys) {
   if (!field?.when) return true;
   return Object.entries(field.when).every(([id, value]) => {
-    const current = keys?.[id]?.trim() || (id === "llmProvider" ? "gemini" : "");
+    const defaults = { llmProvider: "gemini", musicProvider: "replicate", videoProvider: "cloud" };
+    const current = keys?.[id]?.trim() || defaults[id] || "";
     return current === value;
   });
 }

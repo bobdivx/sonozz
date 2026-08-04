@@ -8,7 +8,15 @@ import { isS3Configured, uploadClipBuffer } from "./s3.js";
 export function isEphemeralAudioUrl(url = "") {
   if (!url || typeof url !== "string") return false;
   if (!/^https?:\/\//i.test(url)) return false;
-  return /replicate\.delivery|pb\.replicate\.com|fal\.media|cdn\.replicate/i.test(url);
+  if (/replicate\.delivery|pb\.replicate\.com|fal\.media|cdn\.replicate/i.test(url)) return true;
+  // SongGeneration Studio local (Pinokio) — fichiers volatils tant que non persistés S3
+  try {
+    const u = new URL(url);
+    if (/\/api\/audio\//i.test(u.pathname)) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
 }
 
 export function isAudioDataUrl(url = "") {

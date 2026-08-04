@@ -34,7 +34,7 @@ async function parsePublishRequest(request) {
       social: parse(socialRaw),
       artist: parse(artistRaw),
       track: parse(trackRaw),
-      targets: parse(targetsRaw, { tiktok: true, webhook: true }),
+      targets: parse(targetsRaw, { tiktok: true, youtube: true, webhook: true }),
       videoBuffer,
       mimeType,
       videoBase64: null,

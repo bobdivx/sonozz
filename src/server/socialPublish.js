@@ -1,8 +1,9 @@
 /**
- * Publication shorts → TikTok Direct Post + webhook générique (Activepieces/Make).
+ * Publication shorts → TikTok Direct Post + YouTube Shorts + webhook (Activepieces/Make).
  */
 
 import { getTikTokAccess } from "./tiktok.js";
+import { getYouTubeAccess, publishToYouTube as uploadYouTubeShort } from "./youtube.js";
 
 const MIN_TIKTOK_BYTES = 80_000;
 const CHUNK_TARGET = 10_000_000; // 10 Mo — entre 5 et 64 Mo (doc TikTok)
@@ -580,11 +581,32 @@ export async function publishShortEverywhere({
   targets,
 }) {
   const wantTikTok = targets?.tiktok !== false;
+  const wantYouTube = targets?.youtube !== false;
   const wantWebhook = targets?.webhook !== false;
   const webhookUrl = keys?.socialWebhookUrl?.trim() || "";
 
   const results = [];
   let tiktokTokens = null;
+  let youtubeTokens = null;
+
+  // Buffer une seule fois pour TikTok + YouTube
+  let sharedBuffer = null;
+  let sharedMime = mimeType || null;
+  if (wantTikTok || wantYouTube) {
+    try {
+      const parsed = bufferFromVideoInput({
+        videoBase64,
+        videoBuffer,
+        mimeType,
+      });
+      sharedBuffer = parsed.buffer;
+      sharedMime = parsed.mimeType;
+    } catch (e) {
+      if (wantTikTok || wantYouTube) {
+        /* chaque branche gérera l’erreur si besoin */
+      }
+    }
+  }
 
   if (wantTikTok) {
     try {
@@ -599,9 +621,9 @@ export async function publishShortEverywhere({
       results.push(
         await publishToTikTok({
           accessToken: access?.token,
-          videoBase64,
-          videoBuffer,
-          mimeType,
+          videoBase64: sharedBuffer ? undefined : videoBase64,
+          videoBuffer: sharedBuffer || videoBuffer,
+          mimeType: sharedMime || mimeType,
           social,
           privacyLevel: keys?.tiktokPrivacyLevel || "SELF_ONLY",
           postMode: keys?.tiktokPostMode || "auto",
@@ -609,6 +631,54 @@ export async function publishShortEverywhere({
       );
     } catch (e) {
       results.push({ ok: false, platform: "tiktok", message: e.message });
+    }
+  }
+
+  if (wantYouTube) {
+    const hasYtCreds = Boolean(
+      keys?.youtubeAccessToken?.trim() ||
+        (keys?.youtubeClientId?.trim() && keys?.youtubeRefreshToken?.trim()),
+    );
+    if (!hasYtCreds) {
+      results.push({
+        ok: false,
+        skipped: true,
+        platform: "youtube",
+        message: "YouTube non connecté — OAuth dans Paramètres → Réseaux",
+      });
+    } else {
+      try {
+        const access = await getYouTubeAccess(keys);
+        if (access?.refreshed) {
+          youtubeTokens = {
+            youtubeAccessToken: access.refreshed.access_token,
+            youtubeRefreshToken:
+              access.refreshed.refresh_token || keys?.youtubeRefreshToken || "",
+          };
+        }
+        if (!sharedBuffer) {
+          const parsed = bufferFromVideoInput({
+            videoBase64,
+            videoBuffer,
+            mimeType,
+          });
+          sharedBuffer = parsed.buffer;
+          sharedMime = parsed.mimeType;
+        }
+        results.push(
+          await uploadYouTubeShort({
+            accessToken: access?.token,
+            buffer: sharedBuffer,
+            mimeType: sharedMime || mimeType,
+            social,
+            privacyStatus: keys?.youtubePrivacyStatus || "private",
+            artistName: artist?.name,
+            trackTitle: track?.title,
+          }),
+        );
+      } catch (e) {
+        results.push({ ok: false, platform: "youtube", message: e.message });
+      }
     }
   }
 
@@ -626,8 +696,8 @@ export async function publishShortEverywhere({
           await publishToWebhook({
             webhookUrl,
             videoBase64,
-            videoBuffer,
-            mimeType,
+            videoBuffer: sharedBuffer || videoBuffer,
+            mimeType: sharedMime || mimeType,
             videoUrl,
             social,
             artist,
@@ -658,9 +728,10 @@ export async function publishShortEverywhere({
     failed: failed.length,
     skipped: skipped.length,
     tiktokTokens,
+    youtubeTokens,
     note:
       published.length === 0 && skipped.length
-        ? "Aucun canal configuré — connecte TikTok (Client Key + Secret + OAuth) et/ou un webhook dans Paramètres."
+        ? "Aucun canal configuré — connecte TikTok et/ou YouTube (OAuth) et/ou un webhook dans Paramètres."
         : undefined,
   };
 }

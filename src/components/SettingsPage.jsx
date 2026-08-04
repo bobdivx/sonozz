@@ -12,12 +12,15 @@ import {
   Share2,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
-import { KEY_FIELDS, loadKeys, saveKeys, keysReady, tiktokRedirectUri, fieldVisible } from "../lib/keys.js";
+import { KEY_FIELDS, loadKeys, saveKeys, keysReady, tiktokRedirectUri, youtubeRedirectUri, fieldVisible } from "../lib/keys.js";
 import { formatQuotaReset, getTikTokQuota } from "../lib/tiktokQuota.js";
+import { formatYouTubeQuotaReset, getYouTubeQuota } from "../lib/youtubeQuota.js";
 import { api } from "../lib/apiClient.js";
 
 const TIKTOK_STATE_KEY = "sonozz.tiktok.oauth.state";
 const TIKTOK_VERIFIER_KEY = "sonozz.tiktok.oauth.verifier";
+const YOUTUBE_STATE_KEY = "sonozz.youtube.oauth.state";
+const YOUTUBE_VERIFIER_KEY = "sonozz.youtube.oauth.verifier";
 
 const SECTION_META = {
   IA: { id: "ia", icon: Sparkles, blurb: "Gemini, Ollama local, et génération audio / image." },
@@ -30,7 +33,7 @@ const SECTION_META = {
   Réseaux: {
     id: "reseaux",
     icon: Share2,
-    blurb: "TikTok OAuth et webhook multi-réseaux.",
+    blurb: "TikTok, YouTube Shorts et webhook multi-réseaux.",
   },
 };
 
@@ -48,12 +51,15 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [connectingTikTok, setConnectingTikTok] = useState(false);
   const [tiktokPreview, setTiktokPreview] = useState(null);
+  const [connectingYouTube, setConnectingYouTube] = useState(false);
+  const [youtubePreview, setYoutubePreview] = useState(null);
   const [webhookBusy, setWebhookBusy] = useState(false);
   const [webhookConfig, setWebhookConfig] = useState(null);
   const [webhookSecretDraft, setWebhookSecretDraft] = useState("");
   const [tests, setTests] = useState(null);
   const [message, setMessage] = useState("");
   const redirectUri = typeof window !== "undefined" ? tiktokRedirectUri() : "";
+  const ytRedirectUri = typeof window !== "undefined" ? youtubeRedirectUri() : "";
   const isLocalhost =
     typeof window !== "undefined" &&
     (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
@@ -69,6 +75,11 @@ export default function SettingsPage() {
     if (params.get("tiktok") === "connected") {
       setSection("reseaux");
       setMessage("TikTok connecté — access token enregistré.");
+      window.history.replaceState({}, "", "/parametres?section=reseaux");
+    }
+    if (params.get("youtube") === "connected") {
+      setSection("reseaux");
+      setMessage("YouTube connecté — access token enregistré.");
       window.history.replaceState({}, "", "/parametres?section=reseaux");
     }
   }, []);
@@ -281,6 +292,77 @@ export default function SettingsPage() {
       sessionStorage.removeItem(TIKTOK_VERIFIER_KEY);
     }
     window.location.href = tiktokPreview.url;
+  }
+
+  async function handlePrepareYouTube() {
+    setMessage("");
+    setYoutubePreview(null);
+    const clientId = keys.youtubeClientId?.trim();
+    const clientSecret = keys.youtubeClientSecret?.trim();
+    if (!clientId || !clientSecret) {
+      setMessage("Renseigne d’abord YouTube Client ID + Client Secret, puis Enregistrer.");
+      selectSection("reseaux");
+      return;
+    }
+    saveKeys(keys);
+    setConnectingYouTube(true);
+    try {
+      const data = await api.youtubeAuthUrl();
+      setYoutubePreview(data);
+      setMessage(data.hint || "");
+    } catch (e) {
+      setMessage(e.message);
+    } finally {
+      setConnectingYouTube(false);
+    }
+  }
+
+  async function handleReconnectYouTube() {
+    setMessage("");
+    setYoutubePreview(null);
+    const clientId = keys.youtubeClientId?.trim();
+    const clientSecret = keys.youtubeClientSecret?.trim();
+    if (!clientId || !clientSecret) {
+      setMessage("Renseigne d’abord YouTube Client ID + Secret, puis Enregistrer.");
+      selectSection("reseaux");
+      return;
+    }
+
+    const cleared = {
+      ...keys,
+      youtubeAccessToken: "",
+      youtubeRefreshToken: "",
+      youtubeScope: "",
+    };
+    setKeys(cleared);
+    saveKeys(cleared);
+    setConnectingYouTube(true);
+    try {
+      const data = await api.youtubeAuthUrl();
+      if (!data?.url) throw new Error("URL OAuth YouTube manquante");
+      sessionStorage.setItem(YOUTUBE_STATE_KEY, data.state);
+      if (data.codeVerifier) {
+        sessionStorage.setItem(YOUTUBE_VERIFIER_KEY, data.codeVerifier);
+      } else {
+        sessionStorage.removeItem(YOUTUBE_VERIFIER_KEY);
+      }
+      setMessage(`Redirection Google (scopes : ${data.scopes})…`);
+      window.location.href = data.url;
+    } catch (e) {
+      setMessage(e.message);
+      setConnectingYouTube(false);
+    }
+  }
+
+  function handleConfirmYouTubeRedirect() {
+    if (!youtubePreview?.url) return;
+    sessionStorage.setItem(YOUTUBE_STATE_KEY, youtubePreview.state);
+    if (youtubePreview.codeVerifier) {
+      sessionStorage.setItem(YOUTUBE_VERIFIER_KEY, youtubePreview.codeVerifier);
+    } else {
+      sessionStorage.removeItem(YOUTUBE_VERIFIER_KEY);
+    }
+    window.location.href = youtubePreview.url;
   }
 
   const meta = SECTION_META[activeGroup.group];
@@ -528,9 +610,71 @@ export default function SettingsPage() {
             </div>
           )}
 
+          {section === "reseaux" && ytRedirectUri && (
+            <div class="mt-6 max-w-xl space-y-3 border border-secondary/30 bg-secondary/5 p-4 text-xs text-base-content/80">
+              <p class="font-medium text-secondary">YouTube Shorts — checklist Google Cloud</p>
+              <ol class="list-decimal space-y-1.5 pl-4">
+                <li>
+                  Ouvre{" "}
+                  <a
+                    class="link text-secondary"
+                    href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    YouTube Data API v3
+                  </a>{" "}
+                  → Active l’API sur ton projet.
+                </li>
+                <li>
+                  <a
+                    class="link text-secondary"
+                    href="https://console.cloud.google.com/apis/credentials"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Identifiants
+                  </a>{" "}
+                  → Créer OAuth 2.0 → type <strong>Application Web</strong>. Colle Client ID + Secret
+                  ci-dessus.
+                </li>
+                <li>
+                  URI de redirection autorisée (exacte) :
+                  <code class="mt-1 block break-all font-mono text-[11px] text-primary">{ytRedirectUri}</code>
+                </li>
+                <li>
+                  Écran de consentement OAuth → type <strong>External</strong> → ajoute ton compte Google
+                  en <strong>utilisateur test</strong> (sinon « app non vérifiée » bloque).
+                </li>
+                <li>
+                  Scope demandé : <code>youtube.upload</code>. Visibilité par défaut = Privé (test).
+                  Quota free ≈ 6 Shorts / jour.
+                </li>
+              </ol>
+            </div>
+          )}
+
+          {youtubePreview && section === "reseaux" && (
+            <div class="mt-4 max-w-xl space-y-2 border border-base-content/15 bg-base-200/60 p-4 text-xs">
+              <p class="font-medium text-base-content">Prévisualisation OAuth YouTube</p>
+              <p>
+                Key : <code>{youtubePreview.clientIdPreview}</code> · Scope :{" "}
+                <code class="break-all">{youtubePreview.scopes}</code>
+              </p>
+              <p>
+                Redirect : <code class="break-all text-primary">{youtubePreview.redirectUri}</code>
+              </p>
+              <p class="break-all text-base-content/50">{youtubePreview.url}</p>
+              <button type="button" class="btn btn-secondary btn-sm gap-2" onClick={handleConfirmYouTubeRedirect}>
+                <Link2 size={14} />
+                Continuer vers Google
+              </button>
+            </div>
+          )}
+
           {tiktokPreview && section === "reseaux" && (
             <div class="mt-4 max-w-xl space-y-2 border border-base-content/15 bg-base-200/60 p-4 text-xs">
-              <p class="font-medium text-base-content">Prévisualisation OAuth</p>
+              <p class="font-medium text-base-content">Prévisualisation OAuth TikTok</p>
               <p>
                 Mode : <strong>{tiktokPreview.mode}</strong> · Key :{" "}
                 <code>{tiktokPreview.clientKeyPreview}</code> · Scope :{" "}
@@ -567,25 +711,41 @@ export default function SettingsPage() {
           {message && <p class="mt-4 text-sm text-primary">{message}</p>}
 
           {section === "reseaux" && (
-            <div class="mt-4 max-w-xl border border-base-content/10 bg-base-200/40 p-3 text-xs space-y-1">
+            <div class="mt-4 max-w-xl border border-base-content/10 bg-base-200/40 p-3 text-xs space-y-2">
               <p>
-                Scope token actuel :{" "}
+                Scope TikTok :{" "}
                 <code class={/video\.publish/i.test(keys.tiktokScope || "") ? "text-success" : "text-warning"}>
                   {keys.tiktokScope?.trim() || "(vide — reconnecte)"}
                 </code>
               </p>
               {!/video\.publish/i.test(keys.tiktokScope || "") && (
                 <p class="text-warning">
-                  Il manque <code>video.publish</code>. Clique Reconnecter et accepte Direct Post.
-                  Sur developers.tiktok.com → ton app → <strong>Scopes</strong> : coche video.publish.
+                  Il manque <code>video.publish</code>. Clique Reconnecter TikTok et accepte Direct Post.
                 </p>
               )}
               {(() => {
                 const q = getTikTokQuota();
                 return (
                   <p class={q.blocked ? "text-error" : "text-base-content/70"}>
-                    Compteur envois TikTok (24 h) : {q.used}/{q.limit}
+                    Compteur TikTok (24 h) : {q.used}/{q.limit}
                     {q.blocked ? ` — reset ${formatQuotaReset(q.resetsAt)}` : ` — ${q.remaining} restant(s)`}
+                  </p>
+                );
+              })()}
+              <p class="border-t border-base-content/10 pt-2">
+                Scope YouTube :{" "}
+                <code class={/youtube\.upload/i.test(keys.youtubeScope || "") ? "text-success" : "text-warning"}>
+                  {keys.youtubeScope?.trim() || "(vide — connecte YouTube)"}
+                </code>
+              </p>
+              {(() => {
+                const q = getYouTubeQuota();
+                return (
+                  <p class={q.blocked ? "text-error" : "text-base-content/70"}>
+                    Compteur YouTube (jour PT) : {q.used}/{q.limit}
+                    {q.blocked
+                      ? ` — reset ${formatYouTubeQuotaReset(q.resetsAt)}`
+                      : ` — ${q.remaining} restant(s)`}
                   </p>
                 );
               })()}
@@ -603,14 +763,27 @@ export default function SettingsPage() {
                   type="button"
                   class="btn btn-secondary gap-2"
                   onClick={handleReconnectTikTok}
-                  disabled={connectingTikTok}
+                  disabled={connectingTikTok || connectingYouTube}
                 >
                   {connectingTikTok ? (
                     <span class="loading loading-spinner loading-sm" />
                   ) : (
                     <Link2 size={16} />
                   )}
-                  Reconnecter
+                  Reconnecter TikTok
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary gap-2"
+                  onClick={handleReconnectYouTube}
+                  disabled={connectingTikTok || connectingYouTube}
+                >
+                  {connectingYouTube ? (
+                    <span class="loading loading-spinner loading-sm" />
+                  ) : (
+                    <Link2 size={16} />
+                  )}
+                  Connecter YouTube
                 </button>
                 <button
                   type="button"
@@ -618,7 +791,15 @@ export default function SettingsPage() {
                   onClick={handlePrepareTikTok}
                   disabled={connectingTikTok}
                 >
-                  Prévisualiser OAuth
+                  Prévisualiser TikTok
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm gap-2"
+                  onClick={handlePrepareYouTube}
+                  disabled={connectingYouTube}
+                >
+                  Prévisualiser YouTube
                 </button>
               </>
             )}
