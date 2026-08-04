@@ -17,9 +17,12 @@ export default defineConfig({
     assets: 'assets',
   },
 
-  // Derrière Coolify/Cloudflare : Origin https ≠ url interne http → 403 CSRF
+  // Derrière Coolify/Cloudflare : Origin (https public) ≠ Astro.url (http interne)
+  // → 403 "Cross-site POST form submissions are forbidden" même avec allowedDomains,
+  // si X-Forwarded-Proto/Host n’alignent pas l’origine. CSRF déjà mitigé par
+  // cookie session SameSite=lax.
   security: {
-    checkOrigin: true,
+    checkOrigin: false,
     allowedDomains: [
       { hostname: 'sonozz.briseteia.me', protocol: 'https' },
       { hostname: 'localhost', protocol: 'http' },
