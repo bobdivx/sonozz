@@ -1,5 +1,6 @@
 import { json, error, readBody } from "../../server/http.js";
 import { getUserKeys, saveUserKeys } from "../../server/db.js";
+import { applyRecordLabelToAllArtists } from "../../server/artists.js";
 
 export const prerender = false;
 
@@ -24,7 +25,18 @@ export async function POST(context) {
       return error("Body { keys } requis", 400);
     }
     const result = await saveUserKeys(keys);
-    return json({ ok: true, ...result, source: "turso" });
+
+    let labelSync = null;
+    const label = String(keys.distrokidLabel || "").trim();
+    if (label) {
+      try {
+        labelSync = await applyRecordLabelToAllArtists(label);
+      } catch (e) {
+        labelSync = { error: e.message || "Sync label artistes KO" };
+      }
+    }
+
+    return json({ ok: true, ...result, source: "turso", labelSync });
   } catch (e) {
     return error(e.message || "Écriture clés Turso impossible", 500);
   }

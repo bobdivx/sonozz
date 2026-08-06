@@ -10,6 +10,7 @@ import {
   ImagePlus,
   RefreshCw,
 } from "lucide-preact";
+import { loadKeys } from "../../lib/keys.js";
 
 function canReuseOnceRelease(distrokid) {
   const id = String(distrokid?.releaseId || "").trim();
@@ -72,6 +73,12 @@ export default function DistroKidStep({
   const isOnce = distrokid?.provider === "once";
   const canReuse = canReuseOnceRelease(distrokid);
   const [artBroken, setArtBroken] = useState(false);
+  const globalLabel = String(loadKeys()?.distrokidLabel || "").trim();
+  const submittedLabel = String(form?.recordLabel || "").trim();
+  const labelOutOfDate =
+    Boolean(globalLabel) &&
+    Boolean(submittedLabel) &&
+    globalLabel.toLowerCase() !== submittedLabel.toLowerCase();
 
   const rawEphemeral =
     [cover?.imageUrl, artist?.imageUrl, distrokid?.assets?.coverUrl].find((u) =>
@@ -255,6 +262,35 @@ export default function DistroKidStep({
           </div>
 
           {distrokid.warning && <p class="text-sm text-warning">{distrokid.warning}</p>}
+
+          {labelOutOfDate && (
+            <div class="border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
+              <p>
+                Label Paramètres : <span class="font-medium text-base-content">{globalLabel}</span> — cette
+                release a encore <span class="font-medium text-base-content">{submittedLabel}</span>.
+              </p>
+              <p class="mt-1 text-xs text-base-content/60">
+                {canReuse && onReuse
+                  ? "Clique « Republier la même release » pour forcer le nouveau label sur ONCE (sans nouveau crédit si même id)."
+                  : "Les releases déjà live sur les stores ne se mettent pas à jour automatiquement — le label s’appliquera aux prochaines soumissions."}
+              </p>
+              {canReuse && onReuse && (
+                <button
+                  type="button"
+                  class="btn btn-warning btn-sm mt-2 gap-1"
+                  disabled={loading}
+                  onClick={onReuse}
+                >
+                  {loading ? (
+                    <span class="loading loading-spinner loading-sm" />
+                  ) : (
+                    <RefreshCw size={14} />
+                  )}
+                  Republier avec le label actuel
+                </button>
+              )}
+            </div>
+          )}
 
           <ul class="space-y-2">
             {checklist.map((item) => (

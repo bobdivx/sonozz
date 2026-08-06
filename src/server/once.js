@@ -520,7 +520,11 @@ export async function submitOnceRelease(
   const title = (track?.title || lyrics?.title || "Untitled").trim();
   const { genre, sub_genre } = mapGenre(artist?.genre || track?.style || "");
   const year = String(new Date().getFullYear());
-  const label = keys?.distrokidLabel?.trim() || `${artistName}`;
+  // Label global (Paramètres) prioritaire — sinon label déjà forcé sur le profil artiste.
+  const label =
+    keys?.distrokidLabel?.trim() ||
+    artist?.recordLabel?.trim() ||
+    `${artistName}`;
   const days = Number(keys?.distrokidReleaseDays) || 14;
   const explicit = detectExplicit(lyrics?.text || "");
   const containsAi = isAiGeneratedTrack(track);

@@ -681,3 +681,40 @@ export async function linkProjectToArtist(projectId, artist) {
   });
   return upserted;
 }
+
+/**
+ * Force le label / copyright global sur tous les profils artistes existants.
+ * Utilisé quand Paramètres → Label / copyright est enregistré.
+ */
+export async function applyRecordLabelToAllArtists(label) {
+  const value = String(label || "").trim().slice(0, 120);
+  if (!value) {
+    return { updated: 0, label: null };
+  }
+
+  await ensureArtistSchema();
+  const db = getDb();
+  const res = await db.execute({
+    sql: `SELECT id, slug, name, profile_json FROM artists`,
+  });
+  const now = new Date().toISOString();
+  let updated = 0;
+
+  for (const row of res.rows) {
+    let profile = {};
+    try {
+      profile = row.profile_json ? JSON.parse(row.profile_json) : {};
+    } catch {
+      profile = {};
+    }
+    if (profile.recordLabel === value) continue;
+    const merged = { ...profile, recordLabel: value, slug: row.slug };
+    await db.execute({
+      sql: `UPDATE artists SET profile_json = ?, updated_at = ? WHERE id = ?`,
+      args: [JSON.stringify(stripHeavyProfile(merged)), now, row.id],
+    });
+    updated += 1;
+  }
+
+  return { updated, label: value, total: res.rows.length };
+}

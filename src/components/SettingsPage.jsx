@@ -209,17 +209,21 @@ export default function SettingsPage() {
     setSaving(true);
     setMessage("");
     try {
-      const next = await saveKeysAsync(keys);
+      const { keys: next, labelSync } = await saveKeysAsync(keys);
       setKeys(next);
-      setMessage(
-        keysReady(next)
-          ? next.llmProvider === "ollama"
-            ? "Clés enregistrées sur Turso — texte via Ollama."
-            : "Clés enregistrées sur Turso."
-          : next.llmProvider === "ollama"
-            ? "Enregistré sur Turso — modèle Ollama encore requis."
-            : "Enregistré sur Turso — Gemini est encore requis pour l’auto.",
-      );
+      let msg = keysReady(next)
+        ? next.llmProvider === "ollama"
+          ? "Clés enregistrées sur Turso — texte via Ollama."
+          : "Clés enregistrées sur Turso."
+        : next.llmProvider === "ollama"
+          ? "Enregistré sur Turso — modèle Ollama encore requis."
+          : "Enregistré sur Turso — Gemini est encore requis pour l’auto.";
+      if (labelSync?.updated != null && next.distrokidLabel?.trim()) {
+        msg += ` Label « ${labelSync.label} » forcé sur ${labelSync.updated}/${labelSync.total} artiste(s).`;
+      } else if (labelSync?.error) {
+        msg += ` Sync label artistes : ${labelSync.error}`;
+      }
+      setMessage(msg);
     } catch (e) {
       setMessage(e.message || "Échec sauvegarde Turso");
     } finally {

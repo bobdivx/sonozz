@@ -180,8 +180,8 @@ export const KEY_FIELDS = [
       {
         id: "distrokidLabel",
         label: "Label / copyright",
-        placeholder: "Par défaut = nom artiste",
-        help: "Affiché comme record label sur les stores",
+        placeholder: "Ex. ton nom / ton imprint",
+        help: "Record label + © ℗ sur TOUTES les releases ONCE. À l’enregistrement, forcé aussi sur tous les profils artistes existants. Releases déjà soumises : republier (même release) pour mettre à jour le draft ONCE.",
         required: false,
         inputType: "text",
       },
@@ -462,11 +462,11 @@ export function saveKeys(keys) {
   return next;
 }
 
-/** Cache local + await Turso. */
+/** Cache local + await Turso. Retourne { keys, labelSync? }. */
 export async function saveKeysAsync(keys) {
   const next = writeLocalKeys(keys);
-  await pushKeysToTurso(next);
-  return next;
+  const data = await pushKeysToTurso(next);
+  return { keys: next, labelSync: data?.labelSync || null };
 }
 
 let hydratePromise = null;

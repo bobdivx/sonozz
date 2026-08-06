@@ -66,6 +66,9 @@ export default function ArtistsIndex() {
                   <p class="text-xs text-base-content/50">
                     /{a.slug}
                     {a.profile?.mode === "self" ? " · profil réel" : ""}
+                    {a.profile?.recordLabel
+                      ? ` · label ${a.profile.recordLabel}`
+                      : ""}
                   </p>
                 </div>
               </a>

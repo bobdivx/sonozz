@@ -810,6 +810,11 @@ JSON strict: { "name": string, "aka": string }
     imageProvider: portrait.provider,
     localAsset: false,
     portraitPrompt,
+    // Label imprint : réglage global, sinon (mode moi) le nom de scène
+    recordLabel:
+      keys?.distrokidLabel?.trim() ||
+      (isSelf ? forcedName || data.name : undefined) ||
+      undefined,
     visualIdentity: {
       ...(data.visualIdentity || {}),
       genderLock: lock.en,
