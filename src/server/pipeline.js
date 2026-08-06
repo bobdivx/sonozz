@@ -4,6 +4,7 @@ import { prepareSpotifyRelease, getSpotifyAccess, spotifySearchContext } from ".
 import {
   checkArtistNameAvailability,
   resolveStyleReference,
+  resolveStyleReferences,
 } from "./styleReference.js";
 import { submitOnceRelease } from "./once.js";
 import { generateMusicWithReplicate } from "./replicate.js";
@@ -11,7 +12,7 @@ import {
   generateMusicWithSongGeneration,
   isSongGenMusicProvider,
 } from "./songGeneration.js";
-import { isUsableRasterImage } from "./imagePersist.js";
+import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
 import { slugify, getArtistBySlug } from "./artists.js";
 import { llmJson, requireTextLlm } from "./llm.js";
 
@@ -285,30 +286,111 @@ function languagePromptName(code) {
 }
 
 /** Verrou visuel sexe / présentation — évite portrait femme + bio « chanteur ». */
-function genderVisualLock(gender) {
+function genderVisualLock(gender, age) {
   const g = String(gender || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{M}/gu, "");
+  const ageNum = Number(age);
+  const ageBit =
+    Number.isFinite(ageNum) && ageNum >= 13 && ageNum <= 99
+      ? `${Math.round(ageNum)}-year-old `
+      : "";
   if (/^(female|woman|femme|f)$/.test(g)) {
     return {
       code: "female",
-      en: "adult woman, female singer, clearly feminine face and presentation",
+      en: `${ageBit}adult woman, female singer, clearly feminine face and presentation`.trim(),
       voiceHint: "female vocals",
     };
   }
   if (/^(nonbinary|non-binary|nonbinaire|nb|androgyne)$/.test(g)) {
     return {
       code: "nonbinary",
-      en: "androgynous adult musician, non-binary presentation, same look in every image",
+      en: `${ageBit}androgynous adult musician, non-binary presentation, same look in every image`.trim(),
       voiceHint: "androgynous vocals",
     };
   }
   return {
     code: "male",
-    en: "adult man, male singer, clearly masculine face and presentation",
+    en: `${ageBit}adult man, male singer, clearly masculine face and presentation`.trim(),
     voiceHint: "male vocals",
   };
+}
+
+function normalizeAge(age) {
+  const n = Number(age);
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.round(n);
+  if (rounded < 13 || rounded > 99) return null;
+  return rounded;
+}
+
+function normalizeSelfPhotos(photos = []) {
+  const list = Array.isArray(photos) ? photos : [];
+  return list
+    .map((p) => (typeof p === "string" ? p.trim() : ""))
+    .filter((p) => /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(p))
+    .slice(0, 6);
+}
+
+function serializeStyleLock(styleLock) {
+  if (!styleLock) return undefined;
+  return {
+    query: styleLock.query,
+    matchedName: styleLock.matchedName,
+    source: styleLock.source,
+    sourceId: styleLock.sourceId,
+    confidence: styleLock.confidence,
+    url: styleLock.url,
+    image: styleLock.image,
+    genres: styleLock.genres,
+    genreSummary: styleLock.genreSummary,
+    mood: styleLock.mood,
+    energy: styleLock.energy,
+    production: styleLock.production,
+    vocalStyle: styleLock.vocalStyle,
+    sonicKeywords: styleLock.sonicKeywords,
+    writingStyle: styleLock.writingStyle,
+    doNot: styleLock.doNot,
+    musicPrompt: styleLock.musicPrompt,
+    topTracks: styleLock.topTracks,
+    refs: Array.isArray(styleLock.refs)
+      ? styleLock.refs.map((r) => ({
+          matchedName: r.matchedName,
+          source: r.source,
+          sourceId: r.sourceId,
+          image: r.image,
+          genres: r.genres,
+        }))
+      : undefined,
+  };
+}
+
+async function resolveArtistStyleLock({
+  keys,
+  styleArtist,
+  styleArtistPick,
+  styleArtistPicks,
+}) {
+  const picks = Array.isArray(styleArtistPicks)
+    ? styleArtistPicks.filter((p) => p?.source && p?.id).slice(0, 5)
+    : [];
+  if (picks.length > 1) {
+    return resolveStyleReferences(keys, picks);
+  }
+  if (picks.length === 1) {
+    return resolveStyleReference(keys, picks[0]);
+  }
+  if (styleArtistPick?.source && styleArtistPick?.id) {
+    return resolveStyleReference(keys, styleArtistPick);
+  }
+  const styleArtistHint = String(styleArtist || "").trim().slice(0, 120);
+  if (styleArtistHint) {
+    throw new Error(
+      "Valide d'abord un artiste de référence dans les résultats de recherche (Spotify / Deezer).",
+    );
+  }
+  return null;
 }
 
 function withGenderInPrompt(prompt, genderEn) {
@@ -343,9 +425,17 @@ export async function runArtist({
   language,
   styleArtist,
   styleArtistPick,
+  styleArtistPicks,
   allowTakenName = false,
+  mode = "fiction",
+  age,
+  gender: forcedGender,
+  photos = [],
+  city,
+  legalName,
 }) {
   requireTextLlm(keys);
+  const isSelf = String(mode || "").toLowerCase() === "self";
   const lang = resolveLanguage(language);
   const langName = languagePromptName(lang);
   const userStyles = Array.isArray(genres)
@@ -357,10 +447,24 @@ export async function runArtist({
   const forcedName = String(name || "")
     .trim()
     .slice(0, 80);
-  const styleArtistHint = String(styleArtist || styleArtistPick?.name || "")
-    .trim()
-    .slice(0, 120);
   const forceTaken = Boolean(allowTakenName);
+  const selfAge = normalizeAge(age);
+  const selfPhotos = normalizeSelfPhotos(photos);
+
+  if (isSelf) {
+    if (!forcedName) {
+      throw new Error("Indique ton nom de scène.");
+    }
+    if (!forcedGender) {
+      throw new Error("Indique ton sexe / présentation (homme, femme ou non-binaire).");
+    }
+    if (selfAge == null) {
+      throw new Error("Indique un âge valide (13–99).");
+    }
+    if (!selfPhotos.length) {
+      throw new Error("Ajoute au moins une photo de toi.");
+    }
+  }
 
   if (forcedName && !forceTaken) {
     const availability = await checkArtistNameAvailability(keys, forcedName);
@@ -372,15 +476,27 @@ export async function runArtist({
   }
 
   /** @type {Awaited<ReturnType<typeof resolveStyleReference>> | null} */
-  let styleLock = null;
-  if (styleArtistPick?.source && styleArtistPick?.id) {
-    styleLock = await resolveStyleReference(keys, styleArtistPick);
-  } else if (styleArtistHint) {
-    // Sans validation UI : refuse pour forcer le choix explicite
+  let styleLock = await resolveArtistStyleLock({
+    keys,
+    styleArtist,
+    styleArtistPick,
+    styleArtistPicks,
+  });
+
+  if (isSelf && !styleLock) {
     throw new Error(
-      "Valide d'abord un artiste de référence dans les résultats de recherche (Spotify / Deezer).",
+      "Choisis et valide au moins un artiste que tu aimes — le son des morceaux sera calé dessus.",
     );
   }
+
+  const styleArtistHint = String(
+    styleArtist ||
+      styleArtistPick?.name ||
+      (Array.isArray(styleArtistPicks) && styleArtistPicks[0]?.name) ||
+      "",
+  )
+    .trim()
+    .slice(0, 120);
 
   // Styles finaux : référence artiste = vérité ; styles user en complément optionnel
   const finalGenres = styleLock
@@ -397,9 +513,82 @@ export async function runArtist({
       : `fusion cohérente de: ${finalGenres.join(" + ")}`
     : "";
 
+  const selfGenderLock = isSelf ? genderVisualLock(forcedGender, selfAge) : null;
+  const favoriteNames = Array.isArray(styleLock?.refs)
+    ? styleLock.refs.map((r) => r.matchedName).filter(Boolean)
+    : styleLock?.matchedName
+      ? [styleLock.matchedName]
+      : [];
+
   const data = await llmJson(
     keys,
-    `Crée un profil d'artiste musical fictionnel mais ultra-réaliste,
+    isSelf
+      ? `Tu construis le profil artiste d'une PERSONNE RÉELLE qui se recrée comme artiste sur SONOZZ.
+Ce n'est PAS un personnage fictionnel inventé : respecte l'identité fournie.
+
+NOM DE SCÈNE OBLIGATOIRE (copie exacte) : "${forcedName}"
+"name" et "aka" = exactement "${forcedName}".
+${legalName?.trim() ? `Nom légal fourni: "${String(legalName).trim().slice(0, 120)}"` : `legalName = prénom + nom réalistes cohérents avec le sexe (pour la distribution).`}
+Âge OBLIGATOIRE: ${selfAge} ans — mentionne-le dans bio / look si pertinent.
+Sexe / présentation OBLIGATOIRE: "${selfGenderLock.code}" — voice, look, wardrobe et bio DOIVENT coller.
+${city?.trim() ? `Ville / base: "${String(city).trim().slice(0, 80)}"` : "Ville: propose une ville crédible si absente."}
+
+═══ ARTISTES AIMÉS (LOCK STYLE — les morceaux doivent SONNER comme ça) ═══
+Favoris: ${favoriteNames.join(" · ") || styleLock?.matchedName}
+${
+  styleLock
+    ? `Match: "${styleLock.matchedName}" (${styleLock.source})
+PARAMÈTRES VERROUILLÉS :
+- genreSummary: ${styleLock.genreSummary}
+- genres: ${JSON.stringify(styleLock.genres)}
+- mood: ${styleLock.mood}
+- energy: ${styleLock.energy}
+- production: ${styleLock.production}
+- vocalStyle: ${styleLock.vocalStyle}
+- sonicKeywords: ${JSON.stringify(styleLock.sonicKeywords)}
+- writingStyle: ${styleLock.writingStyle}
+- influences: ${JSON.stringify(styleLock.influences)}
+- INTERDIT: ${JSON.stringify(styleLock.doNot)}`
+    : ""
+}
+═══════════════════════════════════════════════════════════════════════════
+
+Langue des chansons: ${langName} (code ${lang}).
+Indices perso / univers: ${bioHint || "aucun"}
+Tendances (secondaires): ${promptJson({})}
+
+Le profil doit parler d'ELLE/LUI à la 3e personne, comme un dossier presse réaliste.
+Ne change PAS le sexe ni l'âge. Ne invente PAS un autre visage.
+
+JSON strict:
+{
+  "name": "${forcedName}",
+  "aka": "${forcedName}",
+  "legalName": string,
+  "gender": "${selfGenderLock.code}",
+  "age": ${selfAge},
+  "genre": string,
+  "genres": [string],
+  "language": "${lang}",
+  "mood": string,
+  "city": string,
+  "bio": string,
+  "voice": string,
+  "palette": ["#hex","#hex","#hex","#hex"],
+  "influences": [string, string, string],
+  "targetPersona": string,
+  "visualIdentity": {
+    "look": string,
+    "wardrobe": string,
+    "photographyStyle": string,
+    "logoConcept": string,
+    "portraitPrompt": string
+  }
+}
+"genre" DOIT être: "${finalGenre}". "genres" DOIT être: ${JSON.stringify(finalGenres)}.
+"mood" proche de: "${styleLock?.mood || ""}". "voice" colle à: "${styleLock?.vocalStyle || selfGenderLock.voiceHint}".
+portraitPrompt = anglais, décrit la personne réelle (~${selfAge} ans, ${selfGenderLock.en}), pour retouche éventuelle — square photo, no text.`
+      : `Crée un profil d'artiste musical fictionnel mais ultra-réaliste,
 avec une identité visuelle cohérente (look, style photo, wardrobe).
 
 ${
@@ -446,7 +635,7 @@ Indices personnalité / univers (PAS le style musical): ${bioHint || "aucun"}
 Tendances (contexte marché${styleLock ? " — SECONDARY, ne pas écraser le lock" : ""}): ${promptJson(styleLock ? {} : trends || {})}
 
 IMPORTANT — SEXE / PRÉSENTATION (à ne PAS confondre avec le style musical « genre ») :
-- Choisis UN seul gender: "male" | "female" | "nonbinary".
+- Choisis UN seul gender: "male" | "female" | "nonbinary"${forcedGender ? ` — FORCÉ: "${genderVisualLock(forcedGender, selfAge).code}"` : ""}.
 - Tout le profil DOIT coller : name / legalName / aka / bio / voice / look / wardrobe / portraitPrompt.
 - Si gender=male → chanteur homme, voix masculine, portrait d'un homme adulte.
 - Si gender=female → chanteuse femme, voix féminine, portrait d'une femme adulte.
@@ -488,7 +677,11 @@ legalName = prénom + nom de famille réalistes cohérents avec gender (obligato
 portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." ou "adult woman..." ou androgyne), puis âge, traits, coiffure, tenue, lumière, décor${styleLock?.visualVibe ? ` ; vibe visuelle: ${styleLock.visualVibe}` : ""} ; square photo ; no text in image.`,
   );
 
-  const lock = genderVisualLock(data.gender);
+  const lock = genderVisualLock(
+    isSelf ? forcedGender || data.gender : forcedGender || data.gender,
+    isSelf ? selfAge : normalizeAge(data.age) || selfAge,
+  );
+  const resolvedAge = isSelf ? selfAge : normalizeAge(data.age) || selfAge;
 
   if (forcedName) {
     data.name = forcedName;
@@ -524,6 +717,13 @@ JSON strict: { "name": string, "aka": string }
     }
   }
 
+  if (legalName?.trim()) {
+    data.legalName = String(legalName).trim().slice(0, 120);
+  }
+  if (city?.trim()) {
+    data.city = String(city).trim().slice(0, 80);
+  }
+
   // Force paramètres depuis le style lock (la vérité catalogue+LLM)
   const lockedMood = styleLock?.mood || data.mood;
   const lockedVoice = styleLock?.vocalStyle || data.voice || lock.voiceHint;
@@ -545,48 +745,66 @@ JSON strict: { "name": string, "aka": string }
     `Cinematic portrait of music artist ${data.name}, ${resolvedGenre} vibe, ${lockedMood} mood, wardrobe ${data.visualIdentity?.wardrobe || "contemporary streetwear"}, ${data.visualIdentity?.photographyStyle || "film grain night portrait"}, square composition, photorealistic`;
   const portraitPrompt = withGenderInPrompt(rawPortrait, lock.en);
 
-  const portrait = await generateVisual({
-    keys,
-    prompt: portraitPrompt,
-    kind: "portrait",
-  });
+  /** @type {{ imageUrl: string, warning?: string, provider: string }} */
+  let portrait;
+  /** @type {string[]} */
+  let persistedPhotos = [];
+
+  if (isSelf && selfPhotos.length) {
+    persistedPhotos = [];
+    for (const photo of selfPhotos) {
+      try {
+        const persisted = await materializeImageForStorage(photo);
+        if (persisted && isUsableRasterImage(persisted)) {
+          persistedPhotos.push(persisted);
+        }
+      } catch {
+        /* skip bad photo */
+      }
+    }
+    if (!persistedPhotos.length) {
+      throw new Error("Impossible de lire tes photos — réessaie avec des JPEG/PNG plus légers.");
+    }
+    portrait = {
+      imageUrl: persistedPhotos[0],
+      provider: "user-upload",
+      warning: undefined,
+    };
+  } else {
+    portrait = await generateVisual({
+      keys,
+      prompt: portraitPrompt,
+      kind: "portrait",
+    });
+  }
+
+  const styleArtistNames = favoriteNames.length
+    ? favoriteNames
+    : styleLock?.matchedName
+      ? [styleLock.matchedName]
+      : styleArtistHint
+        ? [styleArtistHint]
+        : [];
 
   return {
     ...data,
     name: forcedName || data.name,
     aka: forcedName || data.aka,
     gender: lock.code,
+    age: resolvedAge || undefined,
+    mode: isSelf ? "self" : "fiction",
     genre: resolvedGenre,
     genres: resolvedGenres,
     mood: lockedMood,
     language: lang,
-    styleArtist: styleLock?.matchedName || styleArtistHint || undefined,
-    styleLock: styleLock
-      ? {
-          query: styleLock.query,
-          matchedName: styleLock.matchedName,
-          source: styleLock.source,
-          sourceId: styleLock.sourceId,
-          confidence: styleLock.confidence,
-          url: styleLock.url,
-          image: styleLock.image,
-          genres: styleLock.genres,
-          genreSummary: styleLock.genreSummary,
-          mood: styleLock.mood,
-          energy: styleLock.energy,
-          production: styleLock.production,
-          vocalStyle: styleLock.vocalStyle,
-          sonicKeywords: styleLock.sonicKeywords,
-          writingStyle: styleLock.writingStyle,
-          doNot: styleLock.doNot,
-          musicPrompt: styleLock.musicPrompt,
-          topTracks: styleLock.topTracks,
-        }
-      : undefined,
+    styleArtist: styleArtistNames[0] || undefined,
+    styleArtists: styleArtistNames.length ? styleArtistNames : undefined,
+    styleLock: serializeStyleLock(styleLock),
     influences: lockedInfluences,
     voice: lockedVoice,
     slug: slugify((forcedName || data.aka || data.name) || "artiste"),
     imageUrl: portrait.imageUrl,
+    photos: persistedPhotos.length > 1 ? persistedPhotos : undefined,
     imageFallback: false,
     imageWarning: portrait.warning,
     imageProvider: portrait.provider,
@@ -596,6 +814,7 @@ JSON strict: { "name": string, "aka": string }
       ...(data.visualIdentity || {}),
       genderLock: lock.en,
       ...(styleLock?.visualVibe ? { vibeFromRef: styleLock.visualVibe } : {}),
+      ...(isSelf ? { fromUserPhotos: true } : {}),
     },
   };
 }
@@ -610,6 +829,9 @@ export async function runLyrics({ keys, theme, artist, trends, language }) {
     `Écris des paroles de chanson originales en ${langName} pour cet artiste.
 Artiste: ${promptJson({
   name: artist?.name,
+  mode: artist?.mode,
+  age: artist?.age,
+  gender: artist?.gender,
   genre: artist?.genre,
   genres: artist?.genres,
   mood: artist?.mood,
@@ -617,20 +839,23 @@ Artiste: ${promptJson({
   bio: artist?.bio,
   influences: artist?.influences,
   styleArtist: artist?.styleArtist,
+  styleArtists: artist?.styleArtists,
 })}
 Style musical VERROUILLÉ: ${artist?.genre || "pop contemporain"}
 ${
   lock
-    ? `Lock référence "${lock.matchedName}":
+    ? `Lock référence "${lock.matchedName}"${Array.isArray(artist?.styleArtists) && artist.styleArtists.length > 1 ? ` (blend: ${artist.styleArtists.join(" × ")})` : ""}:
 - production: ${lock.production}
 - writingStyle: ${lock.writingStyle}
 - mood/energy: ${lock.mood} / ${lock.energy}
 - sonicKeywords: ${(lock.sonicKeywords || []).join(", ")}
 - doNot (styles/écritures interdits): ${(lock.doNot || []).join(", ")}
 Écris dans EXACTEMENT cette lane (hooks, rythme des phrases, vibe) — sans pasticher les paroles de "${lock.matchedName}".`
-    : artist?.styleArtist
-      ? `Boussole style (sans pastiche) : ${artist.styleArtist}`
-      : ""
+    : artist?.styleArtists?.length
+      ? `Boussole style (sans pastiche) : ${artist.styleArtists.join(" · ")}`
+      : artist?.styleArtist
+        ? `Boussole style (sans pastiche) : ${artist.styleArtist}`
+        : ""
 }
 Langue obligatoire des paroles: ${langName} (code ${lang}) — aucune autre langue dans le chant.
 Thème/titre: ${theme || "inspire-toi des tendances"}
@@ -653,7 +878,7 @@ Le champ text doit contenir les tags MiniMax en anglais: [Verse], [Chorus], [Ver
 export async function runTrack({ keys, lyrics, artist }) {
   const lang = resolveLanguage(lyrics?.language, artist);
   const langName = languagePromptName(lang);
-  const genderLock = genderVisualLock(artist?.gender);
+  const genderLock = genderVisualLock(artist?.gender, artist?.age);
   const styleLock = artist?.styleLock;
   const prompt = (
     styleLock?.musicPrompt
@@ -666,7 +891,11 @@ export async function runTrack({ keys, lyrics, artist }) {
         ]
       : [
           `${artist?.genre || "pop"}`,
-          artist?.styleArtist ? `in the sonic lane of ${artist.styleArtist} (original, not a cover)` : "",
+          artist?.styleArtists?.length
+            ? `in the sonic lane of ${artist.styleArtists.join(" and ")} (original, not a cover)`
+            : artist?.styleArtist
+              ? `in the sonic lane of ${artist.styleArtist} (original, not a cover)`
+              : "",
           `${artist?.mood || "emotional"} mood`,
           `${artist?.voice || genderLock.voiceHint}`,
           genderLock.voiceHint,
@@ -759,7 +988,7 @@ export async function runCover({ keys, prompt, artist, track }) {
   }
 
   const genderLock =
-    artist?.visualIdentity?.genderLock || genderVisualLock(artist?.gender).en;
+    artist?.visualIdentity?.genderLock || genderVisualLock(artist?.gender, artist?.age).en;
   const visual =
     prompt?.trim() ||
     [
@@ -909,7 +1138,14 @@ export async function runFullPipeline({
   language,
   styleArtist,
   styleArtistPick,
+  styleArtistPicks,
   allowTakenName = false,
+  mode,
+  age,
+  gender,
+  photos,
+  city,
+  legalName,
   onProgress,
 }) {
   const log = [];
@@ -938,7 +1174,14 @@ export async function runFullPipeline({
     language,
     styleArtist,
     styleArtistPick,
+    styleArtistPicks,
     allowTakenName,
+    mode,
+    age,
+    gender,
+    photos,
+    city,
+    legalName,
   });
 
   push("lyrics", "Écriture des paroles…");

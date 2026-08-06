@@ -10,26 +10,51 @@ function formatFans(n) {
   return `${v} fans`;
 }
 
+function pickKey(p) {
+  return `${p?.source || ""}:${p?.id || ""}`;
+}
+
 /**
- * Recherche Spotify/Deezer + validation obligatoire d'un candidat.
+ * Recherche Spotify/Deezer + validation d'un ou plusieurs candidats.
  * @param {{
  *   value?: string,
- *   pick?: { source: string, id: string, name: string, image?: string, genres?: string[], followers?: number, url?: string } | null,
+ *   pick?: object | null,
+ *   picks?: object[],
+ *   multiple?: boolean,
+ *   maxPicks?: number,
  *   disabled?: boolean,
  *   compact?: boolean,
+ *   label?: string,
+ *   hint?: string,
  *   onQueryChange?: (q: string) => void,
  *   onPickChange?: (pick: object | null) => void,
+ *   onPicksChange?: (picks: object[]) => void,
  * }} props
  */
 export default function StyleArtistPicker({
   value = "",
   pick = null,
+  picks = null,
+  multiple = false,
+  maxPicks = 5,
   disabled = false,
   compact = false,
+  label,
+  hint,
   onQueryChange,
   onPickChange,
+  onPicksChange,
 }) {
-  const [query, setQuery] = useState(value || pick?.name || "");
+  const selected = multiple
+    ? Array.isArray(picks)
+      ? picks
+      : pick
+        ? [pick]
+        : []
+    : [];
+  const single = multiple ? null : pick;
+
+  const [query, setQuery] = useState(value || single?.name || "");
   const [candidates, setCandidates] = useState([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState("");
@@ -38,8 +63,8 @@ export default function StyleArtistPicker({
   const lastQueryRef = useRef("");
 
   useEffect(() => {
-    if (pick?.name && !query) setQuery(pick.name);
-  }, [pick?.id]);
+    if (!multiple && single?.name && !query) setQuery(single.name);
+  }, [single?.id]);
 
   useEffect(() => {
     return () => {
@@ -50,7 +75,7 @@ export default function StyleArtistPicker({
   function updateQuery(next) {
     setQuery(next);
     onQueryChange?.(next);
-    if (pick) {
+    if (!multiple && single) {
       onPickChange?.(null);
     }
     setCandidates([]);
@@ -102,8 +127,26 @@ export default function StyleArtistPicker({
       popularity: c.popularity ?? null,
       url: c.url || null,
     };
-    setQuery(c.name);
-    onPickChange?.(next);
+
+    if (multiple) {
+      if (selected.some((p) => pickKey(p) === pickKey(next))) {
+        setCandidates([]);
+        setSearched(false);
+        setQuery("");
+        onQueryChange?.("");
+        return;
+      }
+      if (selected.length >= maxPicks) {
+        setError(`Maximum ${maxPicks} artistes favoris.`);
+        return;
+      }
+      onPicksChange?.([...selected, next]);
+      setQuery("");
+      onQueryChange?.("");
+    } else {
+      setQuery(c.name);
+      onPickChange?.(next);
+    }
     setCandidates([]);
     setSearched(false);
     setError("");
@@ -115,18 +158,31 @@ export default function StyleArtistPicker({
     setSearched(false);
   }
 
+  function removePick(target) {
+    onPicksChange?.(selected.filter((p) => pickKey(p) !== pickKey(target)));
+  }
+
+  const title =
+    label ||
+    (multiple ? "Artistes que tu aimes" : "Caler le son sur un artiste réel");
+  const help =
+    hint ||
+    (multiple
+      ? `Ajoute jusqu’à ${maxPicks} artistes — les morceaux seront calés sur leur son.`
+      : "Tape un nom, choisis le bon résultat (iTunes / Spotify / Deezer), puis valide.");
+
   return (
     <div class={`space-y-2 ${compact ? "" : "w-full"}`}>
       <span class={`label-text mb-1 block ${compact ? "text-xs" : "text-sm"} text-base-content/55`}>
-        Caler le son sur un artiste réel
+        {title}
       </span>
       <div class="flex gap-2">
         <input
           class="input input-bordered min-w-0 flex-1 bg-base-200"
           type="text"
-          placeholder="Ex. Jonah Dean, Aya Nakamura…"
+          placeholder={multiple ? "Ex. Aya Nakamura, Damso…" : "Ex. Jonah Dean, Aya Nakamura…"}
           value={query}
-          disabled={disabled || searching}
+          disabled={disabled || searching || (multiple && selected.length >= maxPicks)}
           onInput={(e) => updateQuery(e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -154,14 +210,48 @@ export default function StyleArtistPicker({
         </button>
       </div>
 
-      {pick ? (
+      {multiple && selected.length > 0 && (
+        <ul class="space-y-1.5">
+          {selected.map((p) => (
+            <li
+              key={pickKey(p)}
+              class="flex items-center gap-3 border border-primary/30 bg-primary/10 p-2"
+            >
+              {p.image ? (
+                <img src={p.image} alt="" class="h-10 w-10 shrink-0 object-cover" />
+              ) : (
+                <div class="flex h-10 w-10 shrink-0 items-center justify-center bg-base-300 text-xs">
+                  ?
+                </div>
+              )}
+              <div class="min-w-0 flex-1">
+                <p class="flex items-center gap-1.5 truncate text-sm font-medium text-primary">
+                  <Check size={14} />
+                  {p.name}
+                </p>
+                <p class="truncate text-[11px] text-base-content/55">
+                  {p.source}
+                  {p.genres?.length ? ` · ${p.genres.slice(0, 2).join(", ")}` : ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs"
+                disabled={disabled}
+                onClick={() => removePick(p)}
+                title="Retirer"
+              >
+                <X size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!multiple && single ? (
         <div class="flex items-center gap-3 border border-primary/30 bg-primary/10 p-2.5">
-          {pick.image ? (
-            <img
-              src={pick.image}
-              alt=""
-              class="h-12 w-12 shrink-0 object-cover"
-            />
+          {single.image ? (
+            <img src={single.image} alt="" class="h-12 w-12 shrink-0 object-cover" />
           ) : (
             <div class="flex h-12 w-12 shrink-0 items-center justify-center bg-base-300 text-xs">
               ?
@@ -170,12 +260,12 @@ export default function StyleArtistPicker({
           <div class="min-w-0 flex-1">
             <p class="flex items-center gap-1.5 truncate text-sm font-medium text-primary">
               <Check size={14} />
-              {pick.name}
+              {single.name}
             </p>
             <p class="truncate text-[11px] text-base-content/55">
-              Validé · {pick.source}
-              {pick.genres?.length ? ` · ${pick.genres.slice(0, 2).join(", ")}` : ""}
-              {formatFans(pick.followers) ? ` · ${formatFans(pick.followers)}` : ""}
+              Validé · {single.source}
+              {single.genres?.length ? ` · ${single.genres.slice(0, 2).join(", ")}` : ""}
+              {formatFans(single.followers) ? ` · ${formatFans(single.followers)}` : ""}
             </p>
           </div>
           <button
@@ -189,14 +279,16 @@ export default function StyleArtistPicker({
           </button>
         </div>
       ) : (
-        <p class="text-[11px] text-base-content/45">
-          Tape un nom, choisis le bon résultat (iTunes / Spotify / Deezer), puis valide.
-        </p>
+        !multiple && (
+          <p class="text-[11px] text-base-content/45">{help}</p>
+        )
       )}
+
+      {multiple && <p class="text-[11px] text-base-content/45">{help}</p>}
 
       {error && <p class="text-xs text-warning">{error}</p>}
 
-      {!pick && candidates.length > 0 && (
+      {candidates.length > 0 && (
         <ul class="max-h-64 space-y-1 overflow-y-auto border border-base-content/10 bg-base-200/80 p-1">
           {candidates.map((c) => (
             <li key={`${c.source}-${c.id}`}>
@@ -221,14 +313,16 @@ export default function StyleArtistPicker({
                     {formatFans(c.followers) ? ` · ${formatFans(c.followers)}` : ""}
                   </p>
                 </div>
-                <span class="btn btn-primary btn-xs shrink-0">Choisir</span>
+                <span class="btn btn-primary btn-xs shrink-0">
+                  {multiple ? "Ajouter" : "Choisir"}
+                </span>
               </button>
             </li>
           ))}
         </ul>
       )}
 
-      {!pick && searched && !searching && !candidates.length && !error && (
+      {searched && !searching && !candidates.length && !error && (
         <p class="text-xs text-base-content/50">Aucun résultat.</p>
       )}
     </div>

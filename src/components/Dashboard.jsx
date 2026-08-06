@@ -132,6 +132,7 @@ export default function Dashboard() {
   const [saveMsg, setSaveMsg] = useState("");
   /** Accueil studio `/` uniquement — masqué quand un projet est ouvert via ?project= */
   const [showHomePipeline, setShowHomePipeline] = useState(true);
+  const [artistMode, setArtistMode] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,6 +160,14 @@ export default function Dashboard() {
     const params = new URLSearchParams(window.location.search);
     const pid = params.get("project");
     const stepParam = Number(params.get("step"));
+    const modeParam = params.get("mode");
+    if (modeParam === "self" || modeParam === "fiction") {
+      setArtistMode(modeParam);
+    }
+    if (stepParam >= 1 && stepParam <= STEPS.length && !pid) {
+      setShowHomePipeline(false);
+      setStep(stepParam);
+    }
     if (!pid) return;
     setShowHomePipeline(false);
     (async () => {
@@ -864,6 +873,7 @@ export default function Dashboard() {
             artist={project.artist}
             trends={project.trends}
             loading={loading}
+            initialMode={artistMode || undefined}
             onGenerate={(payload) =>
               runStep(() => api.artist({ ...payload, trends: project.trends }), "artist", 2)
             }

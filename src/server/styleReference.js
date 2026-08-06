@@ -896,3 +896,122 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
       .join(", "),
   };
 }
+
+function uniqStrings(items = [], max = 12) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of items) {
+    const v = String(raw || "").trim();
+    if (!v) continue;
+    const key = norm(v);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
+ * Fusionne plusieurs locks style (artistes favoris) en un seul verrou sonore.
+ */
+export function mergeStyleLocks(locks = []) {
+  const list = (Array.isArray(locks) ? locks : []).filter(Boolean);
+  if (!list.length) return null;
+  if (list.length === 1) return { ...list[0], refs: [list[0]] };
+
+  const names = uniqStrings(list.map((l) => l.matchedName), 6);
+  const genres = uniqStrings(list.flatMap((l) => l.genres || []), 6);
+  const genreSummary = genres.join(" × ") || list[0].genreSummary;
+  const sonicKeywords = uniqStrings(list.flatMap((l) => l.sonicKeywords || []), 14);
+  const influences = uniqStrings(
+    [...names, ...list.flatMap((l) => l.influences || [])],
+    8,
+  );
+  const doNot = uniqStrings(list.flatMap((l) => l.doNot || []), 10);
+  const production = uniqStrings(
+    list.map((l) => l.production).filter(Boolean),
+    4,
+  ).join(" · ");
+  const writingStyle = uniqStrings(
+    list.map((l) => l.writingStyle).filter(Boolean),
+    3,
+  ).join(" · ");
+  const vocalStyle = uniqStrings(
+    list.map((l) => l.vocalStyle).filter(Boolean),
+    3,
+  ).join(" · ");
+  const visualVibe = uniqStrings(
+    list.map((l) => l.visualVibe).filter(Boolean),
+    3,
+  ).join(" · ");
+  const moods = uniqStrings(list.map((l) => l.mood).filter(Boolean), 3);
+  const energies = list.map((l) => Number(l.energy)).filter((n) => Number.isFinite(n));
+  const energy = energies.length
+    ? Math.round(energies.reduce((a, b) => a + b, 0) / energies.length)
+    : list[0].energy;
+
+  return {
+    query: names.join(" + "),
+    matchedName: names.join(" × "),
+    source: "multi",
+    sourceId: list.map((l) => `${l.source}:${l.sourceId}`).join("|"),
+    confidence: "confirmed",
+    url: list[0].url || null,
+    image: list[0].image || null,
+    topTracks: uniqStrings(list.flatMap((l) => l.topTracks || []), 8),
+    albums: uniqStrings(list.flatMap((l) => l.albums || []), 6),
+    related: uniqStrings(list.flatMap((l) => l.related || []), 8),
+    genres,
+    genreSummary,
+    mood: moods[0] || list[0].mood,
+    energy,
+    tempoFeel: list[0].tempoFeel,
+    production,
+    vocalStyle,
+    sonicKeywords,
+    writingStyle,
+    visualVibe,
+    doNot,
+    influences,
+    musicPrompt: [
+      genreSummary,
+      production,
+      ...sonicKeywords,
+      vocalStyle ? `vocals: ${vocalStyle}` : "",
+      `blend of: ${names.join(", ")}`,
+      "original artist identity, not a cover",
+    ]
+      .filter(Boolean)
+      .join(", "),
+    refs: list,
+  };
+}
+
+/**
+ * Résout 1..N artistes de référence (favoris) et fusionne le lock style.
+ */
+export async function resolveStyleReferences(keys, picks = []) {
+  const list = (Array.isArray(picks) ? picks : [])
+    .filter((p) => p?.source && p?.id)
+    .slice(0, 5);
+  if (!list.length) return null;
+
+  const locks = [];
+  const errors = [];
+  for (const pick of list) {
+    try {
+      locks.push(await resolveStyleReference(keys, pick));
+    } catch (e) {
+      errors.push(`${pick.name || pick.id}: ${e.message || "KO"}`);
+    }
+  }
+  if (!locks.length) {
+    throw new Error(
+      `Aucun artiste favori résolu. ${errors.slice(0, 2).join(" · ")}`,
+    );
+  }
+  const merged = mergeStyleLocks(locks);
+  if (errors.length) merged.resolveWarnings = errors;
+  return merged;
+}

@@ -1,5 +1,16 @@
 import { useEffect, useState } from "preact/hooks";
-import { UserRound, MapPin, Mic2, Palette, Camera, Shirt, Music2, Languages } from "lucide-preact";
+import {
+  UserRound,
+  MapPin,
+  Mic2,
+  Palette,
+  Camera,
+  Shirt,
+  Music2,
+  Languages,
+  Sparkles,
+  Heart,
+} from "lucide-preact";
 import {
   MUSIC_LANGUAGES,
   MUSIC_STYLES,
@@ -9,8 +20,25 @@ import {
 } from "../../lib/studio.js";
 import StyleArtistPicker from "../StyleArtistPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "../ArtistNameField.jsx";
+import PhotoUpload from "../PhotoUpload.jsx";
 
-export default function ArtistStep({ artist, trends, loading, onGenerate }) {
+const GENDERS = [
+  { value: "male", label: "Homme" },
+  { value: "female", label: "Femme" },
+  { value: "nonbinary", label: "Non-binaire" },
+];
+
+function genderLabel(code) {
+  if (code === "female") return "Femme";
+  if (code === "nonbinary") return "Non-binaire";
+  if (code === "male") return "Homme";
+  return code || "";
+}
+
+export default function ArtistStep({ artist, trends, loading, onGenerate, initialMode }) {
+  const [mode, setMode] = useState(() =>
+    initialMode === "self" || artist?.mode === "self" ? "self" : "fiction",
+  );
   const [name, setName] = useState(artist?.name || "");
   const [allowTakenName, setAllowTakenName] = useState(false);
   const [nameStatus, setNameStatus] = useState(null);
@@ -21,7 +49,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
   const [bioHint, setBioHint] = useState("");
   const [styleArtist, setStyleArtist] = useState(artist?.styleArtist || "");
   const [styleArtistPick, setStyleArtistPick] = useState(() =>
-    artist?.styleLock?.sourceId
+    artist?.styleLock?.sourceId && artist?.styleLock?.source !== "multi"
       ? {
           source: artist.styleLock.source,
           id: artist.styleLock.sourceId,
@@ -30,13 +58,42 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
         }
       : null,
   );
+  const [styleArtistPicks, setStyleArtistPicks] = useState(() => {
+    if (Array.isArray(artist?.styleLock?.refs) && artist.styleLock.refs.length) {
+      return artist.styleLock.refs
+        .filter((r) => r.source && r.sourceId)
+        .map((r) => ({
+          source: r.source,
+          id: String(r.sourceId),
+          name: r.matchedName,
+          image: r.image || null,
+          genres: r.genres || [],
+        }));
+    }
+    return [];
+  });
+  const [age, setAge] = useState(artist?.age != null ? String(artist.age) : "");
+  const [gender, setGender] = useState(artist?.gender || "");
+  const [city, setCity] = useState(artist?.city || "");
+  const [photos, setPhotos] = useState(() => {
+    if (Array.isArray(artist?.photos) && artist.photos.length) return artist.photos;
+    if (artist?.mode === "self" && artist?.imageUrl) return [artist.imageUrl];
+    return [];
+  });
   const [pickError, setPickError] = useState("");
+
+  useEffect(() => {
+    if (initialMode === "self" || initialMode === "fiction") {
+      setMode(initialMode);
+    }
+  }, [initialMode]);
 
   useEffect(() => {
     if (!artist) return;
     setName(artist.name || "");
     setAllowTakenName(false);
     setNameStatus(null);
+    if (artist.mode === "self") setMode("self");
     const parsed = parseGenres(artist.genres || artist.genre);
     const presetValues = new Set(MUSIC_STYLES.map((s) => s.value).filter(Boolean));
     const known = parsed.filter((g) => presetValues.has(g));
@@ -51,7 +108,27 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
     }
     if (artist.language) setLanguage(artist.language);
     setStyleArtist(artist.styleArtist || "");
-    if (artist.styleLock?.sourceId) {
+    if (artist.age != null) setAge(String(artist.age));
+    if (artist.gender) setGender(artist.gender);
+    if (artist.city) setCity(artist.city);
+    if (Array.isArray(artist.photos) && artist.photos.length) {
+      setPhotos(artist.photos);
+    } else if (artist.mode === "self" && artist.imageUrl) {
+      setPhotos([artist.imageUrl]);
+    }
+    if (Array.isArray(artist.styleLock?.refs) && artist.styleLock.refs.length) {
+      setStyleArtistPicks(
+        artist.styleLock.refs
+          .filter((r) => r.source && r.sourceId)
+          .map((r) => ({
+            source: r.source,
+            id: String(r.sourceId),
+            name: r.matchedName,
+            image: r.image || null,
+            genres: r.genres || [],
+          })),
+      );
+    } else if (artist.styleLock?.sourceId && artist.styleLock?.source !== "multi") {
       setStyleArtistPick({
         source: artist.styleLock.source,
         id: artist.styleLock.sourceId,
@@ -59,11 +136,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
         image: artist.styleLock.image || null,
       });
     }
-  }, [artist?.name, artist?.genre, artist?.genres, artist?.language, artist?.styleArtist]);
+  }, [artist?.name, artist?.genre, artist?.genres, artist?.language, artist?.styleArtist, artist?.mode]);
 
   function toggleStyle(value) {
     if (!value) {
-      // « Au choix de l'IA » : vide la sélection
       setGenres([]);
       setShowCustom(false);
       setCustomGenre("");
@@ -80,8 +156,55 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
   ];
   const resolvedGenre = formatGenres(resolvedGenres);
   const nameBlocked = isArtistNameBlocked(name, nameStatus, allowTakenName);
+  const isSelf = mode === "self";
 
   function handleGenerate() {
+    if (isSelf) {
+      if (!name.trim()) {
+        setPickError("Indique ton nom de scène.");
+        return;
+      }
+      if (!gender) {
+        setPickError("Choisis ton sexe / présentation.");
+        return;
+      }
+      const ageNum = Number(age);
+      if (!Number.isFinite(ageNum) || ageNum < 13 || ageNum > 99) {
+        setPickError("Indique un âge entre 13 et 99.");
+        return;
+      }
+      if (!photos.length) {
+        setPickError("Ajoute au moins une photo de toi.");
+        return;
+      }
+      if (!styleArtistPicks.length) {
+        setPickError("Ajoute et valide au moins un artiste que tu aimes.");
+        return;
+      }
+      if (nameBlocked) {
+        setPickError("Ce nom de scène est déjà pris — choisis-en un autre ou force quand même.");
+        return;
+      }
+      setPickError("");
+      onGenerate({
+        mode: "self",
+        name: name.trim(),
+        age: Math.round(ageNum),
+        gender,
+        city: city.trim() || undefined,
+        photos,
+        genre: resolvedGenre || undefined,
+        genres: resolvedGenres.length ? resolvedGenres : undefined,
+        language,
+        bioHint: bioHint.trim(),
+        styleArtistPicks,
+        styleArtist: styleArtistPicks.map((p) => p.name).join(" × "),
+        allowTakenName: allowTakenName || undefined,
+        trends,
+      });
+      return;
+    }
+
     if (styleArtist.trim() && !styleArtistPick?.id) {
       setPickError("Choisis et valide un artiste dans la liste avant de générer.");
       return;
@@ -92,6 +215,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
     }
     setPickError("");
     onGenerate({
+      mode: "fiction",
       name: name.trim(),
       genre: resolvedGenre || undefined,
       genres: resolvedGenres.length ? resolvedGenres : undefined,
@@ -106,15 +230,55 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
 
   const vi = artist?.visualIdentity;
   const displayGenres = parseGenres(artist?.genres || artist?.genre);
+  const favoriteNames =
+    artist?.styleArtists ||
+    (Array.isArray(artist?.styleLock?.refs)
+      ? artist.styleLock.refs.map((r) => r.matchedName).filter(Boolean)
+      : null);
 
   return (
     <section class="animate-rise space-y-6">
       <header class="space-y-2">
-        <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Créer un artiste complet</h2>
+        <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">
+          {isSelf ? "Créer mon profil artiste" : "Créer un artiste complet"}
+        </h2>
         <p class="max-w-xl text-base-content/70">
-          Choisis un ou plusieurs styles musicaux et la langue — puis génère profil + portrait.
+          {isSelf
+            ? "Tes photos, ton identité, et les artistes que tu aimes — les morceaux colleront à ce son."
+            : "Choisis un ou plusieurs styles musicaux et la langue — puis génère profil + portrait."}
         </p>
       </header>
+
+      <div class="flex flex-wrap gap-2" role="tablist" aria-label="Type de profil">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!isSelf}
+          class={`btn btn-sm gap-2 ${!isSelf ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+          disabled={loading}
+          onClick={() => {
+            setMode("fiction");
+            setPickError("");
+          }}
+        >
+          <Sparkles size={14} />
+          Artiste fictionnel
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={isSelf}
+          class={`btn btn-sm gap-2 ${isSelf ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+          disabled={loading}
+          onClick={() => {
+            setMode("self");
+            setPickError("");
+          }}
+        >
+          <Heart size={14} />
+          C’est moi
+        </button>
+      </div>
 
       <div class="flex flex-col gap-5">
         <ArtistNameField
@@ -126,14 +290,65 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
           onAvailabilityChange={setNameStatus}
         />
 
+        {isSelf && (
+          <>
+            <PhotoUpload photos={photos} disabled={loading} onChange={setPhotos} max={4} />
+
+            <div class="grid gap-4 sm:grid-cols-2">
+              <label class="form-control w-full">
+                <span class="label-text mb-1 text-sm text-base-content/60">Âge</span>
+                <input
+                  class="input input-bordered w-full bg-base-200"
+                  type="number"
+                  min={13}
+                  max={99}
+                  placeholder="Ex. 24"
+                  value={age}
+                  disabled={loading}
+                  onInput={(e) => setAge(e.currentTarget.value)}
+                />
+              </label>
+              <label class="form-control w-full">
+                <span class="label-text mb-1 text-sm text-base-content/60">Ville (optionnel)</span>
+                <input
+                  class="input input-bordered w-full bg-base-200"
+                  type="text"
+                  placeholder="Ex. Lyon"
+                  value={city}
+                  disabled={loading}
+                  onInput={(e) => setCity(e.currentTarget.value)}
+                />
+              </label>
+            </div>
+
+            <fieldset class="space-y-2">
+              <legend class="mb-1 text-sm text-base-content/60">Sexe / présentation</legend>
+              <div class="flex flex-wrap gap-2">
+                {GENDERS.map((g) => (
+                  <button
+                    key={g.value}
+                    type="button"
+                    class={`btn btn-sm ${gender === g.value ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+                    disabled={loading}
+                    onClick={() => setGender(g.value)}
+                  >
+                    {g.label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          </>
+        )}
+
         <fieldset class="space-y-2">
           <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
             <Music2 size={14} class="text-primary" />
-            Styles musicaux
+            Styles musicaux{isSelf ? " (optionnel)" : ""}
           </legend>
           <p class="text-xs text-base-content/45">
-            Multi-sélection — mélange possible (ex. Rap × Électro). Définit le son, les paroles et la
-            prod.
+            {isSelf
+              ? "Complète si besoin — le son principal vient de tes artistes favoris."
+              : "Multi-sélection — mélange possible (ex. Rap × Électro). Définit le son, les paroles et la prod."}
           </p>
           <div class="flex flex-wrap gap-2">
             {MUSIC_STYLES.map((s) => {
@@ -163,9 +378,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
             </button>
           </div>
           {resolvedGenres.length > 0 && (
-            <p class="text-xs text-primary">
-              Sélection : {formatGenres(resolvedGenres)}
-            </p>
+            <p class="text-xs text-primary">Sélection : {formatGenres(resolvedGenres)}</p>
           )}
           {showCustom && (
             <input
@@ -177,21 +390,37 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
             />
           )}
           <div class="pt-1">
-            <StyleArtistPicker
-              value={styleArtist}
-              pick={styleArtistPick}
-              disabled={loading}
-              onQueryChange={(q) => {
-                setStyleArtist(q);
-                setStyleArtistPick(null);
-                setPickError("");
-              }}
-              onPickChange={(pick) => {
-                setStyleArtistPick(pick);
-                if (pick?.name) setStyleArtist(pick.name);
-                setPickError("");
-              }}
-            />
+            {isSelf ? (
+              <StyleArtistPicker
+                multiple
+                maxPicks={5}
+                picks={styleArtistPicks}
+                disabled={loading}
+                label="Artistes que tu aimes"
+                hint="Ajoute 1 à 5 artistes — les paroles et le son des morceaux seront calés dessus."
+                onQueryChange={() => setPickError("")}
+                onPicksChange={(next) => {
+                  setStyleArtistPicks(next);
+                  setPickError("");
+                }}
+              />
+            ) : (
+              <StyleArtistPicker
+                value={styleArtist}
+                pick={styleArtistPick}
+                disabled={loading}
+                onQueryChange={(q) => {
+                  setStyleArtist(q);
+                  setStyleArtistPick(null);
+                  setPickError("");
+                }}
+                onPickChange={(pick) => {
+                  setStyleArtistPick(pick);
+                  if (pick?.name) setStyleArtist(pick.name);
+                  setPickError("");
+                }}
+              />
+            )}
             {pickError && <p class="mt-1 text-xs text-warning">{pickError}</p>}
           </div>
         </fieldset>
@@ -223,12 +452,16 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
 
         <label class="form-control w-full">
           <span class="label-text mb-1 text-sm text-base-content/60">
-            Personnalité / univers (optionnel)
+            {isSelf ? "Univers / personnalité (optionnel)" : "Personnalité / univers (optionnel)"}
           </span>
           <textarea
             class="textarea textarea-bordered w-full bg-base-200"
             rows={3}
-            placeholder="Origines, look, histoire… (pas le style musical — déjà choisi au-dessus)"
+            placeholder={
+              isSelf
+                ? "Histoire, vibe, thèmes que tu veux chanter…"
+                : "Origines, look, histoire… (pas le style musical — déjà choisi au-dessus)"
+            }
             value={bioHint}
             onInput={(e) => setBioHint(e.currentTarget.value)}
           />
@@ -239,12 +472,24 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
           disabled={
             loading ||
             nameBlocked ||
-            (showCustom && !customGenre.trim() && genres.length === 0)
+            (showCustom && !customGenre.trim() && genres.length === 0 && !isSelf) ||
+            (isSelf &&
+              (!name.trim() ||
+                !gender ||
+                !age ||
+                !photos.length ||
+                !styleArtistPicks.length))
           }
           onClick={handleGenerate}
         >
           {loading ? <span class="loading loading-spinner loading-sm" /> : <UserRound size={18} />}
-          {loading ? "Profil + portrait…" : "Générer le profil & le visuel"}
+          {loading
+            ? isSelf
+              ? "Création de ton profil…"
+              : "Profil + portrait…"
+            : isSelf
+              ? "Créer mon profil artiste"
+              : "Générer le profil & le visuel"}
         </button>
       </div>
 
@@ -264,13 +509,27 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
                 </div>
               )}
               <figcaption class="text-xs text-base-content/45">
-                Identité visuelle · portrait artiste (photo, pas SVG)
+                {artist.mode === "self"
+                  ? "Identité visuelle · ta photo"
+                  : "Identité visuelle · portrait artiste (photo, pas SVG)"}
               </figcaption>
               {artist.imageProvider && (
                 <p class="text-xs text-base-content/45">Source : {artist.imageProvider}</p>
               )}
               {artist.imageWarning && (
                 <p class="text-xs text-warning">{artist.imageWarning}</p>
+              )}
+              {Array.isArray(artist.photos) && artist.photos.length > 1 && (
+                <div class="flex flex-wrap gap-1.5 pt-1">
+                  {artist.photos.slice(0, 4).map((src, i) => (
+                    <img
+                      key={i}
+                      src={src}
+                      alt=""
+                      class="h-12 w-12 object-cover border border-base-content/10"
+                    />
+                  ))}
+                </div>
               )}
               {(!artist.imageUrl || /^data:image\/svg/i.test(artist.imageUrl)) && (
                 <p class="text-xs text-warning">
@@ -290,7 +549,9 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
             <div class="space-y-4">
               <div class="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <p class="text-xs uppercase tracking-[0.2em] text-primary">{artist.aka}</p>
+                  <p class="text-xs uppercase tracking-[0.2em] text-primary">
+                    {artist.mode === "self" ? "Profil réel" : artist.aka}
+                  </p>
                   <h3 class="font-display text-3xl font-bold">{artist.name}</h3>
                   {artist.slug && (
                     <a class="link link-primary text-sm" href={`/artiste/${artist.slug}`}>
@@ -329,11 +590,12 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
                 )}
                 {artist.gender && (
                   <span class="inline-flex items-center border border-base-content/15 px-2.5 py-1 text-xs text-base-content/70">
-                    {artist.gender === "female"
-                      ? "Femme"
-                      : artist.gender === "nonbinary"
-                        ? "Non-binaire"
-                        : "Homme"}
+                    {genderLabel(artist.gender)}
+                  </span>
+                )}
+                {artist.age != null && (
+                  <span class="inline-flex items-center border border-base-content/15 px-2.5 py-1 text-xs text-base-content/70">
+                    {artist.age} ans
                   </span>
                 )}
                 <span class="inline-flex items-center gap-1.5 border border-secondary/30 bg-secondary/10 px-2.5 py-1 text-xs text-secondary">
@@ -361,9 +623,12 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
               <p class="text-sm text-base-content/55">
                 Influences : {(artist.influences || []).join(" · ")}
               </p>
-              {artist.styleArtist && (
+              {(favoriteNames?.length || artist.styleArtist) && (
                 <p class="text-sm text-base-content/55">
-                  Référence style : <span class="text-primary">{artist.styleArtist}</span>
+                  {artist.mode === "self" ? "Artistes aimés" : "Référence style"} :{" "}
+                  <span class="text-primary">
+                    {(favoriteNames || [artist.styleArtist]).filter(Boolean).join(" · ")}
+                  </span>
                   {artist.styleLock?.source ? (
                     <span class="text-base-content/40">
                       {" "}

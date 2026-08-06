@@ -28,7 +28,22 @@ export default function ArtistsIndex() {
       title="Artistes"
       subtitle="Chaque artiste a une page slug, un catalogue et des stats SONOZZ / ONCE."
     >
-      <div class="mx-auto max-w-4xl">
+      <div class="mx-auto max-w-4xl space-y-6">
+        <a
+          href="/?step=2&mode=self"
+          class="flex items-center gap-4 border border-primary/35 bg-primary/10 p-4 transition hover:border-primary/60"
+        >
+          <div class="flex h-14 w-14 items-center justify-center bg-primary/20 text-primary">
+            <UserRound size={22} />
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="font-display text-lg font-semibold">Créer mon profil artiste</p>
+            <p class="text-sm text-base-content/60">
+              Photos, âge, sexe, artistes aimés — les morceaux colleront à ton son.
+            </p>
+          </div>
+        </a>
+
         {loading && <span class="loading loading-spinner" />}
         {error && <p class="text-error">{error}</p>}
 
@@ -48,14 +63,19 @@ export default function ArtistsIndex() {
                 )}
                 <div>
                   <p class="font-display text-lg font-semibold">{a.name}</p>
-                  <p class="text-xs text-base-content/50">/{a.slug}</p>
+                  <p class="text-xs text-base-content/50">
+                    /{a.slug}
+                    {a.profile?.mode === "self" ? " · profil réel" : ""}
+                  </p>
                 </div>
               </a>
             </li>
           ))}
         </ul>
         {!loading && artists.length === 0 && (
-          <p class="text-base-content/55">Aucun artiste pour l’instant — lance un pipeline depuis le Studio.</p>
+          <p class="text-base-content/55">
+            Aucun artiste pour l’instant — crée ton profil ou lance un pipeline depuis le Studio.
+          </p>
         )}
       </div>
     </AppShell>
