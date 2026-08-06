@@ -55,6 +55,10 @@ function stripHeavyProfile(artist = {}) {
     clone.imageUrl = null;
     clone.localAsset = true;
   }
+  if (clone.voiceSample?.dataUrl) {
+    const { dataUrl, ...rest } = clone.voiceSample;
+    clone.voiceSample = rest;
+  }
   return clone;
 }
 

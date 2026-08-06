@@ -21,6 +21,7 @@ import {
 import StyleArtistPicker from "../StyleArtistPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "../ArtistNameField.jsx";
 import PhotoUpload from "../PhotoUpload.jsx";
+import VoiceSampleUpload from "../VoiceSampleUpload.jsx";
 
 const GENDERS = [
   { value: "male", label: "Homme" },
@@ -35,7 +36,7 @@ function genderLabel(code) {
   return code || "";
 }
 
-export default function ArtistStep({ artist, trends, loading, onGenerate, initialMode }) {
+export default function ArtistStep({ artist, trends, loading, onGenerate, onPatchArtist, initialMode }) {
   const [mode, setMode] = useState(() =>
     initialMode === "self" || artist?.mode === "self" ? "self" : "fiction",
   );
@@ -80,6 +81,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, initia
     if (artist?.mode === "self" && artist?.imageUrl) return [artist.imageUrl];
     return [];
   });
+  const [voiceSample, setVoiceSample] = useState(() => artist?.voiceSample || null);
   const [pickError, setPickError] = useState("");
 
   useEffect(() => {
@@ -116,6 +118,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, initia
     } else if (artist.mode === "self" && artist.imageUrl) {
       setPhotos([artist.imageUrl]);
     }
+    setVoiceSample(artist.voiceSample || null);
     if (Array.isArray(artist.styleLock?.refs) && artist.styleLock.refs.length) {
       setStyleArtistPicks(
         artist.styleLock.refs
@@ -193,6 +196,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, initia
         gender,
         city: city.trim() || undefined,
         photos,
+        voiceSample: voiceSample || undefined,
         genre: resolvedGenre || undefined,
         genres: resolvedGenres.length ? resolvedGenres : undefined,
         language,
@@ -244,7 +248,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, initia
         </h2>
         <p class="max-w-xl text-base-content/70">
           {isSelf
-            ? "Tes photos, ton identité, et les artistes que tu aimes — les morceaux colleront à ce son."
+            ? "Tes photos, ton identité, ta voix si tu veux, et les artistes que tu aimes — les morceaux colleront à ce son."
             : "Choisis un ou plusieurs styles musicaux et la langue — puis génère profil + portrait."}
         </p>
       </header>
@@ -293,6 +297,18 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, initia
         {isSelf && (
           <>
             <PhotoUpload photos={photos} disabled={loading} onChange={setPhotos} max={4} />
+
+            <VoiceSampleUpload
+              value={voiceSample}
+              disabled={loading}
+              projectId={name.trim() || artist?.slug || "voice"}
+              onChange={(sample) => {
+                setVoiceSample(sample);
+                if (artist?.name) {
+                  onPatchArtist?.({ voiceSample: sample || null });
+                }
+              }}
+            />
 
             <div class="grid gap-4 sm:grid-cols-2">
               <label class="form-control w-full">
@@ -617,6 +633,9 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, initia
                 </span>
                 <span class="inline-flex items-center gap-2">
                   <Mic2 size={16} class="text-accent" /> {artist.voice}
+                  {artist.voiceSample?.url || artist.voiceSample?.s3Key ? (
+                    <span class="text-xs text-success">· extrait vocal</span>
+                  ) : null}
                 </span>
               </div>
 

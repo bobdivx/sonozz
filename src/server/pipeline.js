@@ -340,6 +340,24 @@ function normalizeSelfPhotos(photos = []) {
     .slice(0, 6);
 }
 
+/** Extrait vocal mode MOI — URL S3 / clé (pas de data URL géante en DB). */
+function normalizeVoiceSample(sample) {
+  if (!sample || typeof sample !== "object") return null;
+  const url = typeof sample.url === "string" ? sample.url.trim() : "";
+  const s3Key = typeof sample.s3Key === "string" ? sample.s3Key.trim() : "";
+  if (!url && !s3Key) return null;
+  return {
+    url: url || undefined,
+    s3Key: s3Key || undefined,
+    mimeType: String(sample.mimeType || "audio/wav").slice(0, 80),
+    fileName: String(sample.fileName || "voice-sample.wav")
+      .replace(/[^\w.\-]+/g, "_")
+      .slice(0, 80),
+    byteLength: Number(sample.byteLength) || undefined,
+    durationSec: Number(sample.durationSec) || undefined,
+  };
+}
+
 function serializeStyleLock(styleLock) {
   if (!styleLock) return undefined;
   return {
@@ -452,6 +470,7 @@ export async function runArtist({
   photos = [],
   city,
   legalName,
+  voiceSample = null,
 }) {
   requireTextLlm(keys);
   const isSelf = String(mode || "").toLowerCase() === "self";
@@ -469,6 +488,7 @@ export async function runArtist({
   const forceTaken = Boolean(allowTakenName);
   const selfAge = normalizeAge(age);
   const selfPhotos = normalizeSelfPhotos(photos);
+  const selfVoiceSample = normalizeVoiceSample(voiceSample);
 
   if (isSelf) {
     if (!forcedName) {
@@ -837,6 +857,7 @@ JSON strict: { "name": string, "aka": string }
     slug: slugify((forcedName || data.aka || data.name) || "artiste"),
     imageUrl: portrait.imageUrl,
     photos: persistedPhotos.length > 1 ? persistedPhotos : undefined,
+    voiceSample: isSelf && selfVoiceSample ? selfVoiceSample : undefined,
     imageFallback: false,
     imageWarning: portrait.warning,
     imageProvider: portrait.provider,
@@ -1346,6 +1367,7 @@ export async function runFullPipeline({
   photos,
   city,
   legalName,
+  voiceSample,
   onProgress,
 }) {
   const log = [];
@@ -1382,6 +1404,7 @@ export async function runFullPipeline({
     photos,
     city,
     legalName,
+    voiceSample,
   });
 
   push("lyrics", "Écriture des paroles…");

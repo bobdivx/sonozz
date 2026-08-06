@@ -1,3 +1,5 @@
+import { isS3Configured, downloadClipBuffer } from "./s3.js";
+
 /**
  * Client SongGeneration Studio (Pinokio / Demeter).
  * API : POST /api/generate → poll /api/generation/:id → GET /api/audio/:id/0
@@ -43,6 +45,100 @@ async function songGenFetch(baseUrl, path, { method = "GET", body } = {}) {
     throw new Error(`SongGen ${path}: ${detail}`);
   }
   return data;
+}
+
+/**
+ * Upload un extrait vocal vers SongGen Studio → reference_audio_id.
+ * Formats : .wav .mp3 .flac .ogg
+ */
+export async function uploadSongGenReference(keys, buffer, fileName = "voice-sample.wav") {
+  const base = resolveSongGenBaseUrl(keys);
+  const safeName = String(fileName || "voice-sample.wav")
+    .replace(/[^\w.\-]+/g, "_")
+    .replace(/\.(webm|m4a|mp4|aac)$/i, ".wav");
+  const finalName = /\.(wav|mp3|flac|ogg)$/i.test(safeName)
+    ? safeName
+    : `${safeName}.wav`;
+
+  const form = new FormData();
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  const file =
+    typeof File !== "undefined"
+      ? new File([bytes], finalName, { type: "audio/wav" })
+      : new Blob([bytes], { type: "audio/wav" });
+  form.append("file", file, finalName);
+
+  let res;
+  try {
+    res = await fetch(`${base}/api/upload-reference`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (e) {
+    throw new Error(
+      `Upload voix → SongGen injoignable (${base}). ${errText(e).slice(0, 120)}`,
+    );
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail =
+      typeof data?.detail === "string"
+        ? data.detail
+        : data?.message || data?.error || `HTTP ${res.status}`;
+    throw new Error(`SongGen upload-reference: ${detail}`);
+  }
+  const id = data?.id;
+  if (!id) throw new Error("SongGen n’a pas renvoyé d’id de référence vocale");
+  return { id: String(id), filename: data.filename || finalName };
+}
+
+/**
+ * Charge un voiceSample (S3/URL) dans SongGen et renvoie reference_audio_id.
+ * Re-upload à chaque gen : les fichiers locaux Pinokio sont volatils.
+ */
+export async function ensureSongGenVoiceReference(keys, voiceSample) {
+  if (!voiceSample || typeof voiceSample !== "object") return null;
+
+  const source = voiceSample.s3Key || voiceSample.url || voiceSample.dataUrl;
+  if (!source) return null;
+
+  let buffer;
+  let mimeType = voiceSample.mimeType || "audio/wav";
+  if (voiceSample.s3Key && isS3Configured()) {
+    const dl = await downloadClipBuffer(voiceSample.s3Key);
+    buffer = dl.buffer;
+    mimeType = dl.mimeType || mimeType;
+  } else if (/^https?:\/\//i.test(String(source))) {
+    const res = await fetch(source);
+    if (!res.ok) throw new Error(`Téléchargement extrait vocal HTTP ${res.status}`);
+    buffer = Buffer.from(await res.arrayBuffer());
+    mimeType = res.headers.get("content-type") || mimeType;
+  } else if (typeof voiceSample.dataUrl === "string" && voiceSample.dataUrl.startsWith("data:")) {
+    const raw = voiceSample.dataUrl.replace(/^data:[^;]+;base64,/, "");
+    buffer = Buffer.from(raw, "base64");
+  } else {
+    return null;
+  }
+
+  if (!buffer?.length) throw new Error("Extrait vocal vide");
+
+  const ext =
+    /\.wav$/i.test(voiceSample.fileName || "") || /wav/i.test(mimeType)
+      ? "wav"
+      : /\.mp3$/i.test(voiceSample.fileName || "") || /mpeg|mp3/i.test(mimeType)
+        ? "mp3"
+        : /\.flac$/i.test(voiceSample.fileName || "") || /flac/i.test(mimeType)
+          ? "flac"
+          : /\.ogg$/i.test(voiceSample.fileName || "") || /ogg/i.test(mimeType)
+            ? "ogg"
+            : "wav";
+
+  const uploaded = await uploadSongGenReference(
+    keys,
+    buffer,
+    voiceSample.fileName || `voice-sample.${ext}`,
+  );
+  return uploaded.id;
 }
 
 /** MiniMax-style [Verse] / [Chorus] → sections SongGeneration Studio. */
@@ -205,30 +301,44 @@ export async function startSongGeneration(
   });
   const stylePrefix = `${vocal.code} vocals, ${vocal.voiceHint}`;
   const lock = artist?.styleLock;
+  const voiceSample = artist?.voiceSample;
+  let referenceAudioId = null;
+  if (voiceSample?.s3Key || voiceSample?.url || voiceSample?.dataUrl) {
+    try {
+      referenceAudioId = await ensureSongGenVoiceReference(keys, voiceSample);
+      console.info("[songgen] voice reference:", referenceAudioId);
+    } catch (e) {
+      console.warn("[songgen] voice reference KO — fallback texte:", e.message);
+    }
+  }
+
   const timbre = String(lock?.timbre || "").trim().slice(0, 120);
   const instruments = Array.isArray(lock?.instruments)
     ? lock.instruments.filter(Boolean).slice(0, 6).join(", ").slice(0, 160)
     : "";
   const grooveBits = [lock?.rhythmFeel, lock?.tempoFeel].filter(Boolean).join("; ");
-  const custom = [
-    stylePrefix,
-    timbre ? `timbre ${timbre}` : "",
-    grooveBits ? `groove ${grooveBits}` : "",
-    String(prompt || "").trim(),
-  ]
-    .filter(Boolean)
-    .join(", ")
-    .slice(0, 500);
+  // Avec audio de référence, Studio priorise le prompt_audio ; on allège le texte pour éviter les conflits
+  const custom = referenceAudioId
+    ? [stylePrefix, String(prompt || "").trim()].filter(Boolean).join(", ").slice(0, 500)
+    : [
+        stylePrefix,
+        timbre ? `timbre ${timbre}` : "",
+        grooveBits ? `groove ${grooveBits}` : "",
+        String(prompt || "").trim(),
+      ]
+        .filter(Boolean)
+        .join(", ")
+        .slice(0, 500);
 
   const lockBpm = Number(lock?.bpm ?? bpm);
   const body = {
     title: String(title || "SONOZZ Track").slice(0, 120),
     sections,
     gender: vocal.code,
-    timbre: timbre || "",
+    timbre: referenceAudioId ? "" : timbre || "",
     genre: mapGenre(genre || lock?.genreSummary || lock?.genres?.[0]),
     emotion: String(mood || lock?.mood || "").slice(0, 80),
-    instruments: instruments || "",
+    instruments: referenceAudioId ? "" : instruments || "",
     custom_style: custom || stylePrefix,
     bpm: Math.min(
       200,
@@ -236,6 +346,7 @@ export async function startSongGeneration(
     ),
     output_mode: "mixed",
     memory_mode: "auto",
+    ...(referenceAudioId ? { reference_audio_id: referenceAudioId } : {}),
   };
 
   console.info(
@@ -247,12 +358,18 @@ export async function startSongGeneration(
     `gender=${body.gender}`,
     `genre=${body.genre}`,
     `bpm=${body.bpm}`,
-    timbre ? `timbre=${timbre.slice(0, 40)}` : "timbre=∅",
+    referenceAudioId ? `ref=${referenceAudioId}` : timbre ? `timbre=${timbre.slice(0, 40)}` : "timbre=∅",
   );
   const created = await songGenFetch(base, "/api/generate", { method: "POST", body });
   const genId = created?.generation_id;
   if (!genId) throw new Error("SongGen n’a pas renvoyé de generation_id");
-  return { generationId: genId, provider: "songgeneration-studio", base, gender: body.gender };
+  return {
+    generationId: genId,
+    provider: "songgeneration-studio",
+    base,
+    gender: body.gender,
+    referenceAudioId: referenceAudioId || null,
+  };
 }
 
 /**

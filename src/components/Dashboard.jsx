@@ -1149,6 +1149,13 @@ export default function Dashboard() {
             onGenerate={(payload) =>
               runStep(() => api.artist({ ...payload, trends: project.trends }), "artist", 2)
             }
+            onPatchArtist={(patch) => {
+              setProject((prev) =>
+                prev.artist
+                  ? { ...prev, artist: { ...prev.artist, ...patch } }
+                  : prev,
+              );
+            }}
           />
         )}
         {step === 3 && (

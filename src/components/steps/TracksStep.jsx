@@ -438,11 +438,19 @@ export default function TracksStep({
             ) : (
               <span class="font-medium text-warning">non défini</span>
             )}
+            {artist.voiceSample?.s3Key || artist.voiceSample?.url ? (
+              <span class="text-success"> · extrait vocal perso</span>
+            ) : null}
           </p>
           {!voiceLabel && (
             <p class="mt-1 text-xs text-warning">
               Retourne à l’étape Artiste, choisis Homme/Femme, régénère le profil, puis relance le
               morceau.
+            </p>
+          )}
+          {(artist.voiceSample?.s3Key || artist.voiceSample?.url) && (
+            <p class="mt-1 text-xs text-base-content/50">
+              Ton extrait vocal sera envoyé à SongGen pour coller au timbre (≈10 s utilisés).
             </p>
           )}
         </div>
