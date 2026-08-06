@@ -505,7 +505,13 @@ export default function Dashboard() {
         let trackI;
         try {
           trackI = await api.track(
-            { lyrics: lyricsI, artist: project.artist },
+            {
+              lyrics: lyricsI,
+              artist: {
+                ...project.artist,
+                musicArrange: project.musicArrange,
+              },
+            },
             (p) => {
               const local = Math.min(
                 96,
@@ -1183,6 +1189,7 @@ export default function Dashboard() {
             lyrics={project.lyrics}
             artist={project.artist}
             album={project.album}
+            musicArrange={project.musicArrange}
             loading={loading}
             progress={step === 4 ? stepProgress : null}
             projectId={projectId}
@@ -1190,10 +1197,22 @@ export default function Dashboard() {
             onOpenSettings={() => {
               window.location.href = "/parametres?section=ia";
             }}
+            onMusicArrangeChange={(next) => {
+              setProject((prev) => ({ ...prev, musicArrange: next }));
+            }}
             onGenerate={() =>
               runStep(
                 (onProgress) =>
-                  api.track({ lyrics: project.lyrics, artist: project.artist }, onProgress),
+                  api.track(
+                    {
+                      lyrics: project.lyrics,
+                      artist: {
+                        ...project.artist,
+                        musicArrange: project.musicArrange,
+                      },
+                    },
+                    onProgress,
+                  ),
                 "track",
                 4,
               )

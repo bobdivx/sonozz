@@ -2,6 +2,36 @@
 export const VOICE_SAMPLE_ACCEPT =
   "audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/flac,audio/ogg,.wav,.mp3,.flac,.ogg";
 
+/**
+ * Comment SongGen utilise l’extrait vocal perso.
+ * - timbre (défaut) : analyse Gemini → descriptions texte + mix complet
+ * - reference : prompt_audio SongGen (clone le style de l’extrait — a cappella → souvent voix seule)
+ */
+export const VOICE_GUIDE_MODES = [
+  {
+    id: "timbre",
+    label: "Timbre (recommandé)",
+    short: "Mix complet",
+    hint: "Analyse ta voix et génère un morceau mixé (voix + instruments).",
+  },
+  {
+    id: "reference",
+    label: "Référence audio",
+    short: "Clone audio",
+    hint: "Envoie l’extrait brut à SongGen. Idéal si c’est un bout de chanson mixée — a cappella = souvent voix seule.",
+  },
+];
+
+export const DEFAULT_VOICE_GUIDE_MODE = "timbre";
+
+export function resolveVoiceGuideMode(sampleOrMode) {
+  const raw =
+    typeof sampleOrMode === "string"
+      ? sampleOrMode
+      : sampleOrMode?.guideMode || sampleOrMode?.mode;
+  return raw === "reference" ? "reference" : DEFAULT_VOICE_GUIDE_MODE;
+}
+
 const ALLOWED_EXT = new Set(["wav", "mp3", "flac", "ogg"]);
 const MAX_BYTES = 8_000_000;
 /** SongGen n’utilise que ~10 s — on coupe côté client. */

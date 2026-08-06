@@ -22,6 +22,7 @@ import {
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
 import { slugify, getArtistBySlug } from "./artists.js";
 import { llmJson, requireTextLlm } from "./llm.js";
+import { musicArrangeToSongGen, normalizeMusicArrange } from "../lib/musicArrange.js";
 
 function waveform() {
   return Array.from({ length: 40 }, () => 18 + Math.floor(Math.random() * 82));
@@ -346,6 +347,7 @@ function normalizeVoiceSample(sample) {
   const url = typeof sample.url === "string" ? sample.url.trim() : "";
   const s3Key = typeof sample.s3Key === "string" ? sample.s3Key.trim() : "";
   if (!url && !s3Key) return null;
+  const guideMode = sample.guideMode === "reference" ? "reference" : "timbre";
   return {
     url: url || undefined,
     s3Key: s3Key || undefined,
@@ -355,6 +357,10 @@ function normalizeVoiceSample(sample) {
       .slice(0, 80),
     byteLength: Number(sample.byteLength) || undefined,
     durationSec: Number(sample.durationSec) || undefined,
+    guideMode,
+    songGenTimbre: String(sample.songGenTimbre || sample.analyzedTimbre || "")
+      .trim()
+      .slice(0, 80) || undefined,
   };
 }
 
@@ -943,11 +949,16 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   const genderLock = genderVisualLock(artist?.gender, artist?.age);
   const styleLock = artist?.styleLock;
   const vocal = resolveVocalGender(artist);
+  const packed = musicArrangeToSongGen(normalizeMusicArrange(artist?.musicArrange), {
+    styleLockInstruments: styleLock?.instruments,
+  });
+  const arrangeBits = packed.customFragments || [];
   const prompt = (
     styleLock?.musicPrompt
       ? [
           vocal.voiceHint,
           styleLock.musicPrompt,
+          ...arrangeBits,
           `${artist?.mood || styleLock.mood || "emotional"} mood`,
           `vocals and lyrics in ${langName}`,
           "radio-ready, original composition",
@@ -960,6 +971,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
             : artist?.styleArtist
               ? `in the sonic lane of ${artist.styleArtist} (original, not a cover)`
               : "",
+          ...arrangeBits,
           `${artist?.mood || "emotional"} mood`,
           vocal.voiceForPrompt,
           `vocals and lyrics in ${langName}`,
@@ -969,7 +981,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     .filter(Boolean)
     .join(", ");
 
-  return { prompt, styleLock, genderLock, vocal };
+  return { prompt, styleLock, genderLock, vocal, arrangeBpm: packed.bpm };
 }
 
 function assembleTrackResult({
@@ -1024,8 +1036,8 @@ ${lyrics?.text || ""}
  * Le client poll via pollTrack.
  */
 export async function startTrack({ keys, lyrics, artist }) {
-  const { prompt, styleLock, vocal } = buildTrackMusicPrompt({ lyrics, artist });
-  const lockBpm = Number(styleLock?.bpm);
+  const { prompt, styleLock, vocal, arrangeBpm } = buildTrackMusicPrompt({ lyrics, artist });
+  const lockBpm = Number(arrangeBpm ?? styleLock?.bpm);
   const bpmGuess =
     Number.isFinite(lockBpm) && lockBpm >= 60 && lockBpm <= 200
       ? Math.round(lockBpm)
@@ -1144,8 +1156,8 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
 
 /** Sync (pipeline A→Z). Pour l’UI étape Track, préférer startTrack + pollTrack. */
 export async function runTrack({ keys, lyrics, artist }) {
-  const { prompt, styleLock } = buildTrackMusicPrompt({ lyrics, artist });
-  const lockBpm = Number(styleLock?.bpm);
+  const { prompt, styleLock, arrangeBpm } = buildTrackMusicPrompt({ lyrics, artist });
+  const lockBpm = Number(arrangeBpm ?? styleLock?.bpm);
   const bpmGuess =
     Number.isFinite(lockBpm) && lockBpm >= 60 && lockBpm <= 200
       ? Math.round(lockBpm)

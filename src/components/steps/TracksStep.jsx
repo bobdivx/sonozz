@@ -17,6 +17,8 @@ import { loadKeys, saveKeysAsync } from "../../lib/keys.js";
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
 import { api } from "../../lib/apiClient.js";
 import { ALBUM_SIZES } from "../../lib/studio.js";
+import MusicArrangePanel from "../MusicArrangePanel.jsx";
+import { normalizeMusicArrange } from "../../lib/musicArrange.js";
 
 function songGenUrlFromKeys(keys) {
   return String(keys?.songGenBaseUrl || "")
@@ -31,6 +33,7 @@ export default function TracksStep({
   loading,
   progress = null,
   album = null,
+  musicArrange = null,
   projectId,
   distrokid,
   onGenerate,
@@ -38,6 +41,7 @@ export default function TracksStep({
   onSelectAlbumTrack,
   onAttachAudio,
   onOpenSettings,
+  onMusicArrangeChange,
 }) {
   const [musicProvider, setMusicProvider] = useState("replicate");
   const [songGenUrl, setSongGenUrl] = useState("http://127.0.0.1:7860");
@@ -450,10 +454,22 @@ export default function TracksStep({
           )}
           {(artist.voiceSample?.s3Key || artist.voiceSample?.url) && (
             <p class="mt-1 text-xs text-base-content/50">
-              Ton extrait vocal sera envoyé à SongGen pour coller au timbre (≈10 s utilisés).
+              Voix perso :{" "}
+              {artist.voiceSample.guideMode === "reference"
+                ? "référence audio brute SongGen (peut sortir voix seule si a cappella)"
+                : "timbre analysé → mix complet (défaut)"}
+              {" — réglable à l’étape Artiste."}
             </p>
           )}
         </div>
+      )}
+
+      {hasSongGen && (
+        <MusicArrangePanel
+          value={normalizeMusicArrange(musicArrange)}
+          disabled={loading || albumRunning}
+          onChange={(next) => onMusicArrangeChange?.(next)}
+        />
       )}
 
       <button

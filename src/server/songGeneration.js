@@ -1,4 +1,6 @@
 import { isS3Configured, downloadClipBuffer } from "./s3.js";
+import { listenVoiceTimbreFromBytes } from "./musicListen.js";
+import { musicArrangeToSongGen, normalizeMusicArrange } from "../lib/musicArrange.js";
 
 /**
  * Client SongGeneration Studio (Pinokio / Demeter).
@@ -48,8 +50,40 @@ async function songGenFetch(baseUrl, path, { method = "GET", body } = {}) {
 }
 
 /**
+ * Charge le buffer de l’extrait vocal perso (S3 / URL).
+ * @returns {Promise<{ buffer: Buffer, mimeType: string } | null>}
+ */
+async function loadVoiceSampleBytes(voiceSample) {
+  if (!voiceSample || typeof voiceSample !== "object") return null;
+  const source = voiceSample.s3Key || voiceSample.url || voiceSample.dataUrl;
+  if (!source) return null;
+
+  if (voiceSample.s3Key && isS3Configured()) {
+    const dl = await downloadClipBuffer(voiceSample.s3Key);
+    return { buffer: dl.buffer, mimeType: dl.mimeType || voiceSample.mimeType || "audio/wav" };
+  }
+  if (/^https?:\/\//i.test(String(source))) {
+    const res = await fetch(source);
+    if (!res.ok) throw new Error(`Téléchargement extrait vocal HTTP ${res.status}`);
+    return {
+      buffer: Buffer.from(await res.arrayBuffer()),
+      mimeType: res.headers.get("content-type") || voiceSample.mimeType || "audio/wav",
+    };
+  }
+  if (typeof voiceSample.dataUrl === "string" && voiceSample.dataUrl.startsWith("data:")) {
+    const raw = voiceSample.dataUrl.replace(/^data:[^;]+;base64,/, "");
+    return {
+      buffer: Buffer.from(raw, "base64"),
+      mimeType: voiceSample.mimeType || "audio/wav",
+    };
+  }
+  return null;
+}
+
+/**
  * Upload un extrait vocal vers SongGen Studio → reference_audio_id.
- * Formats : .wav .mp3 .flac .ogg
+ * ⚠️ Un a cappella en prompt_audio produit souvent une SORTIE VOIX SEULE (le modèle clone le style).
+ * Réserver aux extraits de MORCEAUX MIXÉS (voix+instru), pas à la voix perso.
  */
 export async function uploadSongGenReference(keys, buffer, fileName = "voice-sample.wav") {
   const base = resolveSongGenBaseUrl(keys);
@@ -94,34 +128,13 @@ export async function uploadSongGenReference(keys, buffer, fileName = "voice-sam
 
 /**
  * Charge un voiceSample (S3/URL) dans SongGen et renvoie reference_audio_id.
- * Re-upload à chaque gen : les fichiers locaux Pinokio sont volatils.
+ * À n’utiliser que pour une référence de STYLE mixé — pas pour la voix a cappella perso.
  */
 export async function ensureSongGenVoiceReference(keys, voiceSample) {
-  if (!voiceSample || typeof voiceSample !== "object") return null;
+  const loaded = await loadVoiceSampleBytes(voiceSample);
+  if (!loaded?.buffer?.length) return null;
 
-  const source = voiceSample.s3Key || voiceSample.url || voiceSample.dataUrl;
-  if (!source) return null;
-
-  let buffer;
-  let mimeType = voiceSample.mimeType || "audio/wav";
-  if (voiceSample.s3Key && isS3Configured()) {
-    const dl = await downloadClipBuffer(voiceSample.s3Key);
-    buffer = dl.buffer;
-    mimeType = dl.mimeType || mimeType;
-  } else if (/^https?:\/\//i.test(String(source))) {
-    const res = await fetch(source);
-    if (!res.ok) throw new Error(`Téléchargement extrait vocal HTTP ${res.status}`);
-    buffer = Buffer.from(await res.arrayBuffer());
-    mimeType = res.headers.get("content-type") || mimeType;
-  } else if (typeof voiceSample.dataUrl === "string" && voiceSample.dataUrl.startsWith("data:")) {
-    const raw = voiceSample.dataUrl.replace(/^data:[^;]+;base64,/, "");
-    buffer = Buffer.from(raw, "base64");
-  } else {
-    return null;
-  }
-
-  if (!buffer?.length) throw new Error("Extrait vocal vide");
-
+  const mimeType = loaded.mimeType || "audio/wav";
   const ext =
     /\.wav$/i.test(voiceSample.fileName || "") || /wav/i.test(mimeType)
       ? "wav"
@@ -135,10 +148,35 @@ export async function ensureSongGenVoiceReference(keys, voiceSample) {
 
   const uploaded = await uploadSongGenReference(
     keys,
-    buffer,
+    loaded.buffer,
     voiceSample.fileName || `voice-sample.${ext}`,
   );
   return uploaded.id;
+}
+
+/**
+ * Analyse timbre de la voix perso → texte SongGen (sans prompt_audio).
+ */
+async function resolvePersonalVoiceTimbre(keys, artist) {
+  const sample = artist?.voiceSample;
+  if (!sample) return "";
+  const cached = String(sample.songGenTimbre || sample.analyzedTimbre || "").trim();
+  if (cached) return cached.slice(0, 80);
+
+  if (!keys?.geminiApiKey?.trim()) return "";
+  try {
+    const loaded = await loadVoiceSampleBytes(sample);
+    if (!loaded?.buffer?.length) return "";
+    const dna = await listenVoiceTimbreFromBytes(keys.geminiApiKey, {
+      buffer: loaded.buffer,
+      mimeType: loaded.mimeType,
+      artistName: artist?.name || artist?.aka,
+    });
+    return String(dna?.songGenTimbre || dna?.timbre || "").trim().slice(0, 80);
+  } catch (e) {
+    console.warn("[songgen] analyse voix perso:", e.message);
+    return "";
+  }
 }
 
 /** MiniMax-style [Verse] / [Chorus] → sections SongGeneration Studio. */
@@ -302,35 +340,67 @@ export async function startSongGeneration(
   const stylePrefix = `${vocal.code} vocals, ${vocal.voiceHint}`;
   const lock = artist?.styleLock;
   const voiceSample = artist?.voiceSample;
+  const guideMode =
+    voiceSample && (voiceSample.s3Key || voiceSample.url || voiceSample.dataUrl)
+      ? voiceSample.guideMode === "reference"
+        ? "reference"
+        : "timbre"
+      : null;
+
   let referenceAudioId = null;
-  if (voiceSample?.s3Key || voiceSample?.url || voiceSample?.dataUrl) {
+  let personalTimbre = "";
+
+  if (guideMode === "reference") {
     try {
       referenceAudioId = await ensureSongGenVoiceReference(keys, voiceSample);
-      console.info("[songgen] voice reference:", referenceAudioId);
+      console.info("[songgen] voice reference (UX):", referenceAudioId);
     } catch (e) {
-      console.warn("[songgen] voice reference KO — fallback texte:", e.message);
+      console.warn("[songgen] reference KO — fallback timbre:", e.message);
     }
   }
 
-  const timbre = String(lock?.timbre || "").trim().slice(0, 120);
-  const instruments = Array.isArray(lock?.instruments)
-    ? lock.instruments.filter(Boolean).slice(0, 6).join(", ").slice(0, 160)
-    : "";
+  if (guideMode === "timbre" || (guideMode === "reference" && !referenceAudioId)) {
+    personalTimbre = await resolvePersonalVoiceTimbre(keys, artist);
+  }
+
+  const timbre = String(
+    referenceAudioId ? "" : personalTimbre || lock?.timbre || "",
+  )
+    .trim()
+    .slice(0, 120);
+
+  const arrange = normalizeMusicArrange(artist?.musicArrange);
+  const fromArrange = musicArrangeToSongGen(arrange, {
+    styleLockInstruments: lock?.instruments,
+  });
+
+  const instruments = referenceAudioId
+    ? ""
+    : fromArrange.instruments ||
+      (Array.isArray(lock?.instruments)
+        ? lock.instruments.filter(Boolean).slice(0, 6).join(", ").slice(0, 160)
+        : "") ||
+      "drums, bass, guitar, synths";
+
   const grooveBits = [lock?.rhythmFeel, lock?.tempoFeel].filter(Boolean).join("; ");
-  // Avec audio de référence, Studio priorise le prompt_audio ; on allège le texte pour éviter les conflits
+
+  // En mode reference, Studio ignore souvent les descriptions — on allège.
+  // En mode timbre (défaut), on force mix complet + instru + arrangement UX.
   const custom = referenceAudioId
     ? [stylePrefix, String(prompt || "").trim()].filter(Boolean).join(", ").slice(0, 500)
     : [
         stylePrefix,
-        timbre ? `timbre ${timbre}` : "",
+        personalTimbre ? `personal voice timbre ${personalTimbre}` : "",
+        timbre && !personalTimbre ? `timbre ${timbre}` : "",
         grooveBits ? `groove ${grooveBits}` : "",
+        ...fromArrange.customFragments,
         String(prompt || "").trim(),
       ]
         .filter(Boolean)
         .join(", ")
         .slice(0, 500);
 
-  const lockBpm = Number(lock?.bpm ?? bpm);
+  const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
   const body = {
     title: String(title || "SONOZZ Track").slice(0, 120),
     sections,
@@ -338,7 +408,7 @@ export async function startSongGeneration(
     timbre: referenceAudioId ? "" : timbre || "",
     genre: mapGenre(genre || lock?.genreSummary || lock?.genres?.[0]),
     emotion: String(mood || lock?.mood || "").slice(0, 80),
-    instruments: referenceAudioId ? "" : instruments || "",
+    instruments,
     custom_style: custom || stylePrefix,
     bpm: Math.min(
       200,
@@ -358,7 +428,15 @@ export async function startSongGeneration(
     `gender=${body.gender}`,
     `genre=${body.genre}`,
     `bpm=${body.bpm}`,
-    referenceAudioId ? `ref=${referenceAudioId}` : timbre ? `timbre=${timbre.slice(0, 40)}` : "timbre=∅",
+    `guide=${guideMode || "none"}`,
+    fromArrange.summary ? `arrange=${fromArrange.summary.slice(0, 60)}` : "arrange=∅",
+    referenceAudioId
+      ? `ref=${referenceAudioId}`
+      : personalTimbre
+        ? `voiceTimbre=${personalTimbre.slice(0, 40)}`
+        : timbre
+          ? `timbre=${timbre.slice(0, 40)}`
+          : "timbre=∅",
   );
   const created = await songGenFetch(base, "/api/generate", { method: "POST", body });
   const genId = created?.generation_id;
@@ -369,6 +447,8 @@ export async function startSongGeneration(
     base,
     gender: body.gender,
     referenceAudioId: referenceAudioId || null,
+    personalTimbre: personalTimbre || null,
+    guideMode: guideMode || null,
   };
 }
 

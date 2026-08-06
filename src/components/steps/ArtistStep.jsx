@@ -196,7 +196,13 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
         gender,
         city: city.trim() || undefined,
         photos,
-        voiceSample: voiceSample || undefined,
+        voiceSample:
+          voiceSample?.url || voiceSample?.s3Key
+            ? {
+                ...voiceSample,
+                guideMode: voiceSample.guideMode === "reference" ? "reference" : "timbre",
+              }
+            : undefined,
         genre: resolvedGenre || undefined,
         genres: resolvedGenres.length ? resolvedGenres : undefined,
         language,
@@ -304,8 +310,12 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
               projectId={name.trim() || artist?.slug || "voice"}
               onChange={(sample) => {
                 setVoiceSample(sample);
-                if (artist?.name) {
-                  onPatchArtist?.({ voiceSample: sample || null });
+                if (!artist?.name) return;
+                if (sample?.url || sample?.s3Key) {
+                  onPatchArtist?.({ voiceSample: sample });
+                } else {
+                  // Retrait audio (guideMode peut rester en state local pour le prochain upload)
+                  onPatchArtist?.({ voiceSample: null });
                 }
               }}
             />

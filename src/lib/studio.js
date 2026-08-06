@@ -86,6 +86,7 @@ export const emptyProject = () => ({
   lyrics: null,
   track: null,
   album: null,
+  musicArrange: null,
   cover: null,
   distrokid: null,
   social: null,
