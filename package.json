@@ -11,7 +11,7 @@
     "preview": "astro preview",
     "start": "node ./dist/server/entry.mjs",
     "astro": "astro",
-    "test": "node --test ./tests/career.test.js"
+    "test": "node --test ./tests/career.test.js ./tests/artist-name.test.js"
   },
   "dependencies": {
     "@astrojs/node": "^11.0.3",

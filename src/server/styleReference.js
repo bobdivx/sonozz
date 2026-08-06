@@ -481,6 +481,67 @@ async function resolveMusicBrainzViaItunes(mbHits, query) {
 }
 
 /**
+ * Classe les candidats catalogue pour savoir si un nom de scène est déjà pris.
+ * Collision = match nominal exact (après normalisation).
+ * Warning = préfixe fort / quasi-homonyme.
+ */
+export function classifyArtistNameAvailability(query, candidates = []) {
+  const q = String(query || "").trim();
+  const collisions = [];
+  const warnings = [];
+  const seen = new Set();
+
+  for (const c of candidates) {
+    if (!c?.name) continue;
+    const pure = nameMatchScore(c.name, q);
+    const key = `${c.source || "?"}:${c.id != null ? c.id : norm(c.name)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const entry = {
+      source: c.source || null,
+      id: c.id != null ? String(c.id) : null,
+      name: c.name,
+      url: c.url || null,
+      image: c.image || null,
+      followers: c.followers ?? null,
+      matchScore: Math.round(pure),
+    };
+
+    if (pure >= 1000) collisions.push(entry);
+    else if (pure >= 800) warnings.push(entry);
+  }
+
+  collisions.sort((a, b) => (b.followers || 0) - (a.followers || 0));
+  warnings.sort((a, b) => b.matchScore - a.matchScore);
+
+  return {
+    query: q,
+    available: collisions.length === 0,
+    collisions: collisions.slice(0, 8),
+    warnings: warnings.slice(0, 6),
+  };
+}
+
+/**
+ * Vérifie si un nom de scène est déjà pris sur Spotify / Apple (iTunes) / Deezer / MusicBrainz.
+ */
+export async function checkArtistNameAvailability(keys, artistName) {
+  const query = String(artistName || "")
+    .trim()
+    .slice(0, 80);
+  if (query.length < 2) {
+    return { query, available: true, collisions: [], warnings: [], sources: {} };
+  }
+
+  const { candidates, sources } = await searchStyleArtistCandidates(keys, query);
+  return {
+    ...classifyArtistNameAvailability(query, candidates),
+    sources,
+  };
+}
+
+/**
  * Liste des candidats pour validation utilisateur (Spotify + iTunes + Deezer + MusicBrainz).
  */
 export async function searchStyleArtistCandidates(keys, artistName) {

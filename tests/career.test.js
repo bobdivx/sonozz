@@ -10,6 +10,7 @@ import {
   normalizeOnceDelivery,
   pickLegalPersonName,
   canReuseOnceRelease,
+  resolveProducerName,
 } from "../src/server/once.js";
 import { verifyOnceWebhookSignature } from "../src/server/onceWebhooks.js";
 import { scheduleItemKey } from "../src/server/careerSchedule.js";
@@ -206,6 +207,24 @@ describe("ONCE identifiers & publishing", () => {
 
   it("pickLegalPersonName accepte scripts CJK courts", () => {
     assert.equal(pickLegalPersonName("林 明"), "林 明");
+  });
+
+  it("resolveProducerName priorise le paramètre global", () => {
+    assert.equal(
+      resolveProducerName(
+        { distrokidProducerName: "Studio Sonozz" },
+        { writerLegalName: "Kaelen Moreau", artistName: "Kaelen" },
+      ),
+      "Studio Sonozz",
+    );
+    assert.equal(
+      resolveProducerName({}, { writerLegalName: "Kaelen Moreau", artistName: "Kaelen" }),
+      "Kaelen Moreau",
+    );
+    assert.equal(
+      resolveProducerName({}, { writerLegalName: "", artistName: "Kaelen" }),
+      "Kaelen",
+    );
   });
 
   it("canReuseOnceRelease exige un vrai releaseId", () => {

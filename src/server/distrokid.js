@@ -1,5 +1,6 @@
 import { isUsableRasterImage } from "./imagePersist.js";
 import { languageLabel } from "../lib/studio.js";
+import { resolveProducerName } from "./once.js";
 
 const DISTROKID_UPLOAD_URL = "https://distrokid.com/upload/";
 const DISTROKID_DASHBOARD_URL = "https://distrokid.com/";
@@ -77,6 +78,10 @@ export function buildDistroKidPackage({ keys, artist, track, cover, lyrics }) {
     instrumental: "No",
     primaryGenre: genre,
     recordLabel: keys?.distrokidLabel?.trim() || artistName,
+    producer: resolveProducerName(keys, {
+      writerLegalName: keys?.distrokidLegalName,
+      artistName,
+    }),
     copyrightYear: String(year),
     copyrightOwner: `© ${year} ${artistName}`,
     phonogramYear: String(year),
@@ -134,6 +139,7 @@ export function buildDistroKidPackage({ keys, artist, track, cover, lyrics }) {
     `Artist name : ${form.artistName}`,
     `Release title / Track title : ${form.trackTitle}`,
     `Genre : ${form.genre} / ${form.subgenre}`,
+    `Producer : ${form.producer}`,
     `Explicit : ${form.explicitLyrics} · Langue : ${form.lyricsLanguage}`,
     `Release date : ${form.releaseDate}`,
     "Upload l'artwork (carré) puis le fichier audio WAV/FLAC/MP3",
@@ -169,6 +175,7 @@ export function buildDistroKidPackage({ keys, artist, track, cover, lyrics }) {
       releaseDate,
       explicit,
       label: form.recordLabel,
+      producer: form.producer,
       copyright: form.copyrightOwner,
       phonogram: form.phonogramOwner,
       stores: form.stores,

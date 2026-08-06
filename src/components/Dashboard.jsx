@@ -34,6 +34,7 @@ import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
 import { migrateProjectClipBlobs } from "../lib/clipStore.js";
 import StyleArtistPicker from "./StyleArtistPicker.jsx";
+import ArtistNameField, { isArtistNameBlocked } from "./ArtistNameField.jsx";
 import {
   isClipReady,
   normalizeProjectClips,
@@ -121,7 +122,9 @@ export default function Dashboard() {
     language: "fr",
     styleArtist: "",
     styleArtistPick: null,
+    allowTakenName: false,
   });
+  const [seedNameStatus, setSeedNameStatus] = useState(null);
   const [published, setPublished] = useState(false);
   const [projectId, setProjectId] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -335,6 +338,12 @@ export default function Dashboard() {
     if (seed.styleArtist?.trim() && !seed.styleArtistPick?.id) {
       setError(
         "Choisis et valide un artiste dans les résultats de recherche avant de lancer l'auto.",
+      );
+      return;
+    }
+    if (isArtistNameBlocked(seed.name, seedNameStatus, seed.allowTakenName)) {
+      setError(
+        "Ce nom de scène est déjà pris sur les plateformes de streaming — choisis-en un autre ou force quand même.",
       );
       return;
     }
@@ -582,7 +591,11 @@ export default function Dashboard() {
             <button
               type="button"
               class="btn btn-primary gap-2"
-              disabled={autoRunning || loading}
+              disabled={
+                autoRunning ||
+                loading ||
+                isArtistNameBlocked(seed.name, seedNameStatus, seed.allowTakenName)
+              }
               onClick={runFullAuto}
             >
               {autoRunning ? <span class="loading loading-spinner loading-sm" /> : <Zap size={18} />}
@@ -590,18 +603,17 @@ export default function Dashboard() {
             </button>
           </div>
           <div class="grid gap-3 md:grid-cols-2">
-            <label class="form-control w-full">
-              <span class="label-text mb-1 text-xs text-base-content/55">
-                Nom de scène (ton artiste fictionnel)
-              </span>
-              <input
-                class="input input-bordered bg-base-200"
-                placeholder="Laisser vide pour inventer un nom"
-                value={seed.name}
-                disabled={autoRunning}
-                onInput={(e) => setSeed((s) => ({ ...s, name: e.currentTarget.value }))}
-              />
-            </label>
+            <ArtistNameField
+              value={seed.name}
+              disabled={autoRunning}
+              placeholder="Laisser vide pour inventer un nom"
+              allowTakenName={Boolean(seed.allowTakenName)}
+              onChange={(name) => setSeed((s) => ({ ...s, name }))}
+              onAllowTakenNameChange={(allowTakenName) =>
+                setSeed((s) => ({ ...s, allowTakenName }))
+              }
+              onAvailabilityChange={setSeedNameStatus}
+            />
             <label class="form-control w-full">
               <span class="label-text mb-1 text-xs text-base-content/55">Thème / titre</span>
               <input

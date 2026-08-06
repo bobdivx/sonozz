@@ -8,9 +8,12 @@ import {
   parseGenres,
 } from "../../lib/studio.js";
 import StyleArtistPicker from "../StyleArtistPicker.jsx";
+import ArtistNameField, { isArtistNameBlocked } from "../ArtistNameField.jsx";
 
 export default function ArtistStep({ artist, trends, loading, onGenerate }) {
   const [name, setName] = useState(artist?.name || "");
+  const [allowTakenName, setAllowTakenName] = useState(false);
+  const [nameStatus, setNameStatus] = useState(null);
   const [genres, setGenres] = useState(() => parseGenres(artist?.genres || artist?.genre));
   const [customGenre, setCustomGenre] = useState("");
   const [showCustom, setShowCustom] = useState(false);
@@ -32,6 +35,8 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
   useEffect(() => {
     if (!artist) return;
     setName(artist.name || "");
+    setAllowTakenName(false);
+    setNameStatus(null);
     const parsed = parseGenres(artist.genres || artist.genre);
     const presetValues = new Set(MUSIC_STYLES.map((s) => s.value).filter(Boolean));
     const known = parsed.filter((g) => presetValues.has(g));
@@ -74,10 +79,15 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
     ...(showCustom && customGenre.trim() ? [customGenre.trim()] : []),
   ];
   const resolvedGenre = formatGenres(resolvedGenres);
+  const nameBlocked = isArtistNameBlocked(name, nameStatus, allowTakenName);
 
   function handleGenerate() {
     if (styleArtist.trim() && !styleArtistPick?.id) {
       setPickError("Choisis et valide un artiste dans la liste avant de générer.");
+      return;
+    }
+    if (nameBlocked) {
+      setPickError("Ce nom de scène est déjà pris — choisis-en un autre ou force quand même.");
       return;
     }
     setPickError("");
@@ -89,6 +99,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
       bioHint: bioHint.trim(),
       styleArtist: styleArtistPick?.name || styleArtist.trim() || undefined,
       styleArtistPick: styleArtistPick || undefined,
+      allowTakenName: allowTakenName || undefined,
       trends,
     });
   }
@@ -106,18 +117,14 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
       </header>
 
       <div class="flex flex-col gap-5">
-        <label class="form-control w-full">
-          <span class="label-text mb-1 text-sm text-base-content/60">
-            Nom de scène (ton artiste fictionnel)
-          </span>
-          <input
-            class="input input-bordered w-full bg-base-200"
-            type="text"
-            placeholder="Laisser vide pour générer un nom"
-            value={name}
-            onInput={(e) => setName(e.currentTarget.value)}
-          />
-        </label>
+        <ArtistNameField
+          value={name}
+          disabled={loading}
+          allowTakenName={allowTakenName}
+          onChange={setName}
+          onAllowTakenNameChange={setAllowTakenName}
+          onAvailabilityChange={setNameStatus}
+        />
 
         <fieldset class="space-y-2">
           <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
@@ -229,7 +236,11 @@ export default function ArtistStep({ artist, trends, loading, onGenerate }) {
 
         <button
           class="btn btn-primary gap-2 self-start"
-          disabled={loading || (showCustom && !customGenre.trim() && genres.length === 0)}
+          disabled={
+            loading ||
+            nameBlocked ||
+            (showCustom && !customGenre.trim() && genres.length === 0)
+          }
           onClick={handleGenerate}
         >
           {loading ? <span class="loading loading-spinner loading-sm" /> : <UserRound size={18} />}

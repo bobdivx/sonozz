@@ -66,6 +66,17 @@ export function pickLegalPersonName(...candidates) {
   return null;
 }
 
+/**
+ * Crédit Producer (global Paramètres), sinon writer légal, sinon nom d'artiste.
+ */
+export function resolveProducerName(keys, { writerLegalName = "", artistName = "" } = {}) {
+  const fromKeys = String(keys?.distrokidProducerName || "").trim();
+  if (fromKeys) return fromKeys;
+  const writer = String(writerLegalName || "").trim();
+  if (writer) return writer;
+  return String(artistName || "").trim() || "Unknown Producer";
+}
+
 async function onceFetch(token, path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...options,
@@ -502,9 +513,9 @@ export async function submitOnceRelease(
     );
   }
 
-  // Producer / Engineer : nom d'artiste ou nom légal (contribs professionnels
-  // acceptent un mononyme / nom de scène).
-  const creditName = writerLegalName || artistName;
+  // Producer / Engineer : paramètre global (tous artistes), sinon writer / artiste.
+  // Les contribs pro acceptent un mononyme / nom de scène.
+  const producerName = resolveProducerName(keys, { writerLegalName, artistName });
 
   const title = (track?.title || lyrics?.title || "Untitled").trim();
   const { genre, sub_genre } = mapGenre(artist?.genre || track?.style || "");
@@ -548,8 +559,8 @@ export async function submitOnceRelease(
     cline_owner: label,
     cover_art_file_url: coverArtFileUrl,
     contributors: [
-      { name: creditName, role: "Producer" },
-      { name: creditName, role: "Engineer" },
+      { name: producerName, role: "Producer" },
+      { name: producerName, role: "Engineer" },
     ],
   };
 
@@ -566,8 +577,8 @@ export async function submitOnceRelease(
     cline_owner: label,
     writers: [{ name: writerLegalName }],
     contributors: [
-      { name: creditName, role: "Producer" },
-      { name: creditName, role: "Engineer" },
+      { name: producerName, role: "Producer" },
+      { name: producerName, role: "Engineer" },
     ],
   };
 
@@ -676,6 +687,7 @@ export async function submitOnceRelease(
     isInstrumental: isInstrumental ? "Yes" : "No",
     releaseDate: releaseDateISO(days),
     recordLabel: label,
+    producer: producerName,
     copyrightOwner: `© ${year} ${label}`,
     phonogramOwner: `℗ ${year} ${label}`,
     stores: ["Spotify", "Apple Music", "YouTube Music", "TikTok", "Amazon"],
@@ -709,6 +721,7 @@ export async function submitOnceRelease(
     title,
     artist: artistName,
     legalName: writerLegalName,
+    producer: producerName,
     genre,
     sub_genre,
     stores: form.stores,
@@ -729,6 +742,7 @@ export async function submitOnceRelease(
       releaseId,
       artist: artistName,
       legalName: writerLegalName,
+      producer: producerName,
       title,
       genre,
       sub_genre,

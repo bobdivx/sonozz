@@ -1,7 +1,10 @@
 import { generateVisual } from "./images.js";
 import { fetchDeezerCharts } from "./deezer.js";
 import { prepareSpotifyRelease, getSpotifyAccess, spotifySearchContext } from "./spotify.js";
-import { resolveStyleReference } from "./styleReference.js";
+import {
+  checkArtistNameAvailability,
+  resolveStyleReference,
+} from "./styleReference.js";
 import { submitOnceRelease } from "./once.js";
 import { generateMusicWithReplicate } from "./replicate.js";
 import {
@@ -317,6 +320,19 @@ function withGenderInPrompt(prompt, genderEn) {
   return `${genderEn}. ${base}`.trim();
 }
 
+function formatNameCollisions(collisions = []) {
+  return collisions
+    .slice(0, 3)
+    .map((c) => {
+      const fans =
+        c.followers != null && Number.isFinite(Number(c.followers))
+          ? ` · ${Number(c.followers).toLocaleString("fr-FR")} fans`
+          : "";
+      return `${c.name} (${c.source || "?"}${fans})`;
+    })
+    .join(", ");
+}
+
 export async function runArtist({
   keys,
   name,
@@ -327,6 +343,7 @@ export async function runArtist({
   language,
   styleArtist,
   styleArtistPick,
+  allowTakenName = false,
 }) {
   requireTextLlm(keys);
   const lang = resolveLanguage(language);
@@ -343,6 +360,16 @@ export async function runArtist({
   const styleArtistHint = String(styleArtist || styleArtistPick?.name || "")
     .trim()
     .slice(0, 120);
+  const forceTaken = Boolean(allowTakenName);
+
+  if (forcedName && !forceTaken) {
+    const availability = await checkArtistNameAvailability(keys, forcedName);
+    if (!availability.available) {
+      throw new Error(
+        `Le nom « ${forcedName} » est déjà pris sur les plateformes de streaming : ${formatNameCollisions(availability.collisions)}. Choisis un autre nom de scène.`,
+      );
+    }
+  }
 
   /** @type {Awaited<ReturnType<typeof resolveStyleReference>> | null} */
   let styleLock = null;
@@ -466,6 +493,35 @@ portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." o
   if (forcedName) {
     data.name = forcedName;
     data.aka = forcedName;
+  } else if (data.name && !forceTaken) {
+    // Nom inventé par le LLM : refuser s'il est déjà pris sur les stores
+    let availability = await checkArtistNameAvailability(keys, data.name);
+    if (!availability.available) {
+      const blocked = formatNameCollisions(availability.collisions);
+      const alt = await llmJson(
+        keys,
+        `Le nom de scène "${data.name}" est DÉJÀ PRIS sur Spotify / Apple Music / Deezer (${blocked}).
+Propose un autre nom de scène FICTIONNEL, crédible, dans le même style musical, clairement DISTINCT.
+JSON strict: { "name": string, "aka": string }
+"name" et "aka" = le même nouveau nom. Interdit: "${data.name}" et toute variante orthographique proche.`,
+      );
+      const nextName = String(alt?.name || alt?.aka || "")
+        .trim()
+        .slice(0, 80);
+      if (!nextName || nextName.toLowerCase() === String(data.name).toLowerCase()) {
+        throw new Error(
+          `Le nom généré « ${data.name} » est déjà pris (${blocked}). Relance avec un nom de scène libre.`,
+        );
+      }
+      data.name = nextName;
+      data.aka = String(alt?.aka || nextName).trim().slice(0, 80) || nextName;
+      availability = await checkArtistNameAvailability(keys, data.name);
+      if (!availability.available) {
+        throw new Error(
+          `Impossible de trouver un nom libre (dernier essai « ${data.name} » déjà pris : ${formatNameCollisions(availability.collisions)}). Saisis un nom de scène manuellement.`,
+        );
+      }
+    }
   }
 
   // Force paramètres depuis le style lock (la vérité catalogue+LLM)
@@ -853,6 +909,7 @@ export async function runFullPipeline({
   language,
   styleArtist,
   styleArtistPick,
+  allowTakenName = false,
   onProgress,
 }) {
   const log = [];
@@ -881,6 +938,7 @@ export async function runFullPipeline({
     language,
     styleArtist,
     styleArtistPick,
+    allowTakenName,
   });
 
   push("lyrics", "Écriture des paroles…");

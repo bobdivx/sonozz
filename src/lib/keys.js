@@ -170,6 +170,14 @@ export const KEY_FIELDS = [
         inputType: "text",
       },
       {
+        id: "distrokidProducerName",
+        label: "Nom de producteur",
+        placeholder: "Ex. Studio Sonozz / Alex Dupont",
+        help: "Crédit Producer (et Engineer) appliqué à tous les artistes / releases ONCE. Si vide → nom légal writer.",
+        required: false,
+        inputType: "text",
+      },
+      {
         id: "distrokidLabel",
         label: "Label / copyright",
         placeholder: "Par défaut = nom artiste",

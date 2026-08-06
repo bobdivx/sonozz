@@ -172,6 +172,7 @@ export const api = {
   },
   saveKeysRemote: (keys) => request("/api/keys", { keys }),
   searchStyleArtists: (query) => request("/api/style-artists", { query }),
+  checkArtistName: (query) => request("/api/artist-name-check", { query }),
   tiktokAuthUrl: (payload = {}) =>
     request("/api/tiktok/auth", {
       redirectUri:
