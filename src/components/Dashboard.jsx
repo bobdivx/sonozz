@@ -984,6 +984,34 @@ export default function Dashboard() {
                           : project.cover,
                     lyrics: project.lyrics,
                     submit: true,
+                    reuseRelease: false,
+                  }),
+                "distrokid",
+                6,
+              )
+            }
+            onReuse={() =>
+              runStep(
+                () =>
+                  api.distrokid({
+                    artist: project.artist,
+                    track: project.track,
+                    cover:
+                      project.cover?.imageUrl
+                        ? project.cover
+                        : project.artist?.imageUrl
+                          ? {
+                              ...(project.cover || {}),
+                              imageUrl: project.artist.imageUrl,
+                              prompt:
+                                project.cover?.prompt ||
+                                `Album cover style portrait for ${project.artist?.name || "artist"}`,
+                            }
+                          : project.cover,
+                    lyrics: project.lyrics,
+                    submit: true,
+                    reuseRelease: true,
+                    releaseId: project.distrokid?.releaseId,
                   }),
                 "distrokid",
                 6,

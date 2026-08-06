@@ -741,7 +741,16 @@ export async function runSpotify({ keys, artist, track, cover }) {
   return prepareSpotifyRelease(keys, { artist, track, cover });
 }
 
-export async function runDistroKid({ keys, artist, track, cover, lyrics, submit = true }) {
+export async function runDistroKid({
+  keys,
+  artist,
+  track,
+  cover,
+  lyrics,
+  submit = true,
+  reuseRelease = false,
+  releaseId = null,
+}) {
   const onceToken = keys?.onceApiToken?.trim();
   if (!onceToken) {
     throw new Error("Token ONCE requis dans Paramètres pour publier vers Spotify.");
@@ -759,7 +768,15 @@ export async function runDistroKid({ keys, artist, track, cover, lyrics, submit 
     /* optional */
   }
 
-  const once = await submitOnceRelease(onceToken, { artist, track, cover, lyrics, keys });
+  const once = await submitOnceRelease(onceToken, {
+    artist,
+    track,
+    cover,
+    lyrics,
+    keys,
+    reuseRelease: Boolean(reuseRelease),
+    releaseId: releaseId || null,
+  });
   return {
     provider: "once",
     ...once,

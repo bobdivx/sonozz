@@ -1,5 +1,21 @@
 import { useState } from "preact/hooks";
-import { Check, Circle, ExternalLink, Download, Copy, PackageOpen, Rocket, ImagePlus } from "lucide-preact";
+import {
+  Check,
+  Circle,
+  ExternalLink,
+  Download,
+  Copy,
+  PackageOpen,
+  Rocket,
+  ImagePlus,
+  RefreshCw,
+} from "lucide-preact";
+
+function canReuseOnceRelease(distrokid) {
+  const id = String(distrokid?.releaseId || "").trim();
+  if (!id || id.startsWith("once_") || id.length < 8) return false;
+  return true;
+}
 
 function downloadJson(filename, data) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -48,11 +64,13 @@ export default function DistroKidStep({
   loading,
   onConfigure,
   onPrepare,
+  onReuse,
   onGoToCover,
   configured,
 }) {
   const form = distrokid?.form;
   const isOnce = distrokid?.provider === "once";
+  const canReuse = canReuseOnceRelease(distrokid);
   const [artBroken, setArtBroken] = useState(false);
 
   const rawEphemeral =
@@ -105,7 +123,8 @@ export default function DistroKidStep({
       <header class="space-y-2">
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">ONCE → Spotify</h2>
         <p class="max-w-xl text-base-content/70">
-          Soumission automatique via l’API ONCE (crédits débités à l’envoi).
+          Soumission automatique via l’API ONCE. Une nouvelle release consomme 1–2 crédits ; republier
+          la même release ne re-débite pas.
         </p>
       </header>
 
@@ -114,14 +133,26 @@ export default function DistroKidStep({
           <PackageOpen size={18} />
           {configured ? "Token ONCE — modifier" : "Configurer ONCE"}
         </button>
+        {canReuse && typeof onReuse === "function" ? (
+          <button
+            type="button"
+            class="btn btn-primary gap-2"
+            disabled={loading || !track}
+            onClick={onReuse}
+            title={`Met à jour et resoumet ${distrokid.releaseId} (débit déjà clé sur cet id)`}
+          >
+            {loading ? <span class="loading loading-spinner loading-sm" /> : <RefreshCw size={18} />}
+            {loading ? "Republication…" : "Republier (même release · 0 crédit)"}
+          </button>
+        ) : null}
         <button
           type="button"
-          class="btn btn-primary gap-2"
+          class={`btn gap-2 ${canReuse ? "btn-outline" : "btn-primary"}`}
           disabled={loading || !track}
           onClick={onPrepare}
         >
           {loading ? <span class="loading loading-spinner loading-sm" /> : <Rocket size={18} />}
-          {loading ? "Envoi…" : "Publier via ONCE"}
+          {loading ? "Envoi…" : canReuse ? "Nouvelle release (1–2 crédits)" : "Publier via ONCE"}
         </button>
         {!liveArtwork && (
           <button type="button" class="btn btn-secondary gap-2" onClick={onGoToCover}>
@@ -129,6 +160,13 @@ export default function DistroKidStep({
           </button>
         )}
       </div>
+
+      {canReuse && (
+        <p class="text-sm text-base-content/60">
+          Release existante <code class="text-xs">{distrokid.releaseId}</code> (statut{" "}
+          {distrokid.status}). Préfère « Republier » pour corriger le payload sans perdre de crédits.
+        </p>
+      )}
 
       {!track && <p class="text-sm text-warning">Morceau requis avant distribution.</p>}
       {track && artworkExpired && (
@@ -193,7 +231,12 @@ export default function DistroKidStep({
               </h3>
               <p class="text-sm text-base-content/60">
                 Statut : {distrokid.status}
-                {distrokid.credits?.balance != null ? ` · crédits ${distrokid.credits.balance}` : ""}
+                {distrokid.reusedRelease ? " · republication" : ""}
+                {distrokid.credits?.debited != null
+                  ? ` · débit ${distrokid.credits.debited}`
+                  : distrokid.credits?.balance != null
+                    ? ` · crédits ${distrokid.credits.balance}`
+                    : ""}
                 {distrokid.eta ? ` · ${distrokid.eta}` : ""}
               </p>
               {distrokid.account && (

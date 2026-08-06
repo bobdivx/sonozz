@@ -466,7 +466,20 @@ function isAiGeneratedTrack(track) {
   return /minimax|songgen|replicate|suno|udio|ai/.test(p);
 }
 
-export async function submitOnceRelease(token, { artist, track, cover, lyrics, keys }) {
+/**
+ * Republier une release existante (draft / Attention Needed / Rejected)
+ * sans créer un nouvel id — le débit ONCE est clé sur releaseId (pas de double charge).
+ */
+export function canReuseOnceRelease(distrokid) {
+  const id = String(distrokid?.releaseId || "").trim();
+  if (!id || id.startsWith("once_") || id.length < 8) return false;
+  return true;
+}
+
+export async function submitOnceRelease(
+  token,
+  { artist, track, cover, lyrics, keys, releaseId: existingReleaseId = null, reuseRelease = false },
+) {
   const artistName = (keys?.distrokidArtistName?.trim() || artist?.name || artist?.aka || "Unknown Artist").trim();
   // Writers = nom légal complet (règle ONCE : ≥ 2 parties, ≥ 2 chars par partie Latin).
   // Fabriquer un nom est interdit — on renvoie null puis on lève une erreur claire.
@@ -479,6 +492,13 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
   if (!writerLegalName) {
     throw new Error(
       "Nom légal writer manquant. ONCE exige un prénom + nom complet pour le writer (règle DSP, jamais un mononyme fabriqué). Renseigne « Nom légal writer » dans Paramètres → Distribution ONCE (ex. « Kaelen Moreau »), puis republie.",
+    );
+  }
+
+  const reuseId = reuseRelease ? String(existingReleaseId || "").trim() : "";
+  if (reuseRelease && !reuseId) {
+    throw new Error(
+      "Republication : releaseId ONCE manquant. Ouvre le projet qui a déjà une release, ou publie une nouvelle release.",
     );
   }
 
@@ -498,7 +518,7 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
   const me = await onceMe(token);
   const credits = await onceCredits(token);
   const profile = me?.profile || me;
-  const creditBalance = credits?.balance ?? credits?.credits ?? credits?.available ?? null;
+  const creditBalanceBefore = credits?.balance ?? credits?.credits ?? credits?.available ?? null;
 
   const coverArtFileUrl = await resolveCoverFileUrl(token, cover, { artist, track, keys });
   const audioFileUrl = await resolveAudioFileUrl(token, track);
@@ -563,44 +583,74 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
     trackPayload.audio_file_url = audioFileUrl;
   }
 
-  // Always save draft first
+  // Draft : sans release_id = nouveau ; avec = upsert sur la même release (0 nouveau crédit)
+  const draftBody = {
+    release: releasePayload,
+    tracks: [trackPayload],
+    mode: "replace",
+  };
+  if (reuseId) draftBody.release_id = reuseId;
+
   const draft = await onceFetch(token, "/drafts", {
     method: "POST",
-    body: JSON.stringify({
-      release: releasePayload,
-      tracks: [trackPayload],
-      mode: "replace",
-    }),
+    body: JSON.stringify(draftBody),
   });
 
   let submitted = null;
   let status = "draft-saved";
   let warning;
 
+  // Nouvelle release : besoin de crédits. Republie (même id) : débit déjà clé sur releaseId.
+  const needsFreshCredits = !reuseId;
   if (!audioFileUrl) {
     warning =
       "Draft ONCE créé, mais audio public manquant. Ajoute Replicate (ou une URL audio) puis resoumets.";
-  } else if (creditBalance === 0) {
+  } else if (needsFreshCredits && creditBalanceBefore === 0) {
     status = "draft-only";
     warning =
       "Draft ONCE créé, mais 0 crédit. Achète des crédits sur once.app/pricing (1–2 $ / titre) puis resoumets.";
   } else {
     try {
+      const submitBody = {
+        release: releasePayload,
+        tracks: [{ ...trackPayload, audio_file_url: audioFileUrl }],
+      };
+      if (reuseId) submitBody.release_id = reuseId;
+
       submitted = await onceFetch(token, "/releases", {
         method: "POST",
-        body: JSON.stringify({
-          release: releasePayload,
-          tracks: [{ ...trackPayload, audio_file_url: audioFileUrl }],
-        }),
+        body: JSON.stringify(submitBody),
       });
       status = "submitted";
     } catch (e) {
       status = "draft-only";
-      warning = `Draft OK, soumission refusée : ${e.message}`;
+      warning = reuseId
+        ? `Draft mis à jour (${reuseId.slice(0, 8)}…), soumission refusée : ${e.message}. Essaie Retry Distribution sur beta.once.app/releases/${reuseId}.`
+        : `Draft OK, soumission refusée : ${e.message}`;
     }
   }
 
-  const releaseId = submitted?.id || submitted?.releaseId || draft?.releaseId || draft?.release_id;
+  const releaseId =
+    reuseId ||
+    submitted?.id ||
+    submitted?.releaseId ||
+    draft?.releaseId ||
+    draft?.release_id;
+
+  let creditBalanceAfter = creditBalanceBefore;
+  let creditsRawAfter = credits;
+  try {
+    creditsRawAfter = await onceCredits(token);
+    creditBalanceAfter =
+      creditsRawAfter?.balance ?? creditsRawAfter?.credits ?? creditsRawAfter?.available ?? creditBalanceBefore;
+  } catch {
+    /* ignore */
+  }
+
+  const creditsDebited =
+    typeof creditBalanceBefore === "number" && typeof creditBalanceAfter === "number"
+      ? Math.max(0, creditBalanceBefore - creditBalanceAfter)
+      : null;
 
   const langLabelMap = {
     fr: "French",
@@ -631,15 +681,30 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
     stores: ["Spotify", "Apple Music", "YouTube Music", "TikTok", "Amazon"],
   };
 
+  const releaseDashboard = releaseId
+    ? `https://beta.once.app/releases/${releaseId}`
+    : "https://once.app/";
+
+  const reused = Boolean(reuseId);
+  const note = reused
+    ? creditsDebited === 0
+      ? `Republication sur la même release (${releaseId}) — aucun crédit supplémentaire débité.`
+      : `Republication sur ${releaseId}${creditsDebited != null ? ` · ${creditsDebited} crédit(s) débité(s)` : ""}.`
+    : "Distribution automatique via API ONCE (crédits débités à la soumission).";
+
   return {
     provider: "once",
     status,
     releaseId,
     packageId: releaseId || `once_${Date.now().toString(36)}`,
+    reusedRelease: reused,
+    creditsDebited,
     account: profile?.email || profile?.first_name || profile?.id || null,
     credits: {
-      balance: creditBalance,
-      raw: credits,
+      balance: creditBalanceAfter,
+      before: creditBalanceBefore,
+      debited: creditsDebited,
+      raw: creditsRawAfter,
     },
     title,
     artist: artistName,
@@ -673,17 +738,33 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
       containsAi,
       isInstrumental,
       language: audioLang,
+      reusedRelease: reused,
     },
-    dashboardUrl: "https://once.app/",
+    dashboardUrl: releaseDashboard,
     eta: "Souvent 24–72 h via ONCE → Spotify",
     warning,
-    note: "Distribution automatique via API ONCE (crédits débités à la soumission).",
+    note,
     checklist: [
       { label: "Token ONCE", ok: true },
       { label: "Jaquette uploadée", ok: Boolean(coverArtFileUrl) },
       { label: "Audio uploadé", ok: Boolean(audioFileUrl) },
-      { label: "Draft créé", ok: Boolean(draft) },
+      {
+        label: reused ? "Draft mis à jour (même release)" : "Draft créé",
+        ok: Boolean(draft),
+      },
       { label: "Release soumise", ok: status === "submitted" },
+      ...(reused
+        ? [
+            {
+              label: "Sans nouveau crédit",
+              ok: creditsDebited === 0 || creditsDebited == null,
+              tip:
+                creditsDebited > 0
+                  ? `${creditsDebited} crédit(s) débités — vérifie l’historique ONCE`
+                  : "Débit clé sur releaseId (idempotent)",
+            },
+          ]
+        : []),
     ],
   };
 }

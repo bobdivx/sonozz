@@ -9,6 +9,7 @@ import {
   publishingReadiness,
   normalizeOnceDelivery,
   pickLegalPersonName,
+  canReuseOnceRelease,
 } from "../src/server/once.js";
 import { verifyOnceWebhookSignature } from "../src/server/onceWebhooks.js";
 import { scheduleItemKey } from "../src/server/careerSchedule.js";
@@ -205,6 +206,20 @@ describe("ONCE identifiers & publishing", () => {
 
   it("pickLegalPersonName accepte scripts CJK courts", () => {
     assert.equal(pickLegalPersonName("林 明"), "林 明");
+  });
+
+  it("canReuseOnceRelease exige un vrai releaseId", () => {
+    assert.equal(canReuseOnceRelease(null), false);
+    assert.equal(canReuseOnceRelease({ releaseId: "once_abc" }), false);
+    assert.equal(canReuseOnceRelease({ releaseId: "short" }), false);
+    assert.equal(
+      canReuseOnceRelease({ releaseId: "6f0f0a4e-1111-2222-3333-444444444444", status: "draft-only" }),
+      true,
+    );
+    assert.equal(
+      canReuseOnceRelease({ releaseId: "6f0f0a4e-1111-2222-3333-444444444444", status: "submitted" }),
+      true,
+    );
   });
 
   it("normalizeOnceDelivery extrait Spotify", () => {
