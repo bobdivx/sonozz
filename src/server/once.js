@@ -43,26 +43,27 @@ function detectExplicit(lyricsText = "") {
   return /\b(fuck|shit|bitch|nigg|pute|encul|pd\b|salaud)/i.test(lyricsText);
 }
 
+const CJK_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
 /**
- * ONCE exige un nom légal complet (prénom + nom) pour writers / contributors.
- * Le nom de scène mononyme (ex. "Kaelen") est refusé.
+ * ONCE exige un nom légal complet (writer registrations).
+ * Règle : ≥ 2 parties séparées, chaque partie Latin ≥ 2 caractères
+ * (une partie 100 % CJK peut être 1 caractère).
+ * Renvoie null si aucun candidat valide — l'appelant doit alors demander
+ * un nom légal à l'utilisateur au lieu d'en fabriquer un.
  */
-function toLegalPersonName(...candidates) {
+export function pickLegalPersonName(...candidates) {
   for (const raw of candidates) {
     const name = String(raw || "")
       .replace(/\s+/g, " ")
       .trim();
     if (!name) continue;
-    const parts = name.split(" ").filter(Boolean);
-    if (parts.length >= 2) return name;
+    const parts = name.split(/\s+|·/).filter(Boolean);
+    if (parts.length < 2) continue;
+    const allValid = parts.every((p) => (CJK_SCRIPT.test(p) ? true : p.length >= 2));
+    if (allValid) return name;
   }
-
-  // Fallback : étendre un mononyme en "Prénom Nom"
-  const mono = String(candidates.find((c) => String(c || "").trim()) || "Artist Unknown")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")[0];
-  return `${mono} Moreau`;
+  return null;
 }
 
 async function onceFetch(token, path, options = {}) {
@@ -458,32 +459,46 @@ async function resolveAudioFileUrl(token, track) {
   return uploaded.fileUrl || uploaded.file_url || uploaded.url;
 }
 
+/** SONOZZ pipeline = AI-generated music (SongGeneration / MiniMax / Replicate). */
+function isAiGeneratedTrack(track) {
+  const p = String(track?.provider || "").toLowerCase();
+  if (!p || p === "brief") return true; // pipeline SONOZZ = IA par défaut
+  return /minimax|songgen|replicate|suno|udio|ai/.test(p);
+}
+
 export async function submitOnceRelease(token, { artist, track, cover, lyrics, keys }) {
   const artistName = (keys?.distrokidArtistName?.trim() || artist?.name || artist?.aka || "Unknown Artist").trim();
-  // Writers/contributors = nom légal (prénom + nom), pas le seul nom de scène
-  const legalName = toLegalPersonName(
+  // Writers = nom légal complet (règle ONCE : ≥ 2 parties, ≥ 2 chars par partie Latin).
+  // Fabriquer un nom est interdit — on renvoie null puis on lève une erreur claire.
+  const writerLegalName = pickLegalPersonName(
     keys?.distrokidLegalName,
     artist?.legalName,
     artist?.realName,
-    keys?.distrokidArtistName,
-    artist?.name,
-    artist?.aka,
   );
+
+  if (!writerLegalName) {
+    throw new Error(
+      "Nom légal writer manquant. ONCE exige un prénom + nom complet pour le writer (règle DSP, jamais un mononyme fabriqué). Renseigne « Nom légal writer » dans Paramètres → Distribution ONCE (ex. « Kaelen Moreau »), puis republie.",
+    );
+  }
+
+  // Producer / Engineer : nom d'artiste ou nom légal (contribs professionnels
+  // acceptent un mononyme / nom de scène).
+  const creditName = writerLegalName || artistName;
+
   const title = (track?.title || lyrics?.title || "Untitled").trim();
   const { genre, sub_genre } = mapGenre(artist?.genre || track?.style || "");
   const year = String(new Date().getFullYear());
   const label = keys?.distrokidLabel?.trim() || `${artistName}`;
   const days = Number(keys?.distrokidReleaseDays) || 14;
   const explicit = detectExplicit(lyrics?.text || "");
+  const containsAi = isAiGeneratedTrack(track);
+  const isInstrumental = track?.hasVocals === false;
 
   const me = await onceMe(token);
   const credits = await onceCredits(token);
   const profile = me?.profile || me;
   const creditBalance = credits?.balance ?? credits?.credits ?? credits?.available ?? null;
-
-  if (creditBalance === 0) {
-    // Still allow draft creation, but warn before paid submit
-  }
 
   const coverArtFileUrl = await resolveCoverFileUrl(token, cover, { artist, track, keys });
   const audioFileUrl = await resolveAudioFileUrl(token, track);
@@ -513,8 +528,8 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
     cline_owner: label,
     cover_art_file_url: coverArtFileUrl,
     contributors: [
-      { name: legalName, role: "Producer" },
-      { name: legalName, role: "Engineer" },
+      { name: creditName, role: "Producer" },
+      { name: creditName, role: "Engineer" },
     ],
   };
 
@@ -524,16 +539,25 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
     explicit_flag: explicit,
     track_type: "original",
     language: audioLang,
+    contains_ai: containsAi,
     pline_year: year,
     pline_owner: label,
     cline_year: year,
     cline_owner: label,
-    writers: [{ name: legalName }],
+    writers: [{ name: writerLegalName }],
     contributors: [
-      { name: legalName, role: "Producer" },
-      { name: legalName, role: "Engineer" },
+      { name: creditName, role: "Producer" },
+      { name: creditName, role: "Engineer" },
     ],
   };
+
+  if (isInstrumental) {
+    trackPayload.is_instrumental = true;
+  }
+
+  if (lyrics?.text && !isInstrumental) {
+    trackPayload.lyrics = String(lyrics.text).trim();
+  }
 
   if (audioFileUrl) {
     trackPayload.audio_file_url = audioFileUrl;
@@ -578,13 +602,28 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
 
   const releaseId = submitted?.id || submitted?.releaseId || draft?.releaseId || draft?.release_id;
 
+  const langLabelMap = {
+    fr: "French",
+    en: "English",
+    es: "Spanish",
+    pt: "Portuguese",
+    it: "Italian",
+    de: "German",
+    ar: "Arabic",
+    ja: "Japanese",
+    ko: "Korean",
+    zh: "Chinese",
+  };
+
   const form = {
     artistName,
     trackTitle: title,
     genre,
     subgenre: sub_genre,
-    lyricsLanguage: "French",
+    lyricsLanguage: langLabelMap[audioLang] || audioLang.toUpperCase(),
     explicitLyrics: explicit ? "Yes" : "No",
+    containsAi: containsAi ? "Yes" : "No",
+    isInstrumental: isInstrumental ? "Yes" : "No",
     releaseDate: releaseDateISO(days),
     recordLabel: label,
     copyrightOwner: `© ${year} ${label}`,
@@ -604,10 +643,12 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
     },
     title,
     artist: artistName,
-    legalName,
+    legalName: writerLegalName,
     genre,
     sub_genre,
     stores: form.stores,
+    containsAi,
+    isInstrumental,
     coverArtFileUrl,
     audioFileUrl,
     draft,
@@ -622,13 +663,16 @@ export async function submitOnceRelease(token, { artist, track, cover, lyrics, k
       provider: "once",
       releaseId,
       artist: artistName,
-      legalName,
+      legalName: writerLegalName,
       title,
       genre,
       sub_genre,
       releaseDate: form.releaseDate,
       label,
       stores: form.stores,
+      containsAi,
+      isInstrumental,
+      language: audioLang,
     },
     dashboardUrl: "https://once.app/",
     eta: "Souvent 24–72 h via ONCE → Spotify",
