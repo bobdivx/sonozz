@@ -28,7 +28,7 @@ import SocialStep from "./steps/SocialStep.jsx";
 import HistoryPanel from "./HistoryPanel.jsx";
 import AppShell from "./AppShell.jsx";
 import ClipTrackPlayer from "./ClipTrackPlayer.jsx";
-import { STEPS, emptyProject, MUSIC_STYLES, MUSIC_LANGUAGES, formatGenres } from "../lib/studio.js";
+import { STEPS, emptyProject, MUSIC_STYLES, MUSIC_LANGUAGES, formatGenres, createAlbumId, createAlbumTrackId } from "../lib/studio.js";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
@@ -99,6 +99,7 @@ export default function Dashboard() {
   const [step, setStep] = useState(1);
   const [project, setProject] = useState(emptyProject);
   const [loading, setLoading] = useState(false);
+  const [stepProgress, setStepProgress] = useState(null);
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoProgress, setAutoProgress] = useState({
     step: null,
@@ -265,6 +266,7 @@ export default function Dashboard() {
       return;
     }
     setLoading(true);
+    setStepProgress(null);
     setError("");
     const stepLabel = STEP_STATUS_LABEL[key] || key;
     const stepJobId = trackStepJob({
@@ -282,11 +284,20 @@ export default function Dashboard() {
     });
     try {
       patchJob(stepJobId, { progress: 35, message: `Génération ${stepLabel}…` });
-      let result = await fn();
+      const onProgress = (p) => {
+        if (!p) return;
+        setStepProgress(p);
+        patchJob(stepJobId, {
+          progress: Math.max(8, Math.min(96, Number(p.percent) || 35)),
+          message: p.message || `Génération ${stepLabel}…`,
+        });
+      };
+      let result = await fn(onProgress);
 
       // Persiste immédiatement l’audio Replicate sur S3 (sinon expire ~1 h)
       if (key === "track" && result?.audioUrl) {
         patchJob(stepJobId, { progress: 70, message: "Persistance audio S3…" });
+        setStepProgress({ percent: 70, message: "Persistance audio S3…" });
         try {
           const saved = await persistAudioRemote(result.audioUrl, projectId || "anon");
           if (saved?.audioUrl) {
@@ -335,6 +346,255 @@ export default function Dashboard() {
       });
     } finally {
       setLoading(false);
+      setStepProgress(null);
+    }
+  }
+
+  /**
+   * Album autonome : le lead (project.track) est gardé ; génère N-1 titres (paroles + audio).
+   * @param {number} totalCount total souhaité (lead inclus)
+   */
+  async function runAlbumGeneration(totalCount = 8) {
+    if (!keysReady(loadKeys())) {
+      setError("Configure d'abord un LLM (Gemini ou Ollama) dans Paramètres.");
+      window.location.href = "/parametres?section=ia";
+      return;
+    }
+    if (!project.track?.audioUrl) {
+      setError("Valide d’abord le single lead (audio prêt) avant de lancer l’album.");
+      return;
+    }
+    if (!project.artist || !project.lyrics) {
+      setError("Artiste et paroles du lead requis.");
+      return;
+    }
+
+    const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
+    const extra = total - 1;
+    setLoading(true);
+    setStepProgress({ percent: 2, message: "Planification de la tracklist…" });
+    setError("");
+
+    const jobId = trackStepJob({
+      type: "step",
+      label: `Album · ${total} titres`,
+      projectId,
+      stepKey: "4",
+      message: "Planification tracklist…",
+      progress: 4,
+      href: projectId ? `/?project=${projectId}&step=4` : "/?step=4",
+    });
+
+    let working = {
+      ...project,
+      album: {
+        id: createAlbumId(),
+        title: "",
+        concept: "",
+        targetCount: total,
+        status: "running",
+        tracks: [
+          {
+            id: createAlbumTrackId(),
+            index: 1,
+            role: "lead",
+            theme: project.lyrics?.theme || project.track?.title || "",
+            workingTitle: project.lyrics?.title || project.track?.title || "Lead",
+            lyrics: project.lyrics,
+            track: project.track,
+            status: "done",
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    setProject(working);
+
+    try {
+      const plan = await api.albumPlan({
+        artist: project.artist,
+        lyrics: project.lyrics,
+        track: project.track,
+        count: extra,
+      });
+
+      working = {
+        ...working,
+        album: {
+          ...working.album,
+          title: plan.albumTitle || working.album.title,
+          concept: plan.concept || "",
+          tracks: [
+            working.album.tracks[0],
+            ...(plan.tracks || []).map((t, i) => ({
+              id: `${createAlbumTrackId()}_${i}`,
+              index: i + 2,
+              role: "album",
+              theme: t.theme,
+              workingTitle: t.workingTitle || `Piste ${i + 2}`,
+              lyrics: null,
+              track: null,
+              status: "pending",
+            })),
+          ],
+          updatedAt: new Date().toISOString(),
+        },
+      };
+      setProject(working);
+      await persist(working, {
+        stepKey: "album",
+        eventType: "album",
+        message: `Tracklist « ${working.album.title} » planifiée`,
+      });
+
+      const slots = working.album.tracks.filter((t) => t.role !== "lead");
+      const lang = project.lyrics?.language || project.artist?.language || "fr";
+
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        const basePct = Math.round(((i + 0.15) / slots.length) * 90) + 5;
+
+        const mark = (patch) => {
+          working = {
+            ...working,
+            album: {
+              ...working.album,
+              tracks: working.album.tracks.map((t) =>
+                t.id === slot.id ? { ...t, ...patch } : t,
+              ),
+              updatedAt: new Date().toISOString(),
+            },
+          };
+          setProject(working);
+        };
+
+        mark({ status: "lyrics", error: undefined });
+        setStepProgress({
+          percent: basePct,
+          message: `Titre ${slot.index}/${total} — paroles « ${slot.workingTitle} »…`,
+        });
+        patchJob(jobId, {
+          progress: basePct,
+          message: `Paroles ${slot.index}/${total}…`,
+        });
+
+        let lyricsI;
+        try {
+          lyricsI = await api.lyrics({
+            theme: `${slot.workingTitle} — ${slot.theme}`,
+            artist: project.artist,
+            trends: project.trends,
+            language: lang,
+          });
+        } catch (e) {
+          mark({ status: "error", error: e.message || "Paroles échouées" });
+          continue;
+        }
+        mark({ lyrics: lyricsI, workingTitle: lyricsI?.title || slot.workingTitle });
+
+        setStepProgress({
+          percent: basePct + 4,
+          message: `Titre ${slot.index}/${total} — composition audio…`,
+        });
+        patchJob(jobId, {
+          progress: basePct + 4,
+          message: `Audio ${slot.index}/${total}…`,
+        });
+        mark({ status: "audio" });
+
+        let trackI;
+        try {
+          trackI = await api.track(
+            { lyrics: lyricsI, artist: project.artist },
+            (p) => {
+              const local = Math.min(
+                96,
+                basePct + 4 + Math.round(((Number(p?.percent) || 0) / 100) * (80 / slots.length)),
+              );
+              setStepProgress({
+                percent: local,
+                message: `Titre ${slot.index}/${total} — ${p?.message || "composition…"}`,
+              });
+              patchJob(jobId, {
+                progress: local,
+                message: `${slot.index}/${total} · ${p?.message || "audio…"}`,
+              });
+            },
+          );
+        } catch (e) {
+          mark({ status: "error", error: e.message || "Audio échoué" });
+          continue;
+        }
+
+        if (trackI?.audioUrl) {
+          try {
+            const saved = await persistAudioRemote(trackI.audioUrl, projectId || "anon");
+            if (saved?.audioUrl) {
+              trackI = {
+                ...trackI,
+                audioUrl: saved.audioUrl,
+                audioS3Key: saved.s3Key,
+                audioEphemeral: false,
+              };
+            }
+          } catch {
+            /* audio temporaire ok */
+          }
+        }
+
+        mark({
+          track: trackI,
+          status: trackI?.audioUrl ? "done" : "error",
+          error: trackI?.audioUrl ? undefined : "Pas d’audio",
+        });
+
+        await persist(working, {
+          stepKey: "album",
+          eventType: "album-track",
+          message: `Album · titre ${slot.index} « ${lyricsI?.title || slot.workingTitle} »`,
+        });
+      }
+
+      const doneCount = working.album.tracks.filter((t) => t.status === "done").length;
+      const failed = working.album.tracks.filter((t) => t.status === "error").length;
+      working = {
+        ...working,
+        album: {
+          ...working.album,
+          status: failed && doneCount <= 1 ? "error" : "done",
+          updatedAt: new Date().toISOString(),
+        },
+      };
+      setProject(working);
+      await persist(working, {
+        stepKey: "album",
+        eventType: "album",
+        message: `Album terminé · ${doneCount}/${total} titres`,
+      });
+      finishStepJob(jobId, {
+        ok: failed === 0,
+        message:
+          failed > 0
+            ? `Album partiel · ${doneCount} OK, ${failed} en erreur`
+            : `Album prêt · ${doneCount} titres`,
+        progress: 100,
+      });
+      setStepProgress({ percent: 100, message: `Album prêt · ${doneCount}/${total}` });
+    } catch (e) {
+      setError(e.message || "Album interrompu");
+      working = {
+        ...working,
+        album: {
+          ...(working.album || {}),
+          status: "error",
+          updatedAt: new Date().toISOString(),
+        },
+      };
+      setProject(working);
+      finishStepJob(jobId, { ok: false, message: e.message || "Album en erreur" });
+    } finally {
+      setLoading(false);
+      setTimeout(() => setStepProgress(null), 2500);
     }
   }
 
@@ -819,11 +1079,23 @@ export default function Dashboard() {
           <LoaderCircle size={18} class="shrink-0 animate-spin text-primary" />
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium text-base-content">
-              Génération en cours — étape {STEPS.find((s) => s.id === step)?.label || step}
+              {stepProgress?.message
+                ? stepProgress.message
+                : `Génération en cours — étape ${STEPS.find((s) => s.id === step)?.label || step}`}
             </p>
             <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-base-300">
-              <div class="pipeline-indeterminate h-full w-1/3 rounded-full bg-primary" />
+              {typeof stepProgress?.percent === "number" ? (
+                <div
+                  class="h-full rounded-full bg-primary transition-[width] duration-500"
+                  style={{ width: `${Math.max(4, Math.min(100, stepProgress.percent))}%` }}
+                />
+              ) : (
+                <div class="pipeline-indeterminate h-full w-1/3 rounded-full bg-primary" />
+              )}
             </div>
+            {typeof stepProgress?.percent === "number" && (
+              <p class="mt-1 text-xs text-base-content/55">{stepProgress.percent}%</p>
+            )}
           </div>
         </div>
       )}
@@ -903,15 +1175,31 @@ export default function Dashboard() {
             track={project.track}
             lyrics={project.lyrics}
             artist={project.artist}
+            album={project.album}
             loading={loading}
+            progress={step === 4 ? stepProgress : null}
             projectId={projectId}
             distrokid={project.distrokid}
             onOpenSettings={() => {
               window.location.href = "/parametres?section=ia";
             }}
             onGenerate={() =>
-              runStep(() => api.track({ lyrics: project.lyrics, artist: project.artist }), "track", 4)
+              runStep(
+                (onProgress) =>
+                  api.track({ lyrics: project.lyrics, artist: project.artist }, onProgress),
+                "track",
+                4,
+              )
             }
+            onGenerateAlbum={(totalCount) => runAlbumGeneration(totalCount)}
+            onSelectAlbumTrack={(entry) => {
+              if (!entry?.lyrics && !entry?.track) return;
+              setProject((prev) => ({
+                ...prev,
+                ...(entry.lyrics ? { lyrics: entry.lyrics } : {}),
+                ...(entry.track ? { track: entry.track } : {}),
+              }));
+            }}
             onAttachAudio={(audioUrl, meta = {}) => {
               setError("");
               setProject((prev) => {

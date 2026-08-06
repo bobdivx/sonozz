@@ -14,20 +14,7 @@ import {
   Disc3,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
-
-function streamSrc(audioUrl) {
-  if (!audioUrl) return "";
-  if (audioUrl.startsWith("data:audio") || audioUrl.startsWith("/")) return audioUrl;
-  try {
-    if (typeof location !== "undefined") {
-      const u = new URL(audioUrl, location.href);
-      if (u.origin === location.origin) return audioUrl;
-    }
-  } catch {
-    /* fallthrough */
-  }
-  return `/api/audio/stream?url=${encodeURIComponent(audioUrl)}`;
-}
+import { playableAudioSrc } from "../lib/audioResolve.js";
 
 function formatTime(sec) {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
@@ -131,7 +118,7 @@ export default function PlayerPage() {
     if (!audio || !current?.audioUrl) return;
 
     setAudioError("");
-    const src = streamSrc(current.audioUrl);
+    const src = playableAudioSrc(current.audioUrl);
     if (audio.dataset.trackId !== current.id) {
       audio.dataset.trackId = current.id;
       audio.src = src;

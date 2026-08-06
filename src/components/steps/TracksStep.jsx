@@ -11,10 +11,12 @@ import {
   RefreshCw,
   CheckCircle2,
   XCircle,
+  Library,
 } from "lucide-preact";
 import { loadKeys, saveKeysAsync } from "../../lib/keys.js";
-import { persistAudioRemote } from "../../lib/audioResolve.js";
+import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
 import { api } from "../../lib/apiClient.js";
+import { ALBUM_SIZES } from "../../lib/studio.js";
 
 function songGenUrlFromKeys(keys) {
   return String(keys?.songGenBaseUrl || "")
@@ -26,9 +28,13 @@ export default function TracksStep({
   track,
   lyrics,
   loading,
+  progress = null,
+  album = null,
   projectId,
   distrokid,
   onGenerate,
+  onGenerateAlbum,
+  onSelectAlbumTrack,
   onAttachAudio,
   onOpenSettings,
 }) {
@@ -44,6 +50,7 @@ export default function TracksStep({
   const [onceReleaseId, setOnceReleaseId] = useState("");
   const [onceBusy, setOnceBusy] = useState(false);
   const [onceHint, setOnceHint] = useState("");
+  const [albumSize, setAlbumSize] = useState(8);
   const onceFileRef = useRef(null);
   const probeSeq = useRef(0);
 
@@ -277,11 +284,23 @@ export default function TracksStep({
   const audioReady = Boolean(track?.audioUrl);
   const isOnceOriginal = track?.provider === "once-original";
   const canGenerateAudio = hasSongGen || hasReplicate;
+  const albumRunning = album?.status === "running";
+  const albumTracks = Array.isArray(album?.tracks) ? album.tracks : [];
+  const albumDoneCount = albumTracks.filter((t) => t.status === "done").length;
   const onceDashboard =
     distrokid?.dashboardUrl ||
     (onceReleaseId.trim()
       ? `https://beta.once.app/releases/${onceReleaseId.trim()}`
       : "https://beta.once.app/");
+
+  function albumStatusLabel(st) {
+    if (st === "done") return "OK";
+    if (st === "lyrics") return "Paroles…";
+    if (st === "audio") return "Audio…";
+    if (st === "error") return "Erreur";
+    if (st === "pending") return "En attente";
+    return st || "—";
+  }
 
   return (
     <section class="animate-rise space-y-6">
@@ -395,7 +414,7 @@ export default function TracksStep({
 
       <button
         class="btn btn-primary gap-2"
-        disabled={loading || !lyrics || (hasSongGen && probeStatus === "error")}
+        disabled={loading || !lyrics || (hasSongGen && probeStatus === "error") || albumRunning}
         onClick={onGenerate}
         title={
           hasSongGen && probeStatus === "error"
@@ -409,15 +428,28 @@ export default function TracksStep({
       >
         {loading ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={18} />}
         {loading
-          ? hasSongGen
-            ? "Composition SongGen (3–6 min)…"
-            : "Composition MiniMax (2–5 min)…"
+          ? typeof progress?.percent === "number"
+            ? `${progress.percent}% — ${progress.message || "Composition…"}`
+            : hasSongGen
+              ? "Composition SongGen (3–6 min)…"
+              : "Composition MiniMax (2–5 min)…"
           : canGenerateAudio
             ? hasSongGen
               ? "Générer la chanson (SongGen local)"
               : "Générer la chanson (MiniMax + paroles)"
             : "Générer le brief (sans audio)"}
       </button>
+      {loading && typeof progress?.percent === "number" && (
+        <div class="space-y-1.5" aria-live="polite">
+          <div class="h-2 overflow-hidden rounded-full bg-base-300">
+            <div
+              class="h-full rounded-full bg-primary transition-[width] duration-500"
+              style={{ width: `${Math.max(4, Math.min(100, progress.percent))}%` }}
+            />
+          </div>
+          <p class="text-xs text-base-content/60">{progress.message}</p>
+        </div>
+      )}
       {!lyrics && <p class="text-sm text-warning">Générez d'abord les paroles (étape 3).</p>}
       {hasSongGen && probeStatus === "error" && (
         <p class="text-sm text-error">
@@ -443,6 +475,111 @@ export default function TracksStep({
             </div>
           </div>
 
+          {audioReady && (
+            <div class="space-y-3 border border-primary/25 bg-primary/5 p-4">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                  <p class="flex items-center gap-2 text-sm font-medium">
+                    <Library size={16} class="text-primary" />
+                    Album autonome
+                  </p>
+                  <p class="mt-1 text-xs text-base-content/60">
+                    Le single lead est validé. Génère le reste de l’album (paroles + audio) sans
+                    intervention — même style / même provider.
+                  </p>
+                </div>
+                <select
+                  class="select select-bordered select-sm bg-base-100"
+                  value={albumSize}
+                  disabled={loading || album?.status === "running"}
+                  onChange={(e) => setAlbumSize(Number(e.currentTarget.value) || 8)}
+                >
+                  {ALBUM_SIZES.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="button"
+                class="btn btn-outline btn-sm gap-2"
+                disabled={loading || !canGenerateAudio || (hasSongGen && probeStatus === "error")}
+                onClick={() => onGenerateAlbum?.(albumSize)}
+              >
+                {albumRunning ? (
+                  <span class="loading loading-spinner loading-xs" />
+                ) : (
+                  <Library size={14} />
+                )}
+                {albumRunning
+                  ? `Album en cours (${albumDoneCount}/${album.targetCount || albumSize})…`
+                  : album?.status === "done"
+                    ? `Relancer un album (${albumSize} titres)`
+                    : `Créer l’album (${albumSize} titres)`}
+              </button>
+              {album?.title && (
+                <p class="text-xs text-base-content/55">
+                  <span class="font-medium text-base-content/80">{album.title}</span>
+                  {album.concept ? ` — ${album.concept}` : ""}
+                </p>
+              )}
+              {albumTracks.length > 0 && (
+                <ul class="divide-y divide-base-content/10 border border-base-content/10 bg-base-100/60">
+                  {albumTracks.map((entry) => (
+                    <li
+                      key={entry.id}
+                      class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+                    >
+                      <div class="min-w-0 flex-1">
+                        <p class="truncate font-medium">
+                          {entry.index}.{" "}
+                          {entry.lyrics?.title || entry.workingTitle || entry.theme || "Sans titre"}
+                          {entry.role === "lead" ? (
+                            <span class="badge badge-primary badge-xs ml-2">Lead</span>
+                          ) : null}
+                        </p>
+                        <p class="truncate text-xs text-base-content/50">{entry.theme}</p>
+                        {entry.error && <p class="text-xs text-error">{entry.error}</p>}
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span
+                          class={`badge badge-sm ${
+                            entry.status === "done"
+                              ? "badge-success"
+                              : entry.status === "error"
+                                ? "badge-error"
+                                : entry.status === "pending"
+                                  ? "badge-ghost"
+                                  : "badge-warning"
+                          }`}
+                        >
+                          {albumStatusLabel(entry.status)}
+                        </span>
+                        {(entry.track?.audioUrl || entry.lyrics) && (
+                          <button
+                            type="button"
+                            class="btn btn-ghost btn-xs"
+                            disabled={loading}
+                            onClick={() => onSelectAlbumTrack?.(entry)}
+                          >
+                            Ouvrir
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {albumRunning && (
+                <p class="text-xs text-base-content/50">
+                  Laisse l’onglet ouvert — chaque titre prend ~3–6 min (SongGen) ou ~2–4 min
+                  (MiniMax).
+                </p>
+              )}
+            </div>
+          )}
+
           {audioReady ? (
             <>
               {(track.audioEphemeral || track.warning) && (
@@ -460,7 +597,38 @@ export default function TracksStep({
                   />
                 ))}
               </div>
-              <audio controls class="w-full" src={track.audioUrl} />
+              <audio controls class="w-full" src={playableAudioSrc(track.audioUrl)} preload="metadata" />
+              {/\/api\/audio\//i.test(String(track.audioUrl || "")) && (
+                <p class="text-xs text-base-content/50">
+                  Lecture via proxy Astro (SongGen FLAC / LAN). Si 0:00, clique « Re-sauver audio »
+                  ci-dessous.
+                </p>
+              )}
+              {track.audioUrl && (
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs gap-1"
+                  disabled={loading}
+                  onClick={async () => {
+                    setImportError("");
+                    try {
+                      const saved = await persistAudioRemote(track.audioUrl, projectId || "anon");
+                      if (saved?.audioUrl) {
+                        onAttachAudio?.(saved.audioUrl, {
+                          provider: track.provider || "songgeneration-studio",
+                          s3Key: saved.s3Key,
+                          persisted: true,
+                          note: "Audio re-persisté (mime corrigé).",
+                        });
+                      }
+                    } catch (e) {
+                      setImportError(e.message || "Re-persistance impossible");
+                    }
+                  }}
+                >
+                  Re-sauver audio (S3)
+                </button>
+              )}
             </>
           ) : (
             <div class="space-y-3 border border-base-content/10 bg-base-200/50 p-4">

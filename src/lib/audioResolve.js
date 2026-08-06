@@ -8,13 +8,33 @@ function looksLikeAudio(buffer) {
   const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const head = String.fromCharCode(...u8.subarray(0, 16)).toLowerCase();
   if (head.includes("<!doctype") || head.includes("<html")) return false;
-  // MP3 / ID3 / WAV / Ogg / ftyp
+  // MP3 / ID3 / WAV / Ogg / ftyp / fLaC
   if (u8[0] === 0xff && (u8[1] & 0xe0) === 0xe0) return true;
   if (u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) return true;
   if (u8[0] === 0x52 && u8[1] === 0x49 && u8[2] === 0x46) return true;
   if (u8[0] === 0x4f && u8[1] === 0x67 && u8[2] === 0x67) return true;
+  if (u8[0] === 0x66 && u8[1] === 0x4c && u8[2] === 0x61 && u8[3] === 0x43) return true;
   if (u8[4] === 0x66 && u8[5] === 0x74 && u8[6] === 0x79) return true;
   return u8.byteLength > 10_000; // gros binaire inconnu mais plausible
+}
+
+/**
+ * URL jouable dans <audio> : proxy si cross-origin / LAN Pinokio (évite CORS + mixed content).
+ */
+export function playableAudioSrc(audioUrl) {
+  if (!audioUrl) return "";
+  if (audioUrl.startsWith("data:audio") || audioUrl.startsWith("blob:") || audioUrl.startsWith("/")) {
+    return audioUrl;
+  }
+  try {
+    if (typeof location !== "undefined") {
+      const u = new URL(audioUrl, location.href);
+      if (u.origin === location.origin) return audioUrl;
+    }
+  } catch {
+    /* fallthrough */
+  }
+  return `/api/audio/stream?url=${encodeURIComponent(audioUrl)}`;
 }
 
 function base64ToArrayBuffer(base64) {

@@ -198,6 +198,19 @@ export async function pollSongGeneration(keys, generationId) {
         ? `~${Math.round(secs / 60)}:${String(Math.round(secs % 60)).padStart(2, "0")}`
         : "~2–4 min";
     console.info("[songgen] OK", genId, url);
+    // Vérifie que le fichier audio répond (évite URL fantôme côté UI)
+    try {
+      const probe = await fetch(url, { method: "HEAD" });
+      if (!probe.ok) {
+        const get = await fetch(url, { headers: { Range: "bytes=0-64" } });
+        if (!get.ok) {
+          throw new Error(`Audio SongGen HTTP ${get.status} — fichier pas encore prêt ?`);
+        }
+      }
+    } catch (e) {
+      if (/Audio SongGen/i.test(String(e?.message || ""))) throw e;
+      console.warn("[songgen] probe audio:", e?.message || e);
+    }
     return {
       done: true,
       status: st,
@@ -216,6 +229,9 @@ export async function pollSongGeneration(keys, generationId) {
     status: st || "processing",
     progress: status?.progress,
     message: status?.message || "",
+    stage: status?.stage || null,
+    elapsedSeconds: Number(status?.elapsed_seconds) || 0,
+    estimatedSeconds: Number(status?.estimated_seconds) || 0,
     generationId: genId,
   };
 }

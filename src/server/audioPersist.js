@@ -26,6 +26,7 @@ export function isAudioDataUrl(url = "") {
 function extFromMime(mime = "") {
   if (/mpeg|mp3/i.test(mime)) return "mp3";
   if (/wav/i.test(mime)) return "wav";
+  if (/flac/i.test(mime)) return "flac";
   if (/ogg/i.test(mime)) return "ogg";
   if (/mp4|m4a|aac/i.test(mime)) return "m4a";
   if (/webm/i.test(mime)) return "webm";
@@ -37,6 +38,15 @@ function sniffMime(buffer, fallback = "audio/mpeg") {
   // ID3 / MP3
   if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) return "audio/mpeg";
   if (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) return "audio/mpeg";
+  // fLaC (SongGeneration Studio)
+  if (
+    buffer[0] === 0x66 &&
+    buffer[1] === 0x4c &&
+    buffer[2] === 0x61 &&
+    buffer[3] === 0x43
+  ) {
+    return "audio/flac";
+  }
   // RIFF WAVE
   if (
     buffer[0] === 0x52 &&
@@ -110,7 +120,7 @@ export async function loadAudioBuffer(source) {
   const ct = (res.headers.get("content-type") || "").split(";")[0].trim();
   const mimeType = sniffMime(
     buffer,
-    /audio\//i.test(ct) ? ct : isEphemeralAudioUrl(source) ? "audio/mpeg" : "audio/mpeg",
+    /audio\//i.test(ct) ? ct : "application/octet-stream",
   );
 
   return { buffer, mimeType };

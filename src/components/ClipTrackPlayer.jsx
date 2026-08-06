@@ -1,19 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Pause, Play, Music2 } from "lucide-preact";
-
-function streamSrc(audioUrl) {
-  if (!audioUrl) return "";
-  if (audioUrl.startsWith("data:audio") || audioUrl.startsWith("/")) return audioUrl;
-  try {
-    if (typeof location !== "undefined") {
-      const u = new URL(audioUrl, location.href);
-      if (u.origin === location.origin) return audioUrl;
-    }
-  } catch {
-    /* fallthrough */
-  }
-  return `/api/audio/stream?url=${encodeURIComponent(audioUrl)}`;
-}
+import { playableAudioSrc } from "../lib/audioResolve.js";
 
 function formatTime(sec) {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
@@ -44,7 +31,7 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
     const audio = audioRef.current;
     if (!audio || !audioUrl) return;
 
-    const src = streamSrc(audioUrl);
+    const src = playableAudioSrc(audioUrl);
     if (audio.dataset.src !== src) {
       audio.dataset.src = src;
       audio.src = src;

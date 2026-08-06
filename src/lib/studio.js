@@ -85,6 +85,7 @@ export const emptyProject = () => ({
   artist: null,
   lyrics: null,
   track: null,
+  album: null,
   cover: null,
   distrokid: null,
   social: null,
@@ -92,3 +93,19 @@ export const emptyProject = () => ({
   clips: [],
   activeClipId: null,
 });
+
+/** Tailles d’album proposées (lead inclus). */
+export const ALBUM_SIZES = [
+  { value: 5, label: "EP · 5 titres" },
+  { value: 8, label: "Album · 8 titres" },
+  { value: 10, label: "Album · 10 titres" },
+  { value: 12, label: "Album · 12 titres" },
+];
+
+export function createAlbumId() {
+  return `alb_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function createAlbumTrackId() {
+  return `at_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}

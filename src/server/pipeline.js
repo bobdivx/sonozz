@@ -1049,6 +1049,9 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
       status: tick.status,
       progress: tick.progress,
       message: tick.message || "",
+      stage: tick.stage || null,
+      elapsedSeconds: tick.elapsedSeconds || 0,
+      estimatedSeconds: tick.estimatedSeconds || 0,
       generationId,
       musicKind: kind,
     };

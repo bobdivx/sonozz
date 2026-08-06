@@ -19,16 +19,81 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function formatElapsed(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}m${String(r).padStart(2, "0")}s` : `${r}s`;
+}
+
+/** Pourcentage affiché — SongGen reste à ~35 % pendant le long infer ; on lisse avec l’ETA. */
+function formatTrackProgress(tick = {}) {
+  let percent = Number(tick.progress);
+  if (!Number.isFinite(percent)) percent = 0;
+  percent = Math.max(0, Math.min(100, percent));
+
+  const elapsed = Number(tick.elapsedSeconds) || 0;
+  const estimated = Number(tick.estimatedSeconds) || 0;
+  const msg = String(tick.message || "").trim();
+  const status = String(tick.status || "processing");
+
+  // Phase génération GPU : progress API souvent figé à 35 — interpoler via ETA
+  if (
+    status === "processing" &&
+    percent >= 30 &&
+    percent < 95 &&
+    estimated > 0 &&
+    elapsed > 0
+  ) {
+    const timePct = 35 + Math.min(55, (elapsed / estimated) * 55);
+    percent = Math.max(percent, Math.min(95, Math.round(timePct)));
+  } else if (status === "processing" && percent < 5 && elapsed > 5) {
+    percent = Math.min(30, 5 + Math.floor(elapsed / 4));
+  }
+
+  let message = msg || (status === "pending" ? "En file…" : "Génération…");
+  if (elapsed > 0) {
+    const eta =
+      estimated > elapsed
+        ? ` · reste ~${formatElapsed(estimated - elapsed)}`
+        : estimated > 0
+          ? " · finalisation…"
+          : "";
+    message = `${message} (${formatElapsed(elapsed)}${eta})`;
+  }
+
+  return {
+    percent: Math.max(0, Math.min(99, Math.round(percent))),
+    message,
+    status,
+    elapsedSeconds: elapsed,
+    estimatedSeconds: estimated,
+    musicKind: tick.musicKind || null,
+  };
+}
+
 /**
  * Start + poll court (évite Cloudflare 524 — gen audio 2–10 min).
+ * @param {object} payload
+ * @param {(p: { percent: number, message: string }) => void} [onProgress]
  */
-async function trackWithPoll(payload = {}) {
+async function trackWithPoll(payload = {}, onProgress) {
+  onProgress?.({ percent: 5, message: "Démarrage génération audio…" });
   const started = await request("/api/track", { ...payload, action: "start" });
   if (!started?.pollNeeded) {
     const { pollNeeded: _p, musicKind: _m, generationId: _g, draft, ...rest } = started || {};
     if (draft && typeof draft === "object") return { ...draft, ...rest };
     return rest;
   }
+
+  onProgress?.({
+    percent: 12,
+    message:
+      started.musicKind === "songgen"
+        ? "SongGen démarré — attente GPU…"
+        : "MiniMax démarré — attente Replicate…",
+    musicKind: started.musicKind,
+  });
 
   const maxPolls = started.musicKind === "songgen" ? 220 : 180;
   const intervalMs = started.musicKind === "songgen" ? 3000 : 2500;
@@ -41,7 +106,11 @@ async function trackWithPoll(payload = {}) {
       musicKind: started.musicKind,
       draft: started.draft,
     });
-    if (tick?.done && tick.track) return tick.track;
+    if (tick?.done && tick.track) {
+      onProgress?.({ percent: 100, message: "Audio prêt" });
+      return tick.track;
+    }
+    onProgress?.(formatTrackProgress({ ...tick, musicKind: started.musicKind }));
   }
 
   throw new Error(
@@ -55,7 +124,9 @@ export const api = {
   trends: (seed = {}) => request("/api/trends", seed),
   artist: (payload) => request("/api/artist", payload),
   lyrics: (payload) => request("/api/lyrics", payload),
-  track: (payload) => trackWithPoll(payload),
+  track: (payload, onProgress) => trackWithPoll(payload, onProgress),
+  /** Planifie les thèmes des pistes restantes d’un album (hors lead). */
+  albumPlan: (payload) => request("/api/album", { action: "plan", ...payload }),
   /** Ping SongGeneration Studio (URL des clés) — ne lance pas de génération. */
   probeSongGen: () => request("/api/track", { action: "probe-songgen" }),
   cover: (payload) => request("/api/cover", payload),
