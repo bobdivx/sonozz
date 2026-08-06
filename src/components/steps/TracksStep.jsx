@@ -27,6 +27,7 @@ function songGenUrlFromKeys(keys) {
 export default function TracksStep({
   track,
   lyrics,
+  artist,
   loading,
   progress = null,
   album = null,
@@ -287,6 +288,15 @@ export default function TracksStep({
   const albumRunning = album?.status === "running";
   const albumTracks = Array.isArray(album?.tracks) ? album.tracks : [];
   const albumDoneCount = albumTracks.filter((t) => t.status === "done").length;
+  const voiceCode = String(artist?.gender || "").toLowerCase();
+  const voiceLabel =
+    voiceCode === "female"
+      ? "Femme"
+      : voiceCode === "male"
+        ? "Homme"
+        : voiceCode === "nonbinary"
+          ? "Non-binaire"
+          : null;
   const onceDashboard =
     distrokid?.dashboardUrl ||
     (onceReleaseId.trim()
@@ -412,9 +422,41 @@ export default function TracksStep({
         </div>
       )}
 
+      {artist && (
+        <div class="border border-base-content/10 bg-base-200/30 px-4 py-3 text-sm">
+          <p class="text-base-content/70">
+            Profil utilisé : <span class="font-medium text-base-content">{artist.name || "—"}</span>
+            {" · "}
+            Style :{" "}
+            <span class="font-medium text-base-content">
+              {artist.genre || artist.genres?.join(" × ") || "—"}
+            </span>
+            {" · "}
+            Voix SongGen :{" "}
+            {voiceLabel ? (
+              <span class="font-medium text-primary">{voiceLabel}</span>
+            ) : (
+              <span class="font-medium text-warning">non défini</span>
+            )}
+          </p>
+          {!voiceLabel && (
+            <p class="mt-1 text-xs text-warning">
+              Retourne à l’étape Artiste, choisis Homme/Femme, régénère le profil, puis relance le
+              morceau.
+            </p>
+          )}
+        </div>
+      )}
+
       <button
         class="btn btn-primary gap-2"
-        disabled={loading || !lyrics || (hasSongGen && probeStatus === "error") || albumRunning}
+        disabled={
+          loading ||
+          !lyrics ||
+          (hasSongGen && probeStatus === "error") ||
+          albumRunning ||
+          (hasSongGen && !voiceLabel)
+        }
         onClick={onGenerate}
         title={
           hasSongGen && probeStatus === "error"

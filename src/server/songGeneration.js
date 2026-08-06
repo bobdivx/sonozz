@@ -105,24 +105,63 @@ function mapGender(gender) {
   const g = String(gender || "")
     .toLowerCase()
     .normalize("NFD")
-    .replace(/\p{M}/gu, "");
-  if (/^(female|woman|femme|f)$/.test(g)) return "female";
-  if (/^(nonbinary|non-binary|nonbinaire|nb|androgyne)$/.test(g)) return "female";
+    .replace(/\p{M}/gu, "")
+    .trim();
+  if (/^(female|woman|femme|f|fille)$/.test(g) || /\bfemale\b|\bfemme\b|\bwoman\b/.test(g)) {
+    return "female";
+  }
+  if (
+    /^(nonbinary|non-binary|nonbinaire|nb|androgyne)$/.test(g) ||
+    /\bnon-?binary\b|\bnonbinaire\b/.test(g)
+  ) {
+    // SongGen n’a que male|female — on garde female comme avant, mais le prompt force androgyne
+    return "female";
+  }
+  if (/^(male|man|homme|m|garcon|garçon|masculin)$/.test(g) || /\bmale\b|\bhomme\b|\bman\b/.test(g)) {
+    return "male";
+  }
+  // Défaut sûr pour « mode moi » : mieux vaut explicite côté appelant
   return "male";
 }
 
+/** Empêche un styleLock / voice LLM d’écraser le sexe choisi (ex. artiste favori femme → voix femme). */
+export function resolveVocalGender(artist) {
+  const code = mapGender(artist?.gender || artist?.visualIdentity?.genderLock);
+  const rawVoice = String(artist?.voice || artist?.styleLock?.vocalStyle || "").trim();
+  const conflictsFemale =
+    code === "male" && /\bfemale\b|\bfemme\b|\bwoman\b|\bsoprano\b|\bgirl\b/i.test(rawVoice);
+  const conflictsMale =
+    code === "female" &&
+    /\bmale\b|\bhomme\b|\bman\b|\bbaritone\b|\btenor\b|\bbass\b/i.test(rawVoice) &&
+    !/\bfemale\b|\bfemme\b|\bwoman\b/i.test(rawVoice);
+
+  const voiceHint =
+    code === "female" ? "female vocals, woman singer" : "male vocals, man singer";
+
+  return {
+    code,
+    voiceHint,
+    voiceForPrompt: conflictsFemale || conflictsMale || !rawVoice ? voiceHint : rawVoice,
+  };
+}
+
 function mapGenre(genre = "") {
-  const g = String(genre || "").toLowerCase();
-  if (/hip[\s-]?hop|rap|trap/.test(g)) return "Hip-Hop";
-  if (/r&?b|soul/.test(g)) return "R&B";
-  if (/rock|indie rock/.test(g)) return "Rock";
+  // Prendre le 1er segment (évite « Indie Pop × Rock » → match rock trop agressif)
+  const first = String(genre || "")
+    .split(/\s*[×xX|,/]\s*/)[0]
+    .trim()
+    .toLowerCase();
+  const g = first || String(genre || "").toLowerCase();
+  if (/hip[\s-]?hop|rap|trap|drill/.test(g)) return "Hip-Hop";
+  if (/r&?b|soul|neo-?soul/.test(g)) return "R&B";
   if (/metal/.test(g)) return "Metal";
+  if (/rock|indie rock|punk|garage/.test(g)) return "Rock";
   if (/jazz/.test(g)) return "Jazz";
-  if (/folk|acoustic/.test(g)) return "Folk";
-  if (/electro|edm|dance|house|techno/.test(g)) return "Electronic";
-  if (/reggae/.test(g)) return "Reggae";
+  if (/folk|acoustic|chanson/.test(g)) return "Folk";
+  if (/electro|edm|dance|house|techno|hyperpop|synth/.test(g)) return "Electronic";
+  if (/reggae|dancehall|afro/.test(g)) return "Reggae";
   if (/pop/.test(g)) return "Pop";
-  return String(genre || "Pop").split(/[,/|]/)[0].trim().slice(0, 40) || "Pop";
+  return String(genre || "Pop").split(/[,/|×]/)[0].trim().slice(0, 40) || "Pop";
 }
 
 export async function testSongGeneration(keys) {
@@ -154,29 +193,66 @@ export async function testSongGeneration(keys) {
  */
 export async function startSongGeneration(
   keys,
-  { prompt, lyrics, title, gender, genre, mood, bpm } = {},
+  { prompt, lyrics, title, gender, genre, mood, bpm, artist } = {},
 ) {
   const base = resolveSongGenBaseUrl(keys);
   const sections = lyricsToSections(lyrics);
+  const vocal = resolveVocalGender({
+    gender: gender || artist?.gender,
+    voice: artist?.voice,
+    styleLock: artist?.styleLock,
+    visualIdentity: artist?.visualIdentity,
+  });
+  const stylePrefix = `${vocal.code} vocals, ${vocal.voiceHint}`;
+  const lock = artist?.styleLock;
+  const timbre = String(lock?.timbre || "").trim().slice(0, 120);
+  const instruments = Array.isArray(lock?.instruments)
+    ? lock.instruments.filter(Boolean).slice(0, 6).join(", ").slice(0, 160)
+    : "";
+  const grooveBits = [lock?.rhythmFeel, lock?.tempoFeel].filter(Boolean).join("; ");
+  const custom = [
+    stylePrefix,
+    timbre ? `timbre ${timbre}` : "",
+    grooveBits ? `groove ${grooveBits}` : "",
+    String(prompt || "").trim(),
+  ]
+    .filter(Boolean)
+    .join(", ")
+    .slice(0, 500);
+
+  const lockBpm = Number(lock?.bpm ?? bpm);
   const body = {
     title: String(title || "SONOZZ Track").slice(0, 120),
     sections,
-    gender: mapGender(gender),
-    timbre: "",
-    genre: mapGenre(genre),
-    emotion: String(mood || "").slice(0, 80),
-    instruments: "",
-    custom_style: String(prompt || "").slice(0, 500) || null,
-    bpm: Math.min(200, Math.max(60, Number(bpm) || 110)),
+    gender: vocal.code,
+    timbre: timbre || "",
+    genre: mapGenre(genre || lock?.genreSummary || lock?.genres?.[0]),
+    emotion: String(mood || lock?.mood || "").slice(0, 80),
+    instruments: instruments || "",
+    custom_style: custom || stylePrefix,
+    bpm: Math.min(
+      200,
+      Math.max(60, Number.isFinite(lockBpm) && lockBpm >= 60 ? Math.round(lockBpm) : 110),
+    ),
     output_mode: "mixed",
     memory_mode: "auto",
   };
 
-  console.info("[songgen] start…", base, body.title, sections.length, "sections");
+  console.info(
+    "[songgen] start…",
+    base,
+    body.title,
+    sections.length,
+    "sections",
+    `gender=${body.gender}`,
+    `genre=${body.genre}`,
+    `bpm=${body.bpm}`,
+    timbre ? `timbre=${timbre.slice(0, 40)}` : "timbre=∅",
+  );
   const created = await songGenFetch(base, "/api/generate", { method: "POST", body });
   const genId = created?.generation_id;
   if (!genId) throw new Error("SongGen n’a pas renvoyé de generation_id");
-  return { generationId: genId, provider: "songgeneration-studio", base };
+  return { generationId: genId, provider: "songgeneration-studio", base, gender: body.gender };
 }
 
 /**
@@ -242,7 +318,7 @@ export async function pollSongGeneration(keys, generationId) {
  */
 export async function generateMusicWithSongGeneration(
   keys,
-  { prompt, lyrics, title, gender, genre, mood, bpm } = {},
+  { prompt, lyrics, title, gender, genre, mood, bpm, artist } = {},
 ) {
   const started = await startSongGeneration(keys, {
     prompt,
@@ -252,6 +328,7 @@ export async function generateMusicWithSongGeneration(
     genre,
     mood,
     bpm,
+    artist,
   });
 
   for (let i = 0; i < MAX_POLLS; i++) {

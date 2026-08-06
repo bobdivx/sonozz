@@ -1,5 +1,6 @@
 import { getSpotifyAccess, spotifySearchContext } from "./spotify.js";
 import { llmJson, requireTextLlm } from "./llm.js";
+import { listenArtistPreviewDna } from "./musicListen.js";
 
 function norm(s) {
   return String(s || "")
@@ -221,6 +222,10 @@ async function hydrateSpotifyCatalog(token, hit, matchScore = 1000) {
     popularity: artist.popularity ?? hit.popularity ?? null,
     followers: artist.followers?.total ?? null,
     topTracks: (top.tracks || []).slice(0, 6).map((t) => t.name).filter(Boolean),
+    previewUrls: (top.tracks || [])
+      .map((t) => t.preview_url)
+      .filter((u) => typeof u === "string" && /^https?:\/\//i.test(u))
+      .slice(0, 3),
     albums: (albums.items || []).slice(0, 5).map((a) => a.name).filter(Boolean),
     related: relatedArtists.map((a) => a.name).filter(Boolean),
     relatedGenres: inferredGenres,
@@ -332,11 +337,17 @@ async function hydrateItunesCatalog(hit, matchScore = 1000) {
     .slice(0, 5);
 
   const songsData = songsRes.ok ? await songsRes.json() : { results: [] };
-  const topTracks = (songsData.results || [])
-    .filter((t) => String(t.artistId) === String(hit.id))
+  const artistSongs = (songsData.results || []).filter(
+    (t) => String(t.artistId) === String(hit.id),
+  );
+  const topTracks = artistSongs
     .map((t) => t.trackName)
     .filter(Boolean)
     .slice(0, 6);
+  const previewUrls = artistSongs
+    .map((t) => t.previewUrl)
+    .filter((u) => typeof u === "string" && /^https?:\/\//i.test(u))
+    .slice(0, 3);
 
   const genre =
     artistRow.primaryGenreName ||
@@ -361,6 +372,7 @@ async function hydrateItunesCatalog(hit, matchScore = 1000) {
     popularity: null,
     followers: null,
     topTracks,
+    previewUrls,
     albums,
     related: [],
     relatedGenres: [],
@@ -407,6 +419,10 @@ async function hydrateDeezerCatalog(hit, matchScore = 1000) {
     popularity: null,
     followers: artist.nb_fan ?? hit.followers ?? null,
     topTracks: (top.data || []).map((t) => t.title).filter(Boolean),
+    previewUrls: (top.data || [])
+      .map((t) => t.preview)
+      .filter((u) => typeof u === "string" && /^https?:\/\//i.test(u))
+      .slice(0, 3),
     albums: [],
     related: (related.data || []).map((a) => a.name).filter(Boolean),
     relatedGenres: [],
@@ -656,8 +672,9 @@ export async function loadStyleArtistCatalog(keys, pick) {
 
 /**
  * Enrichit une fiche catalogue (souvent sans genres Spotify) en brief style verrouillé via LLM.
+ * @param {object|null} audioDna — analyse preview réelle (Gemini) si dispo
  */
-async function enrichStyleLock(keys, catalog, query) {
+async function enrichStyleLock(keys, catalog, query, audioDna = null) {
   requireTextLlm(keys);
   const knownGenres = [
     ...(catalog.genres || []),
@@ -666,9 +683,19 @@ async function enrichStyleLock(keys, catalog, query) {
   ].filter(Boolean);
   const uniqueGenres = [...new Set(knownGenres.map((g) => g.toLowerCase()))].map(titleCaseGenre);
 
+  const audioBlock = audioDna
+    ? `
+ÉCOUTE RÉELLE d'un extrait preview (~30s) de cet artiste (priorité absolue sur les genres catalogue) :
+${JSON.stringify(audioDna, null, 2)}
+Base-toi d'abord sur cette écoute pour : BPM, énergie, timbre vocal, groove/rythme, instruments, densité de prod.
+`
+    : `
+Pas d'extrait audio dispo — déduis le DNA sonore depuis titres phares, related et ta connaissance précise de l'artiste (évite le vague).
+`;
+
   const data = await llmJson(
     keys,
-    `Tu es un A&R / analyste musical. L'utilisateur veut cloner le STYLE musical exact d'un artiste réel.
+    `Tu es un A&R / producteur. L'utilisateur veut cloner le STYLE musical exact d'un artiste réel — pas seulement le genre.
 
 Artiste recherché: "${query}"
 Fiche catalogue (${catalog.source}):
@@ -687,10 +714,10 @@ ${JSON.stringify(
   2,
 )}
 
-Genres déjà connus: ${uniqueGenres.join(", ") || "(aucun — déduis depuis titres, related et ta connaissance)"}
+Genres déjà connus: ${uniqueGenres.join(", ") || "(aucun)"}
+${audioBlock}
 
-Retourne un LOCK STYLE strict pour créer un artiste FICTIONNEL dans EXACTEMENT la même lane sonore.
-Pas de vague "pop" générique si l'artiste est funk-rock / experimental pop / etc.
+Retourne un LOCK STYLE strict pour un artiste FICTIONNEL dans EXACTEMENT la même lane sonore (groove, timbre, écriture, prod).
 
 JSON strict:
 {
@@ -700,19 +727,31 @@ JSON strict:
   "mood": string,
   "energy": "low" | "mid" | "high",
   "tempoFeel": string,
+  "bpmEstimate": number,
   "production": string,
   "vocalStyle": string,
+  "vocalRegister": string,
+  "timbre": string,
+  "rhythmFeel": string,
+  "instruments": [string, string, string],
   "sonicKeywords": [string, string, string, string, string],
   "similarArtists": [string, string, string],
   "writingStyle": string,
   "visualVibe": string,
   "doNot": [string, string, string]
 }
-"genres" = 2 à 4 labels précis (ex. "Funk Rock", "Experimental Pop").
-"genreSummary" = une ligne, ex. "experimental pop / funk-rock énergique, grooves maximalistes".
-"doNot" = styles INTERDITS (ex. drill, ambient zen, hyperpop asiatique) pour éviter les dérives.
-"similarArtists" = artistes vraiment proches soniquement (pas des stars aléatoires).`,
+"timbre" = couleur de voix / texture (ex. "breathy tenor", "raspy baritone", "bright mezzo").
+"rhythmFeel" = groove (ex. "syncopated 16ths", "four-on-floor", "swung boom-bap", "halftime trap").
+"bpmEstimate" = entier 60–200 crédible pour cet artiste.
+"vocalRegister" = ex. "tenor", "baritone", "alto", "soprano", "spoken-sung".
+"instruments" = 3–6 éléments de prod typiques.
+"doNot" = styles INTERDITS pour éviter les dérives.
+Pas de vague "pop" générique si l'artiste est funk-rock / drill / neo-soul / etc.`,
   );
+
+  const bpmNum = Number(data.bpmEstimate ?? audioDna?.bpmEstimate);
+  const bpm =
+    Number.isFinite(bpmNum) && bpmNum >= 60 && bpmNum <= 200 ? Math.round(bpmNum) : null;
 
   return {
     resolvedName: data.resolvedName || catalog.name || query,
@@ -721,11 +760,29 @@ JSON strict:
       .filter(Boolean)
       .slice(0, 4),
     genreSummary: String(data.genreSummary || "").trim(),
-    mood: String(data.mood || "").trim(),
-    energy: ["low", "mid", "high"].includes(data.energy) ? data.energy : "mid",
-    tempoFeel: String(data.tempoFeel || "").trim(),
+    mood: String(data.mood || audioDna?.mood || "").trim(),
+    energy: ["low", "mid", "high"].includes(data.energy)
+      ? data.energy
+      : ["low", "mid", "high"].includes(audioDna?.energy)
+        ? audioDna.energy
+        : "mid",
+    tempoFeel: String(data.tempoFeel || audioDna?.rhythmFeel || "").trim(),
+    bpm,
     production: String(data.production || "").trim(),
-    vocalStyle: String(data.vocalStyle || "").trim(),
+    vocalStyle: String(data.vocalStyle || audioDna?.vocalStyle || "").trim(),
+    vocalRegister: String(data.vocalRegister || audioDna?.vocalRegister || "").trim(),
+    timbre: String(data.timbre || audioDna?.timbre || "").trim(),
+    rhythmFeel: String(data.rhythmFeel || audioDna?.rhythmFeel || "").trim(),
+    instruments: (
+      Array.isArray(data.instruments)
+        ? data.instruments
+        : Array.isArray(audioDna?.instruments)
+          ? audioDna.instruments
+          : []
+    )
+      .map((k) => String(k || "").trim())
+      .filter(Boolean)
+      .slice(0, 8),
     sonicKeywords: (Array.isArray(data.sonicKeywords) ? data.sonicKeywords : [])
       .map((k) => String(k || "").trim())
       .filter(Boolean)
@@ -740,6 +797,7 @@ JSON strict:
       .map((d) => String(d || "").trim())
       .filter(Boolean)
       .slice(0, 6),
+    audioListened: Boolean(audioDna),
   };
 }
 
@@ -833,7 +891,41 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
     );
   }
 
-  const lock = await enrichStyleLock(keys, catalog, catalog.name || query);
+  let audioDna = null;
+  let previewUrls = Array.isArray(catalog.previewUrls) ? catalog.previewUrls.filter(Boolean) : [];
+  // Spotify renvoie souvent preview_url=null — Deezer/iTunes sont plus fiables pour ~30s
+  if (!previewUrls.length && catalog.name) {
+    try {
+      const deezerHit = await searchDeezerArtist(catalog.name);
+      if (deezerHit?.previewUrls?.length) {
+        previewUrls = deezerHit.previewUrls;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!previewUrls.length && catalog.name) {
+    try {
+      const itunesHit = await searchItunesArtist(catalog.name);
+      if (itunesHit?.previewUrls?.length) {
+        previewUrls = itunesHit.previewUrls;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (keys?.geminiApiKey?.trim() && previewUrls.length) {
+    for (const previewUrl of previewUrls.slice(0, 2)) {
+      audioDna = await listenArtistPreviewDna(keys.geminiApiKey, {
+        previewUrl,
+        artistName: catalog.name,
+        topTracks: catalog.topTracks,
+      });
+      if (audioDna) break;
+    }
+  }
+
+  const lock = await enrichStyleLock(keys, catalog, catalog.name || query, audioDna);
 
   // Genres finaux : lock LLM prioritaire, sinon catalogue
   let genres = lock.genres.length
@@ -852,6 +944,8 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
   ]
     .filter((v, i, arr) => v && arr.findIndex((x) => norm(x) === norm(v)) === i)
     .slice(0, 6);
+
+  const bpm = lock.bpm || audioDna?.bpmEstimate || null;
 
   return {
     query: query || catalog.name,
@@ -875,19 +969,30 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
     mood: lock.mood || "énergique",
     energy: lock.energy,
     tempoFeel: lock.tempoFeel,
+    bpm,
     production: lock.production,
     vocalStyle: lock.vocalStyle,
+    vocalRegister: lock.vocalRegister,
+    timbre: lock.timbre,
+    rhythmFeel: lock.rhythmFeel,
+    instruments: lock.instruments,
     sonicKeywords: lock.sonicKeywords,
     writingStyle: lock.writingStyle,
     visualVibe: lock.visualVibe,
     doNot: lock.doNot,
     influences,
+    audioListened: Boolean(lock.audioListened || audioDna),
     musicPrompt: [
       genreSummary,
       lock.production,
       ...(lock.sonicKeywords || []),
+      lock.timbre ? `timbre: ${lock.timbre}` : "",
       lock.vocalStyle ? `vocals: ${lock.vocalStyle}` : "",
+      lock.vocalRegister ? `register: ${lock.vocalRegister}` : "",
+      lock.rhythmFeel ? `groove: ${lock.rhythmFeel}` : "",
       lock.tempoFeel ? `tempo: ${lock.tempoFeel}` : "",
+      bpm ? `~${bpm} BPM` : "",
+      ...(lock.instruments || []).slice(0, 4).map((i) => `instrument: ${i}`),
       `energy ${lock.energy}`,
       `exactly in the style of ${catalog.name}`,
       "original artist, not a cover, not an imitation of identity",
@@ -924,6 +1029,7 @@ export function mergeStyleLocks(locks = []) {
   const genres = uniqStrings(list.flatMap((l) => l.genres || []), 6);
   const genreSummary = genres.join(" × ") || list[0].genreSummary;
   const sonicKeywords = uniqStrings(list.flatMap((l) => l.sonicKeywords || []), 14);
+  const instruments = uniqStrings(list.flatMap((l) => l.instruments || []), 10);
   const influences = uniqStrings(
     [...names, ...list.flatMap((l) => l.influences || [])],
     8,
@@ -941,15 +1047,42 @@ export function mergeStyleLocks(locks = []) {
     list.map((l) => l.vocalStyle).filter(Boolean),
     3,
   ).join(" · ");
+  const timbre = uniqStrings(
+    list.map((l) => l.timbre).filter(Boolean),
+    3,
+  ).join(" · ");
+  const rhythmFeel = uniqStrings(
+    list.map((l) => l.rhythmFeel).filter(Boolean),
+    3,
+  ).join(" · ");
+  const tempoFeel = uniqStrings(
+    list.map((l) => l.tempoFeel || l.rhythmFeel).filter(Boolean),
+    3,
+  ).join(" · ");
+  const vocalRegister = list.find((l) => l.vocalRegister)?.vocalRegister || "";
   const visualVibe = uniqStrings(
     list.map((l) => l.visualVibe).filter(Boolean),
     3,
   ).join(" · ");
   const moods = uniqStrings(list.map((l) => l.mood).filter(Boolean), 3);
-  const energies = list.map((l) => Number(l.energy)).filter((n) => Number.isFinite(n));
-  const energy = energies.length
-    ? Math.round(energies.reduce((a, b) => a + b, 0) / energies.length)
-    : list[0].energy;
+
+  const energyRank = { low: 0, mid: 1, high: 2 };
+  const energyVals = list
+    .map((l) => energyRank[l.energy])
+    .filter((n) => Number.isFinite(n));
+  const energy =
+    energyVals.length > 0
+      ? (["low", "mid", "high"][
+          Math.round(energyVals.reduce((a, b) => a + b, 0) / energyVals.length)
+        ] || list[0].energy)
+      : list[0].energy;
+
+  const bpms = list
+    .map((l) => Number(l.bpm))
+    .filter((n) => Number.isFinite(n) && n >= 60 && n <= 200);
+  const bpm = bpms.length
+    ? Math.round(bpms.reduce((a, b) => a + b, 0) / bpms.length)
+    : null;
 
   return {
     query: names.join(" + "),
@@ -966,19 +1099,29 @@ export function mergeStyleLocks(locks = []) {
     genreSummary,
     mood: moods[0] || list[0].mood,
     energy,
-    tempoFeel: list[0].tempoFeel,
+    tempoFeel: tempoFeel || list[0].tempoFeel,
+    bpm,
     production,
     vocalStyle,
+    vocalRegister,
+    timbre,
+    rhythmFeel,
+    instruments,
     sonicKeywords,
     writingStyle,
     visualVibe,
     doNot,
     influences,
+    audioListened: list.some((l) => l.audioListened),
     musicPrompt: [
       genreSummary,
       production,
       ...sonicKeywords,
+      timbre ? `timbre: ${timbre}` : "",
       vocalStyle ? `vocals: ${vocalStyle}` : "",
+      rhythmFeel ? `groove: ${rhythmFeel}` : "",
+      bpm ? `~${bpm} BPM` : "",
+      ...instruments.slice(0, 4).map((i) => `instrument: ${i}`),
       `blend of: ${names.join(", ")}`,
       "original artist identity, not a cover",
     ]

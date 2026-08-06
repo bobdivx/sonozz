@@ -17,6 +17,7 @@ import {
   startSongGeneration,
   pollSongGeneration,
   isSongGenMusicProvider,
+  resolveVocalGender,
 } from "./songGeneration.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
 import { slugify, getArtistBySlug } from "./artists.js";
@@ -353,13 +354,21 @@ function serializeStyleLock(styleLock) {
     genreSummary: styleLock.genreSummary,
     mood: styleLock.mood,
     energy: styleLock.energy,
+    tempoFeel: styleLock.tempoFeel,
+    bpm: styleLock.bpm,
     production: styleLock.production,
     vocalStyle: styleLock.vocalStyle,
+    vocalRegister: styleLock.vocalRegister,
+    timbre: styleLock.timbre,
+    rhythmFeel: styleLock.rhythmFeel,
+    instruments: styleLock.instruments,
     sonicKeywords: styleLock.sonicKeywords,
     writingStyle: styleLock.writingStyle,
+    visualVibe: styleLock.visualVibe,
     doNot: styleLock.doNot,
     musicPrompt: styleLock.musicPrompt,
     topTracks: styleLock.topTracks,
+    audioListened: Boolean(styleLock.audioListened),
     refs: Array.isArray(styleLock.refs)
       ? styleLock.refs.map((r) => ({
           matchedName: r.matchedName,
@@ -367,6 +376,10 @@ function serializeStyleLock(styleLock) {
           sourceId: r.sourceId,
           image: r.image,
           genres: r.genres,
+          timbre: r.timbre,
+          rhythmFeel: r.rhythmFeel,
+          bpm: r.bpm,
+          audioListened: Boolean(r.audioListened),
         }))
       : undefined,
   };
@@ -549,12 +562,19 @@ PARAMÈTRES VERROUILLÉS :
 - genres: ${JSON.stringify(styleLock.genres)}
 - mood: ${styleLock.mood}
 - energy: ${styleLock.energy}
+- tempoFeel: ${styleLock.tempoFeel || ""}
+- bpm: ${styleLock.bpm || "n/a"}
+- timbre: ${styleLock.timbre || ""}
+- rhythmFeel: ${styleLock.rhythmFeel || ""}
+- instruments: ${JSON.stringify(styleLock.instruments || [])}
 - production: ${styleLock.production}
 - vocalStyle: ${styleLock.vocalStyle}
+- vocalRegister: ${styleLock.vocalRegister || ""}
 - sonicKeywords: ${JSON.stringify(styleLock.sonicKeywords)}
 - writingStyle: ${styleLock.writingStyle}
 - influences: ${JSON.stringify(styleLock.influences)}
-- INTERDIT: ${JSON.stringify(styleLock.doNot)}`
+- INTERDIT: ${JSON.stringify(styleLock.doNot)}
+${styleLock.audioListened ? "- DNA audio: extrait preview réellement écouté" : ""}`
     : ""
 }
 ═══════════════════════════════════════════════════════════════════════════
@@ -620,13 +640,19 @@ PARAMÈTRES VERROUILLÉS (copie / respecte STRICTEMENT) :
 - mood: ${styleLock.mood}
 - energy: ${styleLock.energy}
 - tempoFeel: ${styleLock.tempoFeel}
+- bpm: ${styleLock.bpm || "n/a"}
+- timbre: ${styleLock.timbre || ""}
+- rhythmFeel: ${styleLock.rhythmFeel || ""}
+- instruments: ${JSON.stringify(styleLock.instruments || [])}
 - production: ${styleLock.production}
 - vocalStyle: ${styleLock.vocalStyle}
+- vocalRegister: ${styleLock.vocalRegister || ""}
 - sonicKeywords: ${JSON.stringify(styleLock.sonicKeywords)}
 - writingStyle: ${styleLock.writingStyle}
 - visualVibe: ${styleLock.visualVibe}
 - influences OBLIGATOIRES (dans cet ordre): ${JSON.stringify(styleLock.influences)}
 - INTERDIT (doNot): ${JSON.stringify(styleLock.doNot)}
+${styleLock.audioListened ? "- Un extrait preview a été ÉCOUTÉ — colle au timbre/groove/BPM ci-dessus." : ""}
 
 Le nouvel artiste doit sonner comme s'il était dans la MÊME famille que "${styleLock.matchedName}" :
 même groove, même énergie, même type de prod, même approche d'écriture.
@@ -859,6 +885,10 @@ ${
 - production: ${lock.production}
 - writingStyle: ${lock.writingStyle}
 - mood/energy: ${lock.mood} / ${lock.energy}
+- groove/rythme: ${lock.rhythmFeel || lock.tempoFeel || ""}
+- timbre: ${lock.timbre || ""}
+- bpm cible: ${lock.bpm || "n/a"}
+- instruments: ${(lock.instruments || []).join(", ")}
 - sonicKeywords: ${(lock.sonicKeywords || []).join(", ")}
 - doNot (styles/écritures interdits): ${(lock.doNot || []).join(", ")}
 Écris dans EXACTEMENT cette lane (hooks, rythme des phrases, vibe) — sans pasticher les paroles de "${lock.matchedName}".`
@@ -891,16 +921,18 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   const langName = languagePromptName(lang);
   const genderLock = genderVisualLock(artist?.gender, artist?.age);
   const styleLock = artist?.styleLock;
+  const vocal = resolveVocalGender(artist);
   const prompt = (
     styleLock?.musicPrompt
       ? [
+          vocal.voiceHint,
           styleLock.musicPrompt,
           `${artist?.mood || styleLock.mood || "emotional"} mood`,
-          genderLock.voiceHint,
           `vocals and lyrics in ${langName}`,
           "radio-ready, original composition",
         ]
       : [
+          vocal.voiceHint,
           `${artist?.genre || "pop"}`,
           artist?.styleArtists?.length
             ? `in the sonic lane of ${artist.styleArtists.join(" and ")} (original, not a cover)`
@@ -908,8 +940,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
               ? `in the sonic lane of ${artist.styleArtist} (original, not a cover)`
               : "",
           `${artist?.mood || "emotional"} mood`,
-          `${artist?.voice || genderLock.voiceHint}`,
-          genderLock.voiceHint,
+          vocal.voiceForPrompt,
           `vocals and lyrics in ${langName}`,
           "contemporary production, radio-ready, emotional hook",
         ]
@@ -917,7 +948,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     .filter(Boolean)
     .join(", ");
 
-  return { prompt, styleLock, genderLock };
+  return { prompt, styleLock, genderLock, vocal };
 }
 
 function assembleTrackResult({
@@ -972,8 +1003,12 @@ ${lyrics?.text || ""}
  * Le client poll via pollTrack.
  */
 export async function startTrack({ keys, lyrics, artist }) {
-  const { prompt, styleLock } = buildTrackMusicPrompt({ lyrics, artist });
-  const bpmGuess = 95 + Math.floor(Math.random() * 35);
+  const { prompt, styleLock, vocal } = buildTrackMusicPrompt({ lyrics, artist });
+  const lockBpm = Number(styleLock?.bpm);
+  const bpmGuess =
+    Number.isFinite(lockBpm) && lockBpm >= 60 && lockBpm <= 200
+      ? Math.round(lockBpm)
+      : 95 + Math.floor(Math.random() * 35);
   const draft = assembleTrackResult({
     lyrics,
     artist,
@@ -983,12 +1018,19 @@ export async function startTrack({ keys, lyrics, artist }) {
     provider: "brief",
   });
 
+  if (!artist?.gender) {
+    throw new Error(
+      "Sexe / présentation manquant sur l’artiste — retourne à l’étape Artiste, choisis Homme/Femme, puis régénère le profil avant le morceau.",
+    );
+  }
+
   if (isSongGenMusicProvider(keys)) {
     const started = await startSongGeneration(keys, {
       prompt,
       lyrics: lyrics?.text || "",
       title: lyrics?.title || artist?.name || "SONOZZ",
-      gender: artist?.gender,
+      gender: vocal?.code || artist?.gender,
+      artist,
       genre: artist?.genre || styleLock?.genre,
       mood: artist?.mood || styleLock?.mood,
       bpm: bpmGuess,
@@ -998,7 +1040,12 @@ export async function startTrack({ keys, lyrics, artist }) {
       musicKind: "songgen",
       generationId: started.generationId,
       provider: started.provider,
-      draft: { ...draft, provider: started.provider, bpm: bpmGuess },
+      draft: {
+        ...draft,
+        provider: started.provider,
+        bpm: bpmGuess,
+        voiceGender: started.gender || vocal?.code,
+      },
     };
   }
 
@@ -1077,7 +1124,11 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
 /** Sync (pipeline A→Z). Pour l’UI étape Track, préférer startTrack + pollTrack. */
 export async function runTrack({ keys, lyrics, artist }) {
   const { prompt, styleLock } = buildTrackMusicPrompt({ lyrics, artist });
-  const bpmGuess = 95 + Math.floor(Math.random() * 35);
+  const lockBpm = Number(styleLock?.bpm);
+  const bpmGuess =
+    Number.isFinite(lockBpm) && lockBpm >= 60 && lockBpm <= 200
+      ? Math.round(lockBpm)
+      : 95 + Math.floor(Math.random() * 35);
 
   let audioUrl = null;
   let provider = "brief";
@@ -1091,6 +1142,7 @@ export async function runTrack({ keys, lyrics, artist }) {
       lyrics: lyrics?.text || "",
       title: lyrics?.title || artist?.name || "SONOZZ",
       gender: artist?.gender,
+      artist,
       genre: artist?.genre || styleLock?.genre,
       mood: artist?.mood || styleLock?.mood,
       bpm: bpmGuess,
