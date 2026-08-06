@@ -642,7 +642,59 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, initia
                 <p class="text-sm text-base-content/55">
                   Style verrouillé :{" "}
                   <span class="text-secondary">{artist.styleLock.genreSummary}</span>
+                  {artist.styleLock.audioListened ? (
+                    <span class="ml-2 text-xs text-success">· preview écouté</span>
+                  ) : null}
                 </p>
+              )}
+              {(artist.styleLock?.timbre ||
+                artist.styleLock?.rhythmFeel ||
+                artist.styleLock?.bpm ||
+                (artist.styleLock?.instruments || []).length > 0) && (
+                <div class="space-y-1 rounded-lg border border-base-content/10 bg-base-200/40 px-3 py-2 text-xs text-base-content/65">
+                  <p class="font-medium uppercase tracking-wider text-base-content/45">
+                    DNA sonore
+                  </p>
+                  {artist.styleLock.timbre && (
+                    <p>
+                      Timbre — <span class="text-base-content/80">{artist.styleLock.timbre}</span>
+                    </p>
+                  )}
+                  {(artist.styleLock.rhythmFeel || artist.styleLock.tempoFeel) && (
+                    <p>
+                      Groove —{" "}
+                      <span class="text-base-content/80">
+                        {artist.styleLock.rhythmFeel || artist.styleLock.tempoFeel}
+                      </span>
+                    </p>
+                  )}
+                  {artist.styleLock.bpm ? (
+                    <p>
+                      Tempo — <span class="text-base-content/80">~{artist.styleLock.bpm} BPM</span>
+                      {artist.styleLock.energy
+                        ? ` · énergie ${artist.styleLock.energy}`
+                        : ""}
+                    </p>
+                  ) : null}
+                  {(artist.styleLock.instruments || []).length > 0 && (
+                    <p>
+                      Instruments —{" "}
+                      <span class="text-base-content/80">
+                        {artist.styleLock.instruments.slice(0, 6).join(" · ")}
+                      </span>
+                    </p>
+                  )}
+                  {artist.styleLock.vocalStyle && (
+                    <p>
+                      Voix —{" "}
+                      <span class="text-base-content/80">
+                        {[artist.styleLock.vocalStyle, artist.styleLock.vocalRegister]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </p>
+                  )}
+                </div>
               )}
               {artist.styleLock?.production && (
                 <p class="text-xs text-base-content/45">{artist.styleLock.production}</p>
