@@ -149,9 +149,10 @@ export async function testSongGeneration(keys) {
 }
 
 /**
- * @returns {Promise<{ url: string, provider: string, durationLabel: string, hasVocals: boolean, generationId: string }>}
+ * Lance une génération SongGen (réponse rapide — le client poll ensuite).
+ * @returns {Promise<{ generationId: string, provider: string, base: string }>}
  */
-export async function generateMusicWithSongGeneration(
+export async function startSongGeneration(
   keys,
   { prompt, lyrics, title, gender, genre, mood, bpm } = {},
 ) {
@@ -171,41 +172,91 @@ export async function generateMusicWithSongGeneration(
     memory_mode: "auto",
   };
 
-  console.info("[songgen] generate…", base, body.title, sections.length, "sections");
+  console.info("[songgen] start…", base, body.title, sections.length, "sections");
   const created = await songGenFetch(base, "/api/generate", { method: "POST", body });
   const genId = created?.generation_id;
   if (!genId) throw new Error("SongGen n’a pas renvoyé de generation_id");
+  return { generationId: genId, provider: "songgeneration-studio", base };
+}
+
+/**
+ * Un tick de poll SongGen (requête courte — évite timeout proxy Cloudflare 524).
+ * @returns {Promise<{ done: boolean, status: string, url?: string, durationLabel?: string, hasVocals?: boolean, generationId?: string, progress?: unknown, message?: string }>}
+ */
+export async function pollSongGeneration(keys, generationId) {
+  const base = resolveSongGenBaseUrl(keys);
+  const genId = String(generationId || "").trim();
+  if (!genId) throw new Error("generationId SongGen manquant");
+
+  const status = await songGenFetch(base, `/api/generation/${genId}`);
+  const st = String(status?.status || "");
+  if (st === "completed") {
+    const url = `${base}/api/audio/${genId}/0`;
+    const secs = Number(status?.duration);
+    const durationLabel =
+      Number.isFinite(secs) && secs > 0
+        ? `~${Math.round(secs / 60)}:${String(Math.round(secs % 60)).padStart(2, "0")}`
+        : "~2–4 min";
+    console.info("[songgen] OK", genId, url);
+    return {
+      done: true,
+      status: st,
+      url,
+      provider: "songgeneration-studio",
+      durationLabel,
+      hasVocals: true,
+      generationId: genId,
+    };
+  }
+  if (st === "failed" || st === "stopped") {
+    throw new Error(status?.message || `Génération SongGen ${st}`);
+  }
+  return {
+    done: false,
+    status: st || "processing",
+    progress: status?.progress,
+    message: status?.message || "",
+    generationId: genId,
+  };
+}
+
+/**
+ * Sync (pipeline A→Z) — préfère start+poll côté client pour /api/track.
+ * @returns {Promise<{ url: string, provider: string, durationLabel: string, hasVocals: boolean, generationId: string }>}
+ */
+export async function generateMusicWithSongGeneration(
+  keys,
+  { prompt, lyrics, title, gender, genre, mood, bpm } = {},
+) {
+  const started = await startSongGeneration(keys, {
+    prompt,
+    lyrics,
+    title,
+    gender,
+    genre,
+    mood,
+    bpm,
+  });
 
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise((r) => setTimeout(r, POLL_MS));
-    const status = await songGenFetch(base, `/api/generation/${genId}`);
-    const st = String(status?.status || "");
-    if (st === "completed") {
-      const url = `${base}/api/audio/${genId}/0`;
-      const secs = Number(status?.duration);
-      const durationLabel =
-        Number.isFinite(secs) && secs > 0
-          ? `~${Math.round(secs / 60)}:${String(Math.round(secs % 60)).padStart(2, "0")}`
-          : "~2–4 min";
-      console.info("[songgen] OK", genId, url);
+    const tick = await pollSongGeneration(keys, started.generationId);
+    if (tick.done) {
       return {
-        url,
-        provider: "songgeneration-studio",
-        durationLabel,
-        hasVocals: true,
-        generationId: genId,
+        url: tick.url,
+        provider: tick.provider,
+        durationLabel: tick.durationLabel || "~2–4 min",
+        hasVocals: Boolean(tick.hasVocals),
+        generationId: started.generationId,
       };
-    }
-    if (st === "failed" || st === "stopped") {
-      throw new Error(status?.message || `Génération SongGen ${st}`);
     }
     if (i % 10 === 0) {
       console.info(
         "[songgen] poll",
-        genId,
-        st,
-        status?.progress ?? "?",
-        status?.message || "",
+        started.generationId,
+        tick.status,
+        tick.progress ?? "?",
+        tick.message || "",
       );
     }
   }

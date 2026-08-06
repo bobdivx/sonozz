@@ -15,11 +15,49 @@ async function request(path, body = {}) {
   return data;
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Start + poll court (évite Cloudflare 524 — gen audio 2–10 min).
+ */
+async function trackWithPoll(payload = {}) {
+  const started = await request("/api/track", { ...payload, action: "start" });
+  if (!started?.pollNeeded) {
+    const { pollNeeded: _p, musicKind: _m, generationId: _g, draft, ...rest } = started || {};
+    if (draft && typeof draft === "object") return { ...draft, ...rest };
+    return rest;
+  }
+
+  const maxPolls = started.musicKind === "songgen" ? 220 : 180;
+  const intervalMs = started.musicKind === "songgen" ? 3000 : 2500;
+
+  for (let i = 0; i < maxPolls; i++) {
+    await sleep(intervalMs);
+    const tick = await request("/api/track", {
+      action: "poll",
+      generationId: started.generationId,
+      musicKind: started.musicKind,
+      draft: started.draft,
+    });
+    if (tick?.done && tick.track) return tick.track;
+  }
+
+  throw new Error(
+    started.musicKind === "songgen"
+      ? "Timeout SongGeneration Studio (~10 min) — vérifie GPU / Pinokio."
+      : "Timeout MiniMax Replicate (~7 min).",
+  );
+}
+
 export const api = {
   trends: (seed = {}) => request("/api/trends", seed),
   artist: (payload) => request("/api/artist", payload),
   lyrics: (payload) => request("/api/lyrics", payload),
-  track: (payload) => request("/api/track", payload),
+  track: (payload) => trackWithPoll(payload),
+  /** Ping SongGeneration Studio (URL des clés) — ne lance pas de génération. */
+  probeSongGen: () => request("/api/track", { action: "probe-songgen" }),
   cover: (payload) => request("/api/cover", payload),
   spotify: (payload) => request("/api/spotify", payload),
   distrokid: (payload) => request("/api/distrokid", payload),

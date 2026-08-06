@@ -7,9 +7,15 @@ import {
   resolveStyleReferences,
 } from "./styleReference.js";
 import { submitOnceRelease } from "./once.js";
-import { generateMusicWithReplicate } from "./replicate.js";
+import {
+  generateMusicWithReplicate,
+  startMinimaxMusic,
+  pollMinimaxMusic,
+} from "./replicate.js";
 import {
   generateMusicWithSongGeneration,
+  startSongGeneration,
+  pollSongGeneration,
   isSongGenMusicProvider,
 } from "./songGeneration.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
@@ -880,7 +886,7 @@ Le champ text doit contenir les tags MiniMax en anglais: [Verse], [Chorus], [Ver
   return { ...data, language: lang };
 }
 
-export async function runTrack({ keys, lyrics, artist }) {
+function buildTrackMusicPrompt({ lyrics, artist }) {
   const lang = resolveLanguage(lyrics?.language, artist);
   const langName = languagePromptName(lang);
   const genderLock = genderVisualLock(artist?.gender, artist?.age);
@@ -911,43 +917,20 @@ export async function runTrack({ keys, lyrics, artist }) {
     .filter(Boolean)
     .join(", ");
 
-  let audioUrl = null;
-  let provider = "brief";
-  let warning;
-  let durationLabel = "3:24";
-  let hasVocals = false;
-  const bpmGuess = 95 + Math.floor(Math.random() * 35);
+  return { prompt, styleLock, genderLock };
+}
 
-  if (isSongGenMusicProvider(keys)) {
-    const result = await generateMusicWithSongGeneration(keys, {
-      prompt,
-      lyrics: lyrics?.text || "",
-      title: lyrics?.title || artist?.name || "SONOZZ",
-      gender: artist?.gender,
-      genre: artist?.genre || styleLock?.genre,
-      mood: artist?.mood || styleLock?.mood,
-      bpm: bpmGuess,
-    });
-    audioUrl = result.url;
-    provider = result.provider;
-    durationLabel = result.durationLabel || "~2–4 min";
-    hasVocals = Boolean(result.hasVocals);
-  } else if (keys?.replicateApiToken?.trim()) {
-    // Erreur propagée (pas avalée) pour que l’UI affiche le message rouge
-    const result = await generateMusicWithReplicate(keys.replicateApiToken.trim(), {
-      prompt,
-      lyrics: lyrics?.text || "",
-    });
-    audioUrl = typeof result === "string" ? result : result.url;
-    provider = typeof result === "string" ? "replicate" : result.provider;
-    durationLabel = typeof result === "string" ? "~2–4 min" : result.durationLabel || "~2–4 min";
-    hasVocals = typeof result === "string" ? true : Boolean(result.hasVocals);
-    warning = typeof result === "string" ? undefined : result.warning;
-  } else {
-    warning =
-      "Aucun provider audio — choisis SongGeneration Studio (local) ou un token Replicate dans Paramètres, ou importe un mp3.";
-  }
-
+function assembleTrackResult({
+  lyrics,
+  artist,
+  styleLock,
+  bpmGuess,
+  audioUrl = null,
+  provider = "brief",
+  durationLabel = "3:24",
+  hasVocals = false,
+  warning,
+}) {
   const sunoPrompt = `Style: ${artist?.genre}${styleLock?.matchedName ? ` (lane of ${styleLock.matchedName})` : ""}. Mood: ${artist?.mood}.
 Production: ${styleLock?.production || "contemporary"}
 Keywords: ${(styleLock?.sonicKeywords || []).join(", ")}
@@ -982,6 +965,163 @@ ${lyrics?.text || ""}
       : "Métadonnées + prompt Suno prêts — audio manquant jusqu’à import ou provider audio.",
     warning,
   };
+}
+
+/**
+ * Démarre la gen audio sans bloquer (évite Cloudflare 524 / proxy ~100s).
+ * Le client poll via pollTrack.
+ */
+export async function startTrack({ keys, lyrics, artist }) {
+  const { prompt, styleLock } = buildTrackMusicPrompt({ lyrics, artist });
+  const bpmGuess = 95 + Math.floor(Math.random() * 35);
+  const draft = assembleTrackResult({
+    lyrics,
+    artist,
+    styleLock,
+    bpmGuess,
+    audioUrl: null,
+    provider: "brief",
+  });
+
+  if (isSongGenMusicProvider(keys)) {
+    const started = await startSongGeneration(keys, {
+      prompt,
+      lyrics: lyrics?.text || "",
+      title: lyrics?.title || artist?.name || "SONOZZ",
+      gender: artist?.gender,
+      genre: artist?.genre || styleLock?.genre,
+      mood: artist?.mood || styleLock?.mood,
+      bpm: bpmGuess,
+    });
+    return {
+      pollNeeded: true,
+      musicKind: "songgen",
+      generationId: started.generationId,
+      provider: started.provider,
+      draft: { ...draft, provider: started.provider, bpm: bpmGuess },
+    };
+  }
+
+  if (keys?.replicateApiToken?.trim()) {
+    const started = await startMinimaxMusic(keys.replicateApiToken.trim(), {
+      prompt,
+      lyrics: lyrics?.text || "",
+    });
+    return {
+      pollNeeded: true,
+      musicKind: "replicate",
+      generationId: started.generationId,
+      provider: started.provider,
+      draft: { ...draft, provider: started.provider, bpm: bpmGuess },
+    };
+  }
+
+  return {
+    pollNeeded: false,
+    ...assembleTrackResult({
+      lyrics,
+      artist,
+      styleLock,
+      bpmGuess,
+      warning:
+        "Aucun provider audio — choisis SongGeneration Studio (local) ou un token Replicate dans Paramètres, ou importe un mp3.",
+    }),
+  };
+}
+
+/** Tick de poll court — à appeler depuis le client toutes les ~3 s. */
+export async function pollTrack({ keys, generationId, musicKind, draft }) {
+  const kind = String(musicKind || "").trim();
+  let tick;
+  if (kind === "songgen") {
+    tick = await pollSongGeneration(keys, generationId);
+  } else if (kind === "replicate") {
+    const token = keys?.replicateApiToken?.trim();
+    if (!token) throw new Error("Token Replicate manquant pour le poll audio");
+    tick = await pollMinimaxMusic(token, generationId);
+  } else {
+    throw new Error(`musicKind inconnu: ${kind || "(vide)"}`);
+  }
+
+  if (!tick.done) {
+    return {
+      done: false,
+      status: tick.status,
+      progress: tick.progress,
+      message: tick.message || "",
+      generationId,
+      musicKind: kind,
+    };
+  }
+
+  const base = draft && typeof draft === "object" ? draft : {};
+  const track = {
+    ...base,
+    audioUrl: tick.url,
+    provider: tick.provider || base.provider,
+    hasVocals: Boolean(tick.hasVocals),
+    duration: tick.durationLabel || base.duration || "~2–4 min",
+    status: "audio-ready",
+    note:
+      tick.provider === "songgeneration-studio"
+        ? "Chanson générée via SongGeneration Studio (LeVo local)."
+        : "Chanson générée via MiniMax Music 2.6 (voix + paroles).",
+    warning: undefined,
+  };
+  return { done: true, track, generationId, musicKind: kind };
+}
+
+/** Sync (pipeline A→Z). Pour l’UI étape Track, préférer startTrack + pollTrack. */
+export async function runTrack({ keys, lyrics, artist }) {
+  const { prompt, styleLock } = buildTrackMusicPrompt({ lyrics, artist });
+  const bpmGuess = 95 + Math.floor(Math.random() * 35);
+
+  let audioUrl = null;
+  let provider = "brief";
+  let warning;
+  let durationLabel = "3:24";
+  let hasVocals = false;
+
+  if (isSongGenMusicProvider(keys)) {
+    const result = await generateMusicWithSongGeneration(keys, {
+      prompt,
+      lyrics: lyrics?.text || "",
+      title: lyrics?.title || artist?.name || "SONOZZ",
+      gender: artist?.gender,
+      genre: artist?.genre || styleLock?.genre,
+      mood: artist?.mood || styleLock?.mood,
+      bpm: bpmGuess,
+    });
+    audioUrl = result.url;
+    provider = result.provider;
+    durationLabel = result.durationLabel || "~2–4 min";
+    hasVocals = Boolean(result.hasVocals);
+  } else if (keys?.replicateApiToken?.trim()) {
+    const result = await generateMusicWithReplicate(keys.replicateApiToken.trim(), {
+      prompt,
+      lyrics: lyrics?.text || "",
+    });
+    audioUrl = typeof result === "string" ? result : result.url;
+    provider = typeof result === "string" ? "replicate" : result.provider;
+    durationLabel = typeof result === "string" ? "~2–4 min" : result.durationLabel || "~2–4 min";
+    hasVocals = typeof result === "string" ? true : Boolean(result.hasVocals);
+    warning = typeof result === "string" ? undefined : result.warning;
+  } else {
+    warning =
+      "Aucun provider audio — choisis SongGeneration Studio (local) ou un token Replicate dans Paramètres, ou importe un mp3.";
+  }
+
+  return assembleTrackResult({
+    lyrics,
+    artist,
+    styleLock,
+    bpmGuess,
+    audioUrl,
+    provider,
+    durationLabel,
+    hasVocals,
+    warning,
+  });
 }
 
 export async function runCover({ keys, prompt, artist, track }) {

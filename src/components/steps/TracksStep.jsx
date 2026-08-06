@@ -8,9 +8,19 @@ import {
   Upload,
   ExternalLink,
   RotateCcw,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
 } from "lucide-preact";
-import { loadKeys } from "../../lib/keys.js";
+import { loadKeys, saveKeysAsync } from "../../lib/keys.js";
 import { persistAudioRemote } from "../../lib/audioResolve.js";
+import { api } from "../../lib/apiClient.js";
+
+function songGenUrlFromKeys(keys) {
+  return String(keys?.songGenBaseUrl || "")
+    .trim()
+    .replace(/\/+$/, "") || "http://127.0.0.1:7860";
+}
 
 export default function TracksStep({
   track,
@@ -22,28 +32,93 @@ export default function TracksStep({
   onAttachAudio,
   onOpenSettings,
 }) {
-  const [hasReplicate, setHasReplicate] = useState(false);
-  const [hasSongGen, setHasSongGen] = useState(false);
+  const [musicProvider, setMusicProvider] = useState("replicate");
+  const [songGenUrl, setSongGenUrl] = useState("http://127.0.0.1:7860");
+  const [hasReplicateToken, setHasReplicateToken] = useState(false);
   const [hasOnce, setHasOnce] = useState(false);
+  const [providerBusy, setProviderBusy] = useState(false);
+  const [probeStatus, setProbeStatus] = useState("idle"); // idle | checking | ok | error
+  const [probeMessage, setProbeMessage] = useState("");
   const [audioUrlInput, setAudioUrlInput] = useState("");
   const [importError, setImportError] = useState("");
   const [onceReleaseId, setOnceReleaseId] = useState("");
   const [onceBusy, setOnceBusy] = useState(false);
   const [onceHint, setOnceHint] = useState("");
   const onceFileRef = useRef(null);
+  const probeSeq = useRef(0);
+
+  const hasSongGen = musicProvider === "songgen";
+  const hasReplicate = musicProvider === "replicate" && hasReplicateToken;
+
+  function refreshFromKeys() {
+    const keys = loadKeys();
+    const provider =
+      String(keys.musicProvider || "").trim() === "songgen" ? "songgen" : "replicate";
+    setMusicProvider(provider);
+    setSongGenUrl(songGenUrlFromKeys(keys));
+    setHasReplicateToken(Boolean(keys.replicateApiToken?.trim()));
+    setHasOnce(Boolean(keys.onceApiToken?.trim()));
+    return { keys, provider };
+  }
+
+  async function probeSongGen() {
+    const seq = ++probeSeq.current;
+    setProbeStatus("checking");
+    setProbeMessage("Vérification depuis le serveur Astro…");
+    try {
+      const res = await api.probeSongGen();
+      if (seq !== probeSeq.current) return;
+      if (res?.base) setSongGenUrl(String(res.base).replace(/\/+$/, ""));
+      if (res?.ok) {
+        setProbeStatus("ok");
+        setProbeMessage(res.message || "Joignable");
+      } else {
+        setProbeStatus("error");
+        setProbeMessage(res?.message || "Injoignable");
+      }
+    } catch (e) {
+      if (seq !== probeSeq.current) return;
+      setProbeStatus("error");
+      setProbeMessage(e.message || "Test impossible");
+    }
+  }
 
   useEffect(() => {
-    const keys = loadKeys();
-    const songgen = String(keys.musicProvider || "").trim() === "songgen";
-    setHasSongGen(songgen);
-    setHasReplicate(Boolean(keys.replicateApiToken?.trim()) && !songgen);
-    setHasOnce(Boolean(keys.onceApiToken?.trim()));
+    const { provider } = refreshFromKeys();
+    if (provider === "songgen") void probeSongGen();
+    else {
+      setProbeStatus("idle");
+      setProbeMessage("");
+    }
   }, [track, loading]);
 
   useEffect(() => {
     const id = distrokid?.releaseId || "";
     if (id) setOnceReleaseId(id);
   }, [distrokid?.releaseId]);
+
+  async function switchMusicProvider(next) {
+    if (next === musicProvider || providerBusy || loading) return;
+    setProviderBusy(true);
+    setImportError("");
+    try {
+      const keys = loadKeys();
+      await saveKeysAsync({ ...keys, musicProvider: next });
+      setMusicProvider(next);
+      setSongGenUrl(songGenUrlFromKeys({ ...keys, musicProvider: next }));
+      setHasReplicateToken(Boolean(keys.replicateApiToken?.trim()));
+      if (next === "songgen") await probeSongGen();
+      else {
+        probeSeq.current += 1;
+        setProbeStatus("idle");
+        setProbeMessage("");
+      }
+    } catch (e) {
+      setImportError(e.message || "Impossible d’enregistrer le provider");
+    } finally {
+      setProviderBusy(false);
+    }
+  }
 
   async function copyPrompt() {
     if (!track?.sunoPrompt) return;
@@ -62,7 +137,6 @@ export default function TracksStep({
       return;
     }
     try {
-      // Persiste tout de suite sur S3 (sinon Replicate / data: disparaissent)
       const saved = await persistAudioRemote(url, projectId || "anon");
       onAttachAudio?.(saved.audioUrl || url, {
         provider: "import-url",
@@ -70,7 +144,6 @@ export default function TracksStep({
         persisted: Boolean(saved.persisted || saved.reused),
       });
     } catch (e) {
-      // Fallback : attache quand même l’URL (session)
       onAttachAudio?.(url, { provider: "import-url", warning: e.message });
       setImportError(
         `${e.message} — audio attaché en temporaire ; configure S3 pour le garder.`,
@@ -101,7 +174,6 @@ export default function TracksStep({
         persisted: true,
       });
     } catch (err) {
-      // Secours data URL (sera persisté à la sauvegarde projet si S3 OK)
       const reader = new FileReader();
       reader.onload = () => {
         onAttachAudio?.(String(reader.result), {
@@ -217,64 +289,122 @@ export default function TracksStep({
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Créer les morceaux</h2>
         <p class="max-w-xl text-base-content/70">
           {hasSongGen
-            ? "SongGeneration Studio (LeVo local sur GPU) — voix + paroles, ~3–6 min. Pinokio doit être démarré."
-            : "Replicate → MiniMax Music 2.6 (voix + paroles, ~2–4 min). Ou passe en SongGeneration local dans Paramètres."}
+            ? "SongGeneration Studio (LeVo local sur GPU) — voix + paroles, ~3–6 min."
+            : "Replicate → MiniMax Music 2.6 (voix + paroles, ~2–4 min)."}
         </p>
       </header>
 
-      {hasSongGen ? (
-        <div class="border border-base-content/10 bg-base-200/40 p-4 text-sm text-base-content/70">
-          Provider local actif. URL joignable depuis le serveur Astro (souvent{" "}
-          <code class="text-xs">http://127.0.0.1:7860</code> sur Demeter, ou l’IP LAN).
-          <button type="button" class="btn btn-ghost btn-xs ml-2" onClick={onOpenSettings}>
-            Ajuster l’URL
-          </button>
-        </div>
-      ) : !hasReplicate ? (
-        <div class="border border-warning/40 bg-warning/10 p-4">
-          <p class="font-medium text-warning">Aucun provider audio configuré</p>
-          <p class="mt-1 text-sm text-base-content/70">
-            Choisis SongGeneration Studio (local) ou un token Replicate, sinon importe un mp3 (Suno).
-          </p>
-          <div class="mt-3 flex flex-wrap gap-2">
-            <button type="button" class="btn btn-warning btn-sm gap-1" onClick={onOpenSettings}>
-              <KeyRound size={14} /> Paramètres audio
+      <div class="space-y-3 border border-base-content/10 bg-base-200/40 p-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-sm text-base-content/60">Provider audio :</span>
+          <div class="join">
+            <button
+              type="button"
+              class={`btn join-item btn-sm ${hasSongGen ? "btn-primary" : "btn-ghost"}`}
+              disabled={providerBusy || loading}
+              onClick={() => switchMusicProvider("songgen")}
+            >
+              SongGeneration
             </button>
+            <button
+              type="button"
+              class={`btn join-item btn-sm ${!hasSongGen ? "btn-primary" : "btn-ghost"}`}
+              disabled={providerBusy || loading}
+              onClick={() => switchMusicProvider("replicate")}
+            >
+              MiniMax
+            </button>
+          </div>
+          {providerBusy && <span class="loading loading-spinner loading-xs" />}
+        </div>
+
+        {hasSongGen ? (
+          <div class="space-y-2 text-sm">
+            <p class="text-base-content/70">
+              URL configurée :{" "}
+              <code class="break-all rounded bg-base-300/60 px-1.5 py-0.5 text-xs">{songGenUrl}</code>
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              {probeStatus === "checking" && (
+                <span class="inline-flex items-center gap-1.5 text-base-content/60">
+                  <span class="loading loading-spinner loading-xs" />
+                  Test en cours…
+                </span>
+              )}
+              {probeStatus === "ok" && (
+                <span class="inline-flex items-center gap-1.5 text-success">
+                  <CheckCircle2 size={14} />
+                  {probeMessage}
+                </span>
+              )}
+              {probeStatus === "error" && (
+                <span class="inline-flex max-w-full items-start gap-1.5 text-error">
+                  <XCircle size={14} class="mt-0.5 shrink-0" />
+                  <span class="break-words">{probeMessage}</span>
+                </span>
+              )}
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs gap-1"
+                disabled={probeStatus === "checking" || loading}
+                onClick={() => void probeSongGen()}
+              >
+                <RefreshCw size={12} /> Retester
+              </button>
+              <button type="button" class="btn btn-ghost btn-xs" onClick={onOpenSettings}>
+                Ajuster l’URL
+              </button>
+            </div>
+            <p class="text-xs text-base-content/50">
+              Le ping part du serveur Astro (pas du navigateur) — même chemin que la génération.
+            </p>
+          </div>
+        ) : hasReplicateToken ? (
+          <p class="text-sm text-base-content/70">
+            Token Replicate détecté. MiniMax est facturé à l’usage
             <a
-              class="btn btn-ghost btn-sm gap-1"
-              href="https://replicate.com/account/api-tokens"
+              class="link link-primary ml-1"
+              href="https://replicate.com/account/billing#billing"
               target="_blank"
               rel="noreferrer"
             >
-              Token Replicate <ExternalLink size={12} />
+              (billing)
             </a>
+            .
+          </p>
+        ) : (
+          <div class="space-y-2">
+            <p class="text-sm text-warning">
+              Token Replicate manquant — ajoute-le dans Paramètres, ou passe sur SongGeneration.
+            </p>
+            <button type="button" class="btn btn-warning btn-sm gap-1" onClick={onOpenSettings}>
+              <KeyRound size={14} /> Paramètres audio
+            </button>
           </div>
-        </div>
-      ) : (
-        <div class="border border-base-content/10 bg-base-200/40 p-4 text-sm text-base-content/70">
-          Token Replicate détecté. Sans carte bancaire, Replicate limite à ~1 requête/min.
-          <a
-            class="link link-primary ml-1"
-            href="https://replicate.com/account/billing#billing"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Ajouter un moyen de paiement
-          </a>
-          {" "}(MiniMax facturé à l’usage). Pour du local GPU : Paramètres → SongGeneration Studio.
+        )}
+      </div>
+
+      {!canGenerateAudio && !hasSongGen && (
+        <div class="border border-warning/40 bg-warning/10 p-4">
+          <p class="font-medium text-warning">Aucun provider audio prêt</p>
+          <p class="mt-1 text-sm text-base-content/70">
+            Choisis SongGeneration ou un token Replicate, sinon importe un mp3 (Suno).
+          </p>
         </div>
       )}
 
       <button
         class="btn btn-primary gap-2"
-        disabled={loading || !lyrics}
+        disabled={loading || !lyrics || (hasSongGen && probeStatus === "error")}
         onClick={onGenerate}
         title={
-          hasSongGen
-            ? "Génère via SongGeneration Studio (local)"
-            : !hasReplicate
-              ? "Sans provider → brief Suno uniquement"
-              : "Génère via MiniMax Music 2.6"
+          hasSongGen && probeStatus === "error"
+            ? "SongGeneration injoignable — corrige l’URL ou Retester"
+            : hasSongGen
+              ? `Génère via SongGeneration @ ${songGenUrl}`
+              : !hasReplicate
+                ? "Sans provider → brief Suno uniquement"
+                : "Génère via MiniMax Music 2.6"
         }
       >
         {loading ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={18} />}
@@ -289,6 +419,11 @@ export default function TracksStep({
             : "Générer le brief (sans audio)"}
       </button>
       {!lyrics && <p class="text-sm text-warning">Générez d'abord les paroles (étape 3).</p>}
+      {hasSongGen && probeStatus === "error" && (
+        <p class="text-sm text-error">
+          Studio injoignable depuis Astro — lance Pinokio / vérifie l’URL avant de générer.
+        </p>
+      )}
 
       {track && (
         <div class="animate-rise space-y-4 border-t border-base-content/10 pt-5">

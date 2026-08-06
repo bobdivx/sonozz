@@ -127,14 +127,10 @@ function normalizeLyrics(lyricsText = "") {
     .slice(0, 3500);
 }
 
-/**
- * MiniMax Music 2.6 — chanson complète avec voix + paroles (2–4 min typique).
- */
-async function generateWithMinimax(token, { prompt, lyrics }) {
+function minimaxMusicInput({ prompt, lyrics }) {
   const lyricsText = normalizeLyrics(lyrics);
   const stylePrompt = String(prompt || "modern french pop, emotional vocals").slice(0, 2000);
-
-  const input = lyricsText
+  return lyricsText
     ? {
         prompt: stylePrompt,
         lyrics: lyricsText,
@@ -146,11 +142,15 @@ async function generateWithMinimax(token, { prompt, lyrics }) {
         is_instrumental: false,
         lyrics_optimizer: true,
       };
+}
+
+/** Crée la prediction MiniMax sans attendre (évite timeout proxy). */
+export async function startMinimaxMusic(token, { prompt, lyrics } = {}) {
+  const input = minimaxMusicInput({ prompt, lyrics });
 
   let { res, data } = await replicateJson(token, "/models/minimax/music-2.6/predictions", {
     method: "POST",
-    wait: true,
-    waitSeconds: 60,
+    wait: false,
     body: JSON.stringify({ input }),
   });
 
@@ -159,8 +159,7 @@ async function generateWithMinimax(token, { prompt, lyrics }) {
     await new Promise((r) => setTimeout(r, waitSec * 1000));
     ({ res, data } = await replicateJson(token, "/models/minimax/music-2.6/predictions", {
       method: "POST",
-      wait: true,
-      waitSeconds: 60,
+      wait: false,
       body: JSON.stringify({ input }),
     }));
   }
@@ -173,8 +172,49 @@ async function generateWithMinimax(token, { prompt, lyrics }) {
     throw new Error(billingHint(errorText(data, res.status)));
   }
 
-  console.info("[replicate] MiniMax prediction", data.id, data.status);
-  const url = await waitPrediction(token, data, { maxPolls: 180 });
+  console.info("[replicate] MiniMax start", data.id, data.status);
+  return {
+    generationId: data.id,
+    provider: "minimax-music-2.6",
+    status: data.status || "starting",
+  };
+}
+
+/** Un tick de poll prediction MiniMax. */
+export async function pollMinimaxMusic(token, generationId) {
+  const id = String(generationId || "").trim();
+  if (!id) throw new Error("predictionId MiniMax manquant");
+
+  const { res, data } = await replicateJson(token, `/predictions/${id}`);
+  if (!res.ok) throw new Error(billingHint(errorText(data, res.status)));
+
+  if (data.status === "succeeded") {
+    const url = extractOutputUrl(data.output);
+    if (!url) throw new Error("Replicate a réussi mais sans URL de fichier");
+    return {
+      done: true,
+      status: "succeeded",
+      url: String(url),
+      provider: "minimax-music-2.6",
+      durationLabel: "~2–4 min",
+      hasVocals: true,
+      generationId: id,
+    };
+  }
+  if (data.status === "failed" || data.status === "canceled") {
+    throw new Error(data.error || "Génération audio échouée");
+  }
+  return { done: false, status: data.status || "processing", generationId: id };
+}
+
+/**
+ * MiniMax Music 2.6 — chanson complète avec voix + paroles (2–4 min typique).
+ */
+async function generateWithMinimax(token, { prompt, lyrics }) {
+  const started = await startMinimaxMusic(token, { prompt, lyrics });
+  const url = await waitPrediction(token, { id: started.generationId, status: started.status }, {
+    maxPolls: 180,
+  });
   return { url, provider: "minimax-music-2.6", durationLabel: "~2–4 min", hasVocals: true };
 }
 
