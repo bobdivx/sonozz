@@ -120,6 +120,45 @@ function publicUrlForKey(key) {
 }
 
 /**
+ * Extrait une clé objet `audio/…` ou `clips/…` depuis une URL S3 sonozz / Scaleway.
+ * @returns {string|null}
+ */
+export function tryParseS3ObjectKey(urlOrKey = "") {
+  const raw = String(urlOrKey || "").trim();
+  if (!raw) return null;
+  if (!/^https?:\/\//i.test(raw)) {
+    const key = raw.replace(/^\//, "");
+    return /^(audio|clips)\//i.test(key) && !key.includes("..") ? key : null;
+  }
+  try {
+    const u = new URL(raw);
+    const cfg = getS3Config();
+    let path = decodeURIComponent(u.pathname.replace(/^\//, ""));
+    // path-style : /bucket/audio/...
+    if (cfg.bucket && path.startsWith(`${cfg.bucket}/`)) {
+      path = path.slice(cfg.bucket.length + 1);
+    }
+    if (/^(audio|clips)\//i.test(path) && !path.includes("..")) return path;
+    // virtual-host bucket.s3…/audio/...
+    if (
+      cfg.bucket &&
+      (u.hostname === cfg.bucket ||
+        u.hostname.startsWith(`${cfg.bucket}.`) ||
+        /sonozz/i.test(u.hostname))
+    ) {
+      if (/^(audio|clips)\//i.test(path) && !path.includes("..")) return path;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export function isOurS3Url(url = "") {
+  return Boolean(tryParseS3ObjectKey(url));
+}
+
+/**
  * Upload un buffer vidéo → retourne clé + URL publique (ou signée).
  */
 export async function uploadClipBuffer(buffer, { projectId, mimeType = "video/webm", key } = {}) {
@@ -141,15 +180,11 @@ export async function uploadClipBuffer(buffer, { projectId, mimeType = "video/we
   let url = publicUrlForKey(objectKey);
   // Bucket privé sans S3_PUBLIC_URL → URL signée longue durée (7 j)
   if (!cfg.publicBase) {
-    try {
-      url = await getSignedUrl(
-        s3,
-        new GetObjectCommand({ Bucket: cfg.bucket, Key: objectKey }),
-        { expiresIn: 60 * 60 * 24 * 7 },
-      );
-    } catch {
-      /* garde l’URL construite */
-    }
+    url = await getSignedUrl(
+      s3,
+      new GetObjectCommand({ Bucket: cfg.bucket, Key: objectKey }),
+      { expiresIn: 60 * 60 * 24 * 7 },
+    );
   }
 
   return {
@@ -164,13 +199,44 @@ export async function uploadClipBuffer(buffer, { projectId, mimeType = "video/we
 export async function downloadClipBuffer(keyOrUrl) {
   if (!keyOrUrl) throw new Error("Clé / URL S3 manquante");
 
+  const parsedKey = tryParseS3ObjectKey(keyOrUrl);
+  if (parsedKey && isS3Configured()) {
+    const s3 = getS3Client();
+    const cfg = getS3Config();
+    try {
+      const out = await s3.send(
+        new GetObjectCommand({ Bucket: cfg.bucket, Key: parsedKey }),
+      );
+      const bytes = await out.Body?.transformToByteArray?.();
+      if (!bytes) throw new Error("Objet S3 vide");
+      return {
+        buffer: Buffer.from(bytes),
+        mimeType: out.ContentType || "application/octet-stream",
+        key: parsedKey,
+      };
+    } catch (e) {
+      // Si la clé ne match pas / accès ko, tenter fetch HTTP (URL signée)
+      if (!/^https?:\/\//i.test(keyOrUrl)) {
+        throw new Error(`Lecture S3 « ${parsedKey} »: ${e.message || e}`);
+      }
+    }
+  }
+
   // URL http(s) directe (publique ou déjà signée)
   if (/^https?:\/\//i.test(keyOrUrl)) {
     const res = await fetch(keyOrUrl);
-    if (!res.ok) throw new Error(`Téléchargement clip HTTP ${res.status}`);
-    const mimeType = res.headers.get("content-type") || "video/webm";
+    if (!res.ok) {
+      throw new Error(
+        `Téléchargement audio/clip HTTP ${res.status}${
+          res.status === 403
+            ? " — bucket privé : utilise la clé S3 (stream?key=) ou une URL signée"
+            : ""
+        }`,
+      );
+    }
+    const mimeType = res.headers.get("content-type") || "application/octet-stream";
     const buffer = Buffer.from(await res.arrayBuffer());
-    return { buffer, mimeType };
+    return { buffer, mimeType, key: parsedKey || null };
   }
 
   const s3 = getS3Client();
@@ -182,7 +248,8 @@ export async function downloadClipBuffer(keyOrUrl) {
   if (!bytes) throw new Error("Objet S3 vide");
   return {
     buffer: Buffer.from(bytes),
-    mimeType: out.ContentType || "video/webm",
+    mimeType: out.ContentType || "application/octet-stream",
+    key: keyOrUrl,
   };
 }
 

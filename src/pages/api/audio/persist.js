@@ -65,7 +65,7 @@ export async function POST({ request }) {
     }
 
     const body = await readBody(request);
-    const { action = "persist", audioUrl, projectId = "anon" } = body;
+    const { action = "persist", audioUrl, projectId = "anon", force = false } = body;
 
     if (action === "probe") {
       return json(await probeAudioUrl(audioUrl));
@@ -95,7 +95,10 @@ export async function POST({ request }) {
       );
     }
 
-    const saved = await materializeAudioForStorage(audioUrl, { projectId });
+    const saved = await materializeAudioForStorage(audioUrl, {
+      projectId,
+      force: Boolean(force),
+    });
     if (!saved?.url) {
       return json({ ok: true, audioUrl, persisted: false, message: "URL déjà durable" });
     }

@@ -3,7 +3,7 @@
  * et les data: sont trop lourds pour Turso.
  */
 
-import { isS3Configured, uploadClipBuffer } from "./s3.js";
+import { isS3Configured, uploadClipBuffer, tryParseS3ObjectKey, downloadClipBuffer } from "./s3.js";
 
 export function isEphemeralAudioUrl(url = "") {
   if (!url || typeof url !== "string") return false;
@@ -95,6 +95,21 @@ export async function loadAudioBuffer(source) {
     throw new Error("URL audio non supportée (http(s) ou data:audio requis)");
   }
 
+  // Bucket privé : lire via SDK plutôt que l’URL publique (403)
+  const s3Key = tryParseS3ObjectKey(source);
+  if (s3Key && isS3Configured()) {
+    try {
+      const { buffer, mimeType } = await downloadClipBuffer(s3Key);
+      if (buffer.length < 1000) {
+        throw new Error("Fichier audio trop petit / invalide");
+      }
+      return { buffer, mimeType: sniffMime(buffer, mimeType) };
+    } catch (e) {
+      console.warn("[audioPersist] S3 SDK:", e.message);
+      // continue vers fetch HTTP (URL signée éventuelle)
+    }
+  }
+
   const res = await fetch(source);
   if (!res.ok) {
     throw new Error(
@@ -128,8 +143,9 @@ export async function loadAudioBuffer(source) {
 
 /**
  * Matérialise l’audio sur S3. Renvoie null si S3 absent ou source déjà durable non-éphémère.
+ * @param {{ projectId?: string, force?: boolean }} [opts]
  */
-export async function materializeAudioForStorage(audioUrl, { projectId = "anon" } = {}) {
+export async function materializeAudioForStorage(audioUrl, { projectId = "anon", force = false } = {}) {
   if (!audioUrl || typeof audioUrl !== "string") return null;
   if (!isS3Configured()) {
     if (isEphemeralAudioUrl(audioUrl) || isAudioDataUrl(audioUrl)) {
@@ -140,11 +156,16 @@ export async function materializeAudioForStorage(audioUrl, { projectId = "anon" 
     return null;
   }
 
-  // Déjà sur notre bucket → garder
-  if (/^https?:\/\//i.test(audioUrl) && !isEphemeralAudioUrl(audioUrl) && !isAudioDataUrl(audioUrl)) {
-    // Si c’est déjà une URL S3 sonozz / publique, ne pas re-upload
+  // Déjà sur notre bucket → garder (sauf force = re-upload avec mime sniffé)
+  if (
+    !force &&
+    /^https?:\/\//i.test(audioUrl) &&
+    !isEphemeralAudioUrl(audioUrl) &&
+    !isAudioDataUrl(audioUrl)
+  ) {
     if (/s3\.|scw\.cloud|r2\.cloudflare|digitaloceanspaces|sonozz/i.test(audioUrl)) {
-      return { url: audioUrl, reused: true };
+      const key = tryParseS3ObjectKey(audioUrl);
+      return { url: audioUrl, s3Key: key || undefined, reused: true };
     }
   }
 

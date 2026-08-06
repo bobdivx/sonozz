@@ -31,7 +31,7 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
     const audio = audioRef.current;
     if (!audio || !audioUrl) return;
 
-    const src = playableAudioSrc(audioUrl);
+    const src = playableAudioSrc(audioUrl, track?.audioS3Key);
     if (audio.dataset.src !== src) {
       audio.dataset.src = src;
       audio.src = src;

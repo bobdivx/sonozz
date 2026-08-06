@@ -19,9 +19,16 @@ function looksLikeAudio(buffer) {
 }
 
 /**
- * URL jouable dans <audio> : proxy si cross-origin / LAN Pinokio (évite CORS + mixed content).
+ * URL jouable dans <audio> : proxy si cross-origin / LAN Pinokio / S3 privé.
+ * Préfère `?key=` pour les objets sonozz (bucket privé Scaleway → 403 en URL publique).
  */
-export function playableAudioSrc(audioUrl) {
+export function playableAudioSrc(audioUrl, s3Key) {
+  const key =
+    (typeof s3Key === "string" && /^(audio|clips)\//i.test(s3Key.trim()) && s3Key.trim()) ||
+    null;
+  if (key) {
+    return `/api/audio/stream?key=${encodeURIComponent(key)}`;
+  }
   if (!audioUrl) return "";
   if (audioUrl.startsWith("data:audio") || audioUrl.startsWith("blob:") || audioUrl.startsWith("/")) {
     return audioUrl;
@@ -30,6 +37,10 @@ export function playableAudioSrc(audioUrl) {
     if (typeof location !== "undefined") {
       const u = new URL(audioUrl, location.href);
       if (u.origin === location.origin) return audioUrl;
+      // URL S3 sonozz non signée → stream via parsing côté serveur
+      if (/s3\.|scw\.cloud|r2\.cloudflare|sonozz/i.test(u.hostname)) {
+        return `/api/audio/stream?url=${encodeURIComponent(audioUrl)}`;
+      }
     }
   } catch {
     /* fallthrough */
@@ -167,12 +178,12 @@ export async function resolveAudioAsset(audioUrl) {
   }
 }
 
-/** Persiste l’audio sur S3 (URL durable). */
-export async function persistAudioRemote(audioUrl, projectId = "anon") {
+/** Persiste l’audio sur S3 (URL durable). `force` = re-upload même si déjà S3. */
+export async function persistAudioRemote(audioUrl, projectId = "anon", { force = false } = {}) {
   const res = await fetch("/api/audio/persist", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "persist", audioUrl, projectId }),
+    body: JSON.stringify({ action: "persist", audioUrl, projectId, force }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Persistance audio impossible");

@@ -118,7 +118,7 @@ export default function PlayerPage() {
     if (!audio || !current?.audioUrl) return;
 
     setAudioError("");
-    const src = playableAudioSrc(current.audioUrl);
+    const src = playableAudioSrc(current.audioUrl, current.audioS3Key);
     if (audio.dataset.trackId !== current.id) {
       audio.dataset.trackId = current.id;
       audio.src = src;

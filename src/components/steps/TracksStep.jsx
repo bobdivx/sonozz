@@ -597,38 +597,67 @@ export default function TracksStep({
                   />
                 ))}
               </div>
-              <audio controls class="w-full" src={playableAudioSrc(track.audioUrl)} preload="metadata" />
-              {/\/api\/audio\//i.test(String(track.audioUrl || "")) && (
-                <p class="text-xs text-base-content/50">
-                  Lecture via proxy Astro (SongGen FLAC / LAN). Si 0:00, clique « Re-sauver audio »
-                  ci-dessous.
-                </p>
-              )}
+              <audio
+                key={track.audioS3Key || track.audioUrl}
+                controls
+                class="w-full"
+                src={playableAudioSrc(track.audioUrl, track.audioS3Key)}
+                preload="metadata"
+              />
+              <p class="text-xs text-base-content/50">
+                Lecture via proxy serveur (S3 privé / SongGen). Si 0:00, utilise « Re-sauver audio ».
+              </p>
               {track.audioUrl && (
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs gap-1"
-                  disabled={loading}
+                  disabled={loading || onceBusy}
                   onClick={async () => {
                     setImportError("");
+                    setOnceHint("");
+                    setOnceBusy(true);
                     try {
-                      const saved = await persistAudioRemote(track.audioUrl, projectId || "anon");
-                      if (saved?.audioUrl) {
-                        onAttachAudio?.(saved.audioUrl, {
+                      const saved = await persistAudioRemote(
+                        track.audioUrl,
+                        projectId || "anon",
+                        { force: true },
+                      );
+                      if (saved?.audioUrl || saved?.s3Key) {
+                        let s3Key = saved.s3Key || track.audioS3Key;
+                        if (!s3Key) {
+                          try {
+                            const path = decodeURIComponent(
+                              new URL(saved.audioUrl || track.audioUrl).pathname.replace(/^\//, ""),
+                            );
+                            if (/^(audio|clips)\//i.test(path)) s3Key = path;
+                          } catch {
+                            /* ignore */
+                          }
+                        }
+                        onAttachAudio?.(saved.audioUrl || track.audioUrl, {
                           provider: track.provider || "songgeneration-studio",
-                          s3Key: saved.s3Key,
+                          s3Key,
                           persisted: true,
-                          note: "Audio re-persisté (mime corrigé).",
+                          note: saved.reused
+                            ? "Audio déjà sur S3 — lecture via clé."
+                            : `Audio re-persisté (${saved.mimeType || "audio"}).`,
                         });
+                        setOnceHint("Audio OK — le lecteur devrait afficher la durée.");
                       }
                     } catch (e) {
                       setImportError(e.message || "Re-persistance impossible");
+                    } finally {
+                      setOnceBusy(false);
                     }
                   }}
                 >
+                  {onceBusy ? (
+                    <span class="loading loading-spinner loading-xs" />
+                  ) : null}
                   Re-sauver audio (S3)
                 </button>
               )}
+              {onceHint && <p class="text-xs text-success">{onceHint}</p>}
             </>
           ) : (
             <div class="space-y-3 border border-base-content/10 bg-base-200/50 p-4">
