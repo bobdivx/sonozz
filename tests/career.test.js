@@ -8,6 +8,7 @@ import {
   extractOnceIdentifiers,
   publishingReadiness,
   normalizeOnceDelivery,
+  pickLegalPersonName,
 } from "../src/server/once.js";
 import { verifyOnceWebhookSignature } from "../src/server/onceWebhooks.js";
 import { scheduleItemKey } from "../src/server/careerSchedule.js";
@@ -188,6 +189,22 @@ describe("ONCE identifiers & publishing", () => {
     });
     assert.equal(r.status, "ready");
     assert.equal(r.canSubmitUnison, true);
+  });
+
+  it("pickLegalPersonName accepte prénom + nom", () => {
+    assert.equal(pickLegalPersonName("Kaelen Moreau"), "Kaelen Moreau");
+    assert.equal(pickLegalPersonName("", "Marie-Claire Dubois"), "Marie-Claire Dubois");
+  });
+
+  it("pickLegalPersonName refuse mononyme / initiales", () => {
+    assert.equal(pickLegalPersonName("Kaelen"), null);
+    assert.equal(pickLegalPersonName("J Smith"), null); // J trop court
+    assert.equal(pickLegalPersonName(""), null);
+    assert.equal(pickLegalPersonName(null, undefined), null);
+  });
+
+  it("pickLegalPersonName accepte scripts CJK courts", () => {
+    assert.equal(pickLegalPersonName("林 明"), "林 明");
   });
 
   it("normalizeOnceDelivery extrait Spotify", () => {

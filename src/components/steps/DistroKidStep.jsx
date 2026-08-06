@@ -237,6 +237,9 @@ export default function DistroKidStep({
                 ["Sortie", form.releaseDate],
                 ["Explicit", form.explicitLyrics],
                 ["Label", form.recordLabel],
+                ["Langue", form.lyricsLanguage],
+                ["Contient IA", form.containsAi || (distrokid?.containsAi ? "Yes" : "No")],
+                ["Instrumental", form.isInstrumental || (distrokid?.isInstrumental ? "Yes" : "No")],
               ].map(([label, value]) => (
                 <div key={label} class="border-b border-base-content/10 py-2">
                   <span class="block text-xs uppercase tracking-wider text-base-content/40">{label}</span>
