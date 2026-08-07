@@ -134,6 +134,10 @@ export default function Dashboard() {
   /** Accueil studio `/` uniquement — masqué quand un projet est ouvert via ?project= */
   const [showHomePipeline, setShowHomePipeline] = useState(true);
   const [artistMode, setArtistMode] = useState(null);
+  /** Génération album lancée dans cet onglet (évite d’écraser l’état live par le poll). */
+  const albumLocalRunRef = useRef(false);
+  const albumAbortRef = useRef(null);
+  const albumWorkingRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -192,6 +196,54 @@ export default function Dashboard() {
     })();
   }, []);
 
+  // Sync album multi-appareils : poll Turso quand un autre client génère
+  useEffect(() => {
+    const running = project.album?.status === "running";
+    if (!running || !projectId || albumLocalRunRef.current) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled || albumLocalRunRef.current) return;
+      try {
+        const { project: saved } = await api.getProject(projectId);
+        if (cancelled || albumLocalRunRef.current) return;
+        const remoteAlbum = saved?.project?.album;
+        if (!remoteAlbum) return;
+        setProject((prev) => {
+          const prevUpdated = prev.album?.updatedAt || "";
+          const nextUpdated = remoteAlbum.updatedAt || "";
+          if (nextUpdated && nextUpdated <= prevUpdated) {
+            const prevDone = (prev.album?.tracks || []).filter((t) => t.status === "done").length;
+            const nextDone = (remoteAlbum.tracks || []).filter((t) => t.status === "done").length;
+            const prevActive = (prev.album?.tracks || []).filter((t) =>
+              t.status === "lyrics" || t.status === "audio",
+            ).length;
+            const nextActive = (remoteAlbum.tracks || []).filter((t) =>
+              t.status === "lyrics" || t.status === "audio",
+            ).length;
+            if (
+              nextDone <= prevDone &&
+              nextActive <= prevActive &&
+              prev.album?.status === remoteAlbum.status
+            ) {
+              return prev;
+            }
+          }
+          return normalizeProjectClips({ ...prev, album: remoteAlbum });
+        });
+      } catch {
+        /* réseau ok à ignorer */
+      }
+    };
+
+    tick();
+    const id = window.setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [project.album?.status, projectId]);
+
   const artistSlug = project.artist?.slug;
 
   const doneMap = {
@@ -210,7 +262,8 @@ export default function Dashboard() {
   const completed = Object.values(doneMap).filter(Boolean).length;
   const progress = Math.round((completed / STEPS.length) * 100);
 
-  async function persist(nextProject, event) {
+  async function persist(nextProject, event, opts = {}) {
+    const { skipLocalUpdate = false } = opts;
     setSaving(true);
     setSaveMsg("");
     try {
@@ -233,21 +286,25 @@ export default function Dashboard() {
           /* IDB optionnel */
         }
       }
-      if (data.artist?.slug) {
-        setProject({
-          ...normalized,
-          artist: nextProject.artist
-            ? { ...nextProject.artist, slug: data.artist.slug }
-            : nextProject.artist,
-        });
-        setSaveMsg(`Sauvé · /artiste/${data.artist.slug}`);
-      } else {
-        setProject((prev) =>
-          normalizeProjectClips({
-            ...prev,
+      if (!skipLocalUpdate) {
+        if (data.artist?.slug) {
+          setProject({
             ...normalized,
-          }),
-        );
+            artist: nextProject.artist
+              ? { ...nextProject.artist, slug: data.artist.slug }
+              : nextProject.artist,
+          });
+          setSaveMsg(`Sauvé · /artiste/${data.artist.slug}`);
+        } else {
+          setProject((prev) =>
+            normalizeProjectClips({
+              ...prev,
+              ...normalized,
+            }),
+          );
+          setSaveMsg("Sauvé sur Turso");
+        }
+      } else {
         setSaveMsg("Sauvé sur Turso");
       }
       return saved;
@@ -350,6 +407,83 @@ export default function Dashboard() {
     }
   }
 
+  function syncAlbumWorking(next) {
+    albumWorkingRef.current = next;
+    setProject(next);
+    return next;
+  }
+
+  function cancelAlbumGeneration() {
+    if (albumAbortRef.current) {
+      albumAbortRef.current.aborted = true;
+      return;
+    }
+    // Run distant / zombie (onglet fermé) : stoppe le statut en base
+    if (project.album?.status !== "running") return;
+    const next = {
+      ...project,
+      album: {
+        ...project.album,
+        status: "cancelled",
+        tracks: (project.album.tracks || []).map((t) =>
+          t.status === "lyrics" || t.status === "audio"
+            ? { ...t, status: "pending", error: undefined }
+            : t,
+        ),
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    setProject(next);
+    persist(next, {
+      stepKey: "album",
+      eventType: "album",
+      message: "Album arrêté",
+    });
+  }
+
+  async function removeAlbumTrack(trackId) {
+    if (!trackId) return;
+    const base = albumWorkingRef.current || project;
+    if (!base?.album?.tracks?.length) return;
+    const entry = base.album.tracks.find((t) => t.id === trackId);
+    if (!entry || entry.role === "lead") return;
+
+    const tracks = base.album.tracks
+      .filter((t) => t.id !== trackId)
+      .map((t, i) => ({ ...t, index: i + 1 }));
+    const doneCount = tracks.filter((t) => t.status === "done").length;
+    const stillPending = tracks.some(
+      (t) => t.status === "pending" || t.status === "lyrics" || t.status === "audio",
+    );
+    const next = {
+      ...base,
+      album: {
+        ...base.album,
+        tracks,
+        targetCount: tracks.length,
+        status:
+          base.album.status === "running" && stillPending
+            ? "running"
+            : doneCount > 0
+              ? "done"
+              : base.album.status === "running"
+                ? "cancelled"
+                : base.album.status,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    syncAlbumWorking(next);
+    await persist(
+      next,
+      {
+        stepKey: "album",
+        eventType: "album-track",
+        message: `Album · piste retirée « ${entry.workingTitle || entry.theme || trackId} »`,
+      },
+      { skipLocalUpdate: albumLocalRunRef.current },
+    );
+  }
+
   /**
    * Album autonome : le lead (project.track) est gardé ; génère N-1 titres (paroles + audio).
    * @param {number} totalCount total souhaité (lead inclus)
@@ -368,9 +502,13 @@ export default function Dashboard() {
       setError("Artiste et paroles du lead requis.");
       return;
     }
+    if (albumLocalRunRef.current) return;
 
     const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
     const extra = total - 1;
+    const abortState = { aborted: false };
+    albumAbortRef.current = abortState;
+    albumLocalRunRef.current = true;
     setLoading(true);
     setStepProgress({ percent: 2, message: "Planification de la tracklist…" });
     setError("");
@@ -408,7 +546,10 @@ export default function Dashboard() {
         updatedAt: new Date().toISOString(),
       },
     };
-    setProject(working);
+    syncAlbumWorking(working);
+
+    const persistAlbum = (event) =>
+      persist(working, event, { skipLocalUpdate: true });
 
     try {
       const plan = await api.albumPlan({
@@ -417,6 +558,7 @@ export default function Dashboard() {
         track: project.track,
         count: extra,
       });
+      if (abortState.aborted) throw Object.assign(new Error("Album annulé"), { name: "AbortError" });
 
       working = {
         ...working,
@@ -440,8 +582,8 @@ export default function Dashboard() {
           updatedAt: new Date().toISOString(),
         },
       };
-      setProject(working);
-      await persist(working, {
+      syncAlbumWorking(working);
+      await persistAlbum({
         stepKey: "album",
         eventType: "album",
         message: `Tracklist « ${working.album.title} » planifiée`,
@@ -451,10 +593,46 @@ export default function Dashboard() {
       const lang = project.lyrics?.language || project.artist?.language || "fr";
 
       for (let i = 0; i < slots.length; i++) {
+        if (abortState.aborted) break;
+        // Resync si l’utilisateur a retiré des pistes pendant le run
+        working = albumWorkingRef.current || working;
+
+        // Honore annulation / suppressions faites depuis un autre appareil
+        if (projectId) {
+          try {
+            const { project: saved } = await api.getProject(projectId);
+            const remote = saved?.project?.album;
+            if (remote?.status === "cancelled") {
+              abortState.aborted = true;
+              break;
+            }
+            if (Array.isArray(remote?.tracks)) {
+              const remoteIds = new Set(remote.tracks.map((t) => t.id));
+              if (working.album.tracks.some((t) => !remoteIds.has(t.id))) {
+                working = {
+                  ...working,
+                  album: {
+                    ...working.album,
+                    tracks: working.album.tracks.filter((t) => remoteIds.has(t.id)),
+                    targetCount: remote.tracks.length,
+                    updatedAt: new Date().toISOString(),
+                  },
+                };
+                syncAlbumWorking(working);
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+
         const slot = slots[i];
+        if (!working.album.tracks.some((t) => t.id === slot.id)) continue;
+
         const basePct = Math.round(((i + 0.15) / slots.length) * 90) + 5;
 
         const mark = (patch) => {
+          working = albumWorkingRef.current || working;
           working = {
             ...working,
             album: {
@@ -465,10 +643,15 @@ export default function Dashboard() {
               updatedAt: new Date().toISOString(),
             },
           };
-          setProject(working);
+          syncAlbumWorking(working);
         };
 
         mark({ status: "lyrics", error: undefined });
+        await persistAlbum({
+          stepKey: "album",
+          eventType: "album-track",
+          message: `Album · paroles en cours · titre ${slot.index}`,
+        });
         setStepProgress({
           percent: basePct,
           message: `Titre ${slot.index}/${total} — paroles « ${slot.workingTitle} »…`,
@@ -477,6 +660,8 @@ export default function Dashboard() {
           progress: basePct,
           message: `Paroles ${slot.index}/${total}…`,
         });
+
+        if (abortState.aborted) break;
 
         let lyricsI;
         try {
@@ -487,10 +672,24 @@ export default function Dashboard() {
             language: lang,
           });
         } catch (e) {
+          if (abortState.aborted) break;
           mark({ status: "error", error: e.message || "Paroles échouées" });
+          await persistAlbum({
+            stepKey: "album",
+            eventType: "album-track",
+            message: `Album · erreur paroles titre ${slot.index}`,
+          });
           continue;
         }
-        mark({ lyrics: lyricsI, workingTitle: lyricsI?.title || slot.workingTitle });
+        if (abortState.aborted) break;
+        if (!working.album.tracks.some((t) => t.id === slot.id)) continue;
+
+        mark({ lyrics: lyricsI, workingTitle: lyricsI?.title || slot.workingTitle, status: "audio" });
+        await persistAlbum({
+          stepKey: "album",
+          eventType: "album-track",
+          message: `Album · audio en cours · titre ${slot.index}`,
+        });
 
         setStepProgress({
           percent: basePct + 4,
@@ -500,7 +699,6 @@ export default function Dashboard() {
           progress: basePct + 4,
           message: `Audio ${slot.index}/${total}…`,
         });
-        mark({ status: "audio" });
 
         let trackI;
         try {
@@ -513,6 +711,7 @@ export default function Dashboard() {
               },
             },
             (p) => {
+              if (abortState.aborted) return;
               const local = Math.min(
                 96,
                 basePct + 4 + Math.round(((Number(p?.percent) || 0) / 100) * (80 / slots.length)),
@@ -526,12 +725,22 @@ export default function Dashboard() {
                 message: `${slot.index}/${total} · ${p?.message || "audio…"}`,
               });
             },
+            { signal: abortState },
           );
         } catch (e) {
+          if (abortState.aborted || e?.name === "AbortError") break;
           mark({ status: "error", error: e.message || "Audio échoué" });
+          await persistAlbum({
+            stepKey: "album",
+            eventType: "album-track",
+            message: `Album · erreur audio titre ${slot.index}`,
+          });
           continue;
         }
+        if (abortState.aborted) break;
+        if (!working.album.tracks.some((t) => t.id === slot.id)) continue;
 
+        let s3Warning;
         if (trackI?.audioUrl) {
           try {
             const saved = await persistAudioRemote(trackI.audioUrl, projectId || "anon");
@@ -541,10 +750,19 @@ export default function Dashboard() {
                 audioUrl: saved.audioUrl,
                 audioS3Key: saved.s3Key,
                 audioEphemeral: false,
+                warning: undefined,
               };
+            } else if (saved && saved.persisted === false) {
+              s3Warning = "Audio non persisté sur S3 — lien temporaire";
+              trackI = { ...trackI, audioEphemeral: true, warning: s3Warning };
             }
-          } catch {
-            /* audio temporaire ok */
+          } catch (persistErr) {
+            s3Warning = persistErr.message || "Persistance S3 échouée";
+            trackI = {
+              ...trackI,
+              audioEphemeral: true,
+              warning: s3Warning,
+            };
           }
         }
 
@@ -554,51 +772,89 @@ export default function Dashboard() {
           error: trackI?.audioUrl ? undefined : "Pas d’audio",
         });
 
-        await persist(working, {
+        await persistAlbum({
           stepKey: "album",
           eventType: "album-track",
           message: `Album · titre ${slot.index} « ${lyricsI?.title || slot.workingTitle} »`,
         });
       }
 
+      working = albumWorkingRef.current || working;
       const doneCount = working.album.tracks.filter((t) => t.status === "done").length;
       const failed = working.album.tracks.filter((t) => t.status === "error").length;
+      const wasCancelled = abortState.aborted;
+      // Remet en attente les pistes interrompues mid-flight
+      const tracks = working.album.tracks.map((t) => {
+        if (wasCancelled && (t.status === "lyrics" || t.status === "audio")) {
+          return { ...t, status: "pending", error: undefined };
+        }
+        return t;
+      });
       working = {
         ...working,
         album: {
           ...working.album,
-          status: failed && doneCount <= 1 ? "error" : "done",
+          tracks,
+          status: wasCancelled
+            ? "cancelled"
+            : failed && doneCount <= 1
+              ? "error"
+              : "done",
           updatedAt: new Date().toISOString(),
         },
       };
-      setProject(working);
+      syncAlbumWorking(working);
       await persist(working, {
         stepKey: "album",
         eventType: "album",
-        message: `Album terminé · ${doneCount}/${total} titres`,
+        message: wasCancelled
+          ? `Album annulé · ${doneCount}/${tracks.length} titres`
+          : `Album terminé · ${doneCount}/${tracks.length} titres`,
       });
       finishStepJob(jobId, {
-        ok: failed === 0,
-        message:
-          failed > 0
+        ok: !wasCancelled && failed === 0,
+        message: wasCancelled
+          ? `Album annulé · ${doneCount} titres gardés`
+          : failed > 0
             ? `Album partiel · ${doneCount} OK, ${failed} en erreur`
             : `Album prêt · ${doneCount} titres`,
         progress: 100,
       });
-      setStepProgress({ percent: 100, message: `Album prêt · ${doneCount}/${total}` });
+      setStepProgress({
+        percent: 100,
+        message: wasCancelled
+          ? `Album annulé · ${doneCount}/${tracks.length}`
+          : `Album prêt · ${doneCount}/${tracks.length}`,
+      });
     } catch (e) {
-      setError(e.message || "Album interrompu");
+      const wasAbort = e?.name === "AbortError" || abortState.aborted;
+      if (!wasAbort) setError(e.message || "Album interrompu");
+      working = albumWorkingRef.current || working;
       working = {
         ...working,
         album: {
           ...(working.album || {}),
-          status: "error",
+          status: wasAbort ? "cancelled" : "error",
           updatedAt: new Date().toISOString(),
         },
       };
-      setProject(working);
-      finishStepJob(jobId, { ok: false, message: e.message || "Album en erreur" });
+      syncAlbumWorking(working);
+      try {
+        await persist(working, {
+          stepKey: "album",
+          eventType: "album",
+          message: wasAbort ? "Album annulé" : `Album erreur · ${e.message || "?"}`,
+        });
+      } catch {
+        /* ignore */
+      }
+      finishStepJob(jobId, {
+        ok: false,
+        message: wasAbort ? "Album annulé" : e.message || "Album en erreur",
+      });
     } finally {
+      albumLocalRunRef.current = false;
+      albumAbortRef.current = null;
       setLoading(false);
       setTimeout(() => setStepProgress(null), 2500);
     }
@@ -1218,6 +1474,8 @@ export default function Dashboard() {
               )
             }
             onGenerateAlbum={(totalCount) => runAlbumGeneration(totalCount)}
+            onCancelAlbum={() => cancelAlbumGeneration()}
+            onRemoveAlbumTrack={(trackId) => removeAlbumTrack(trackId)}
             onSelectAlbumTrack={(entry) => {
               if (!entry?.lyrics && !entry?.track) return;
               setProject((prev) => ({

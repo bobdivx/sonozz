@@ -12,6 +12,8 @@ import {
   CheckCircle2,
   XCircle,
   Library,
+  Trash2,
+  Ban,
 } from "lucide-preact";
 import { loadKeys, saveKeysAsync } from "../../lib/keys.js";
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
@@ -38,6 +40,8 @@ export default function TracksStep({
   distrokid,
   onGenerate,
   onGenerateAlbum,
+  onCancelAlbum,
+  onRemoveAlbumTrack,
   onSelectAlbumTrack,
   onAttachAudio,
   onOpenSettings,
@@ -313,6 +317,7 @@ export default function TracksStep({
     if (st === "audio") return "Audio…";
     if (st === "error") return "Erreur";
     if (st === "pending") return "En attente";
+    if (st === "cancelled") return "Annulé";
     return st || "—";
   }
 
@@ -454,11 +459,7 @@ export default function TracksStep({
           )}
           {(artist.voiceSample?.s3Key || artist.voiceSample?.url) && (
             <p class="mt-1 text-xs text-base-content/50">
-              Voix perso :{" "}
-              {artist.voiceSample.guideMode === "reference"
-                ? "référence audio brute SongGen (peut sortir voix seule si a cappella)"
-                : "timbre analysé → mix complet (défaut)"}
-              {" — réglable à l’étape Artiste."}
+              Extrait vocal → indice de timbre uniquement (mix instruments forcé).
             </p>
           )}
         </div>
@@ -567,23 +568,40 @@ export default function TracksStep({
                   ))}
                 </select>
               </div>
-              <button
-                type="button"
-                class="btn btn-outline btn-sm gap-2"
-                disabled={loading || !canGenerateAudio || (hasSongGen && probeStatus === "error")}
-                onClick={() => onGenerateAlbum?.(albumSize)}
-              >
-                {albumRunning ? (
-                  <span class="loading loading-spinner loading-xs" />
-                ) : (
-                  <Library size={14} />
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="btn btn-outline btn-sm gap-2"
+                  disabled={
+                    loading ||
+                    albumRunning ||
+                    !canGenerateAudio ||
+                    (hasSongGen && probeStatus === "error")
+                  }
+                  onClick={() => onGenerateAlbum?.(albumSize)}
+                >
+                  {albumRunning ? (
+                    <span class="loading loading-spinner loading-xs" />
+                  ) : (
+                    <Library size={14} />
+                  )}
+                  {albumRunning
+                    ? `Album en cours (${albumDoneCount}/${album.targetCount || albumSize})…`
+                    : album?.status === "done" || album?.status === "cancelled"
+                      ? `Relancer un album (${albumSize} titres)`
+                      : `Créer l’album (${albumSize} titres)`}
+                </button>
+                {albumRunning && (
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm gap-2 text-error"
+                    onClick={() => onCancelAlbum?.()}
+                  >
+                    <Ban size={14} />
+                    Annuler
+                  </button>
                 )}
-                {albumRunning
-                  ? `Album en cours (${albumDoneCount}/${album.targetCount || albumSize})…`
-                  : album?.status === "done"
-                    ? `Relancer un album (${albumSize} titres)`
-                    : `Créer l’album (${albumSize} titres)`}
-              </button>
+              </div>
               {album?.title && (
                 <p class="text-xs text-base-content/55">
                   <span class="font-medium text-base-content/80">{album.title}</span>
@@ -607,6 +625,9 @@ export default function TracksStep({
                         </p>
                         <p class="truncate text-xs text-base-content/50">{entry.theme}</p>
                         {entry.error && <p class="text-xs text-error">{entry.error}</p>}
+                        {entry.track?.warning && (
+                          <p class="text-xs text-warning">{entry.track.warning}</p>
+                        )}
                       </div>
                       <div class="flex items-center gap-2">
                         <span
@@ -626,10 +647,21 @@ export default function TracksStep({
                           <button
                             type="button"
                             class="btn btn-ghost btn-xs"
-                            disabled={loading}
+                            disabled={loading && albumRunning}
                             onClick={() => onSelectAlbumTrack?.(entry)}
                           >
                             Ouvrir
+                          </button>
+                        )}
+                        {entry.role !== "lead" && (
+                          <button
+                            type="button"
+                            class="btn btn-ghost btn-xs text-error"
+                            title="Retirer ce morceau"
+                            disabled={false}
+                            onClick={() => onRemoveAlbumTrack?.(entry.id)}
+                          >
+                            <Trash2 size={14} />
                           </button>
                         )}
                       </div>
@@ -639,8 +671,8 @@ export default function TracksStep({
               )}
               {albumRunning && (
                 <p class="text-xs text-base-content/50">
-                  Laisse l’onglet ouvert — chaque titre prend ~3–6 min (SongGen) ou ~2–4 min
-                  (MiniMax).
+                  L’onglet qui a lancé la génération doit rester ouvert. Les autres appareils voient
+                  la progression toutes les ~4 s.
                 </p>
               )}
             </div>
@@ -668,10 +700,16 @@ export default function TracksStep({
                 controls
                 class="w-full"
                 src={playableAudioSrc(track.audioUrl, track.audioS3Key)}
-                preload="metadata"
+                preload="auto"
+                onError={() => {
+                  setImportError(
+                    "Lecture impossible — clique « Re-sauver audio (S3) » puis réessaie (souvent URL SongGen expirée ou FLAC).",
+                  );
+                }}
               />
               <p class="text-xs text-base-content/50">
-                Lecture via proxy serveur (S3 privé / SongGen). Si 0:00, utilise « Re-sauver audio ».
+                Lecture via proxy serveur (S3 privé / SongGen). Si 0:00 ou silence : « Re-sauver
+                audio ».
               </p>
               {track.audioUrl && (
                 <button

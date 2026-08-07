@@ -33,19 +33,59 @@ function sniffMime(buffer, fallback = "audio/mpeg") {
   return fallback;
 }
 
-function audioResponse(buffer, mimeHint) {
+/**
+ * Réponse audio avec support Range (obligatoire : les <audio> demandent souvent
+ * bytes=0- pour lire la durée — sans 206 → 0:00 / lecture impossible).
+ */
+function audioResponse(buffer, mimeHint, request) {
   if (!buffer?.length || buffer.length < 500) {
     return error("Audio trop petit / vide", 502);
   }
   const mime = sniffMime(buffer, mimeHint || "audio/mpeg");
+  const total = buffer.length;
+  const rangeHeader = request?.headers?.get?.("range") || "";
+
+  const common = {
+    "Content-Type": mime,
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "private, max-age=300",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+  };
+
+  if (rangeHeader) {
+    const m = /^bytes=(\d*)-(\d*)$/i.exec(String(rangeHeader).trim());
+    if (m) {
+      let start = m[1] === "" ? 0 : Number.parseInt(m[1], 10);
+      let end = m[2] === "" ? total - 1 : Number.parseInt(m[2], 10);
+      if (!Number.isFinite(start) || start < 0) start = 0;
+      if (!Number.isFinite(end) || end >= total) end = total - 1;
+      if (start >= total || start > end) {
+        return new Response(null, {
+          status: 416,
+          headers: {
+            ...common,
+            "Content-Range": `bytes */${total}`,
+          },
+        });
+      }
+      const slice = buffer.subarray(start, end + 1);
+      return new Response(slice, {
+        status: 206,
+        headers: {
+          ...common,
+          "Content-Length": String(slice.length),
+          "Content-Range": `bytes ${start}-${end}/${total}`,
+        },
+      });
+    }
+  }
+
   return new Response(buffer, {
     status: 200,
     headers: {
-      "Content-Type": mime,
-      "Content-Length": String(buffer.length),
-      "Cache-Control": "private, max-age=300",
-      "Access-Control-Allow-Origin": "*",
-      "Accept-Ranges": "bytes",
+      ...common,
+      "Content-Length": String(total),
     },
   });
 }
@@ -68,7 +108,7 @@ export async function GET({ request }) {
         return error("S3 non configuré — impossible de lire l’audio", 503);
       }
       const { buffer, mimeType } = await downloadClipBuffer(keyParam);
-      return audioResponse(buffer, mimeType);
+      return audioResponse(buffer, mimeType, request);
     }
 
     if (!url) return error("Paramètre url ou key manquant", 400);
@@ -81,16 +121,29 @@ export async function GET({ request }) {
     if (s3Key && isS3Configured()) {
       try {
         const { buffer, mimeType } = await downloadClipBuffer(s3Key);
-        return audioResponse(buffer, mimeType);
+        return audioResponse(buffer, mimeType, request);
       } catch (e) {
         console.warn("[audio/stream] S3 key fallback:", e.message);
       }
     }
 
     const { buffer, mimeType } = await loadAudioBuffer(url);
-    return audioResponse(buffer, mimeType);
+    return audioResponse(buffer, mimeType, request);
   } catch (e) {
     console.error("[audio/stream]", e.message || e);
     return error(e.message || "Stream audio impossible", 500);
   }
+}
+
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+      "Access-Control-Allow-Headers": "Range, Content-Type",
+      "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
 }

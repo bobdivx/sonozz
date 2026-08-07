@@ -123,8 +123,7 @@ export function musicArrangeToSongGen(arrange, { styleLockInstruments } = {}) {
 
   if (a.notes) parts.push(a.notes);
 
-  // Toujours rappeler le mix complet
-  parts.push("full mixed song with vocals and instruments, not a cappella");
+    parts.push("full mixed song with vocals and instruments, not a cappella, rich accompaniment");
 
   return {
     instruments: instrumentBits.filter(Boolean).slice(0, 8).join(", ").slice(0, 160),

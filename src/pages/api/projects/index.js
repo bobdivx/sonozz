@@ -114,73 +114,93 @@ async function sanitizeProject(project = {}, { projectId } = {}) {
     clone.cover = await sanitizeImageField(clone.cover, "imageUrl");
   }
 
-  const audio = clone.track?.audioUrl;
-  if (typeof audio === "string" && audio.length > 0) {
+  async function sanitizeTrackAudio(trackObj) {
+    if (!trackObj || typeof trackObj !== "object") return trackObj;
+    const audio = trackObj.audioUrl;
+    if (typeof audio !== "string" || audio.length === 0) return trackObj;
+
     const needsPersist =
       isAudioDataUrl(audio) ||
       isEphemeralAudioUrl(audio) ||
       audio.startsWith("blob:");
 
     if (audio.startsWith("blob:")) {
-      clone.track = {
-        ...clone.track,
+      return {
+        ...trackObj,
         audioUrl: null,
         localAsset: true,
         status: "audio-was-local",
         assetMissingReason: "blob-not-persisted",
         warning: "Audio blob perdu — réimporte le fichier mp3.",
       };
-    } else if (needsPersist) {
-      try {
-        if (!isS3Configured()) {
-          clone.track = {
-            ...clone.track,
-            // Garde l’URL éphémère en mémoire de session mais marque le risque
-            audioEphemeral: isEphemeralAudioUrl(audio),
-            warning: isAudioDataUrl(audio)
-              ? "Audio data: trop lourd pour Turso sans S3 — configure S3 sinon perte au reload."
-              : "Audio Replicate non persisté (expire ~1 h) — configure S3.",
-          };
-          if (isAudioDataUrl(audio)) {
-            // Ne pas stocker des Mo de base64 dans Turso
-            clone.track = {
-              ...clone.track,
-              audioUrl: null,
-              localAsset: true,
-              status: "audio-was-local",
-              assetMissingReason: "audio-data-not-persisted-no-s3",
-            };
-          }
-        } else {
-          const saved = await materializeAudioForStorage(audio, {
-            projectId: projectId || clone.id || clone.artist?.slug || "anon",
-          });
-          if (saved?.url) {
-            clone.track = {
-              ...clone.track,
-              audioUrl: saved.url,
-              audioS3Key: saved.s3Key || clone.track.audioS3Key,
-              localAsset: false,
-              audioEphemeral: false,
-              status: "audio-ready",
-              warning: undefined,
-              assetMissingReason: undefined,
-            };
-          }
-        }
-      } catch (e) {
-        console.warn("[projects] persist audio:", e.message);
-        if (isEphemeralAudioUrl(audio) || isAudioDataUrl(audio)) {
-          clone.track = {
-            ...clone.track,
-            audioUrl: isEphemeralAudioUrl(audio) ? audio : null,
-            audioEphemeral: true,
-            warning: e.message || "Persistance audio échouée",
-            assetMissingReason: "audio-persist-failed",
+    }
+    if (!needsPersist) return trackObj;
+
+    try {
+      if (!isS3Configured()) {
+        let next = {
+          ...trackObj,
+          audioEphemeral: isEphemeralAudioUrl(audio),
+          warning: isAudioDataUrl(audio)
+            ? "Audio data: trop lourd pour Turso sans S3 — configure S3 sinon perte au reload."
+            : "Audio Replicate non persisté (expire ~1 h) — configure S3.",
+        };
+        if (isAudioDataUrl(audio)) {
+          next = {
+            ...next,
+            audioUrl: null,
+            localAsset: true,
+            status: "audio-was-local",
+            assetMissingReason: "audio-data-not-persisted-no-s3",
           };
         }
+        return next;
+      }
+      const saved = await materializeAudioForStorage(audio, {
+        projectId: projectId || clone.id || clone.artist?.slug || "anon",
+      });
+      if (saved?.url) {
+        return {
+          ...trackObj,
+          audioUrl: saved.url,
+          audioS3Key: saved.s3Key || trackObj.audioS3Key,
+          localAsset: false,
+          audioEphemeral: false,
+          status: "audio-ready",
+          warning: undefined,
+          assetMissingReason: undefined,
+        };
+      }
+    } catch (e) {
+      console.warn("[projects] persist audio:", e.message);
+      if (isEphemeralAudioUrl(audio) || isAudioDataUrl(audio)) {
+        return {
+          ...trackObj,
+          audioUrl: isEphemeralAudioUrl(audio) ? audio : null,
+          audioEphemeral: true,
+          warning: e.message || "Persistance audio échouée",
+          assetMissingReason: "audio-persist-failed",
+        };
       }
     }
+    return trackObj;
+  }
+
+  if (clone.track) {
+    clone.track = await sanitizeTrackAudio(clone.track);
+  }
+
+  // Album autonome : chaque piste doit être matérialisée (sinon URL Replicate expire)
+  if (clone.album && Array.isArray(clone.album.tracks)) {
+    clone.album = {
+      ...clone.album,
+      tracks: await Promise.all(
+        clone.album.tracks.map(async (entry) => {
+          if (!entry?.track) return entry;
+          return { ...entry, track: await sanitizeTrackAudio(entry.track) };
+        }),
+      ),
+    };
   }
 
   // Clip : garder URL S3/http ; strip uniquement data: / blob: (trop lourds pour Turso)

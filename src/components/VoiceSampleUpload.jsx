@@ -3,9 +3,7 @@ import { Mic2, Upload, Square, Trash2 } from "lucide-preact";
 import {
   VOICE_SAMPLE_ACCEPT,
   VOICE_SAMPLE_MAX_SEC,
-  VOICE_GUIDE_MODES,
   DEFAULT_VOICE_GUIDE_MODE,
-  resolveVoiceGuideMode,
   normalizeVoiceBlobToWav,
   validateVoiceFile,
 } from "../lib/voiceSample.js";
@@ -35,7 +33,6 @@ export default function VoiceSampleUpload({
   const [recSec, setRecSec] = useState(0);
   const [error, setError] = useState("");
   const [localPreview, setLocalPreview] = useState("");
-  const guideMode = resolveVoiceGuideMode(value);
 
   useEffect(() => {
     return () => {
@@ -71,15 +68,6 @@ export default function VoiceSampleUpload({
     onChange?.(next);
   }
 
-  function setGuideMode(mode) {
-    const nextMode = resolveVoiceGuideMode(mode);
-    if (!value?.url && !value?.s3Key) {
-      emitSample({ guideMode: nextMode });
-      return;
-    }
-    emitSample({ ...value, guideMode: nextMode });
-  }
-
   async function uploadWav(wavBlob, fileName, durationSec) {
     const form = new FormData();
     form.append("audio", wavBlob, fileName || "voice-sample.wav");
@@ -99,7 +87,7 @@ export default function VoiceSampleUpload({
       fileName: data.fileName || fileName || "voice-sample.wav",
       byteLength: data.byteLength,
       durationSec: data.durationSec || durationSec || null,
-      guideMode: resolveVoiceGuideMode(value) || DEFAULT_VOICE_GUIDE_MODE,
+      guideMode: DEFAULT_VOICE_GUIDE_MODE,
     };
   }
 
@@ -206,7 +194,7 @@ export default function VoiceSampleUpload({
       URL.revokeObjectURL(localPreview);
     }
     setLocalPreview("");
-    emitSample({ guideMode });
+    emitSample({ guideMode: DEFAULT_VOICE_GUIDE_MODE });
   }
 
   const hasSample = Boolean(value?.url || value?.s3Key);
@@ -216,7 +204,6 @@ export default function VoiceSampleUpload({
       ? `/api/audio/stream?key=${encodeURIComponent(value.s3Key)}`
       : value?.url) ||
     "";
-  const activeGuide = VOICE_GUIDE_MODES.find((m) => m.id === guideMode) || VOICE_GUIDE_MODES[0];
 
   return (
     <div class="space-y-3">
@@ -226,29 +213,10 @@ export default function VoiceSampleUpload({
           Ta voix (optionnel)
         </span>
         <p class="text-xs text-base-content/45">
-          ~5–10 s de toi qui chantes (WAV / MP3 / FLAC / OGG, ou micro).
+          ~5–10 s de toi qui chantes — sert d’indice de timbre seulement. Le morceau est toujours
+          généré en mix complet (voix + instruments).
         </p>
       </div>
-
-      <fieldset class="space-y-2">
-        <legend class="text-xs uppercase tracking-wider text-base-content/45">
-          Utilisation SongGen
-        </legend>
-        <div class="flex flex-wrap gap-2">
-          {VOICE_GUIDE_MODES.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              class={`btn btn-sm ${guideMode === m.id ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-              disabled={disabled || busy}
-              onClick={() => setGuideMode(m.id)}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-        <p class="text-xs text-base-content/50">{activeGuide.hint}</p>
-      </fieldset>
 
       {hasSample ? (
         <div class="flex flex-col gap-2 rounded-lg border border-base-content/10 bg-base-200/40 p-3">
@@ -257,8 +225,6 @@ export default function VoiceSampleUpload({
             <span class="text-base-content/45">
               {value?.fileName || "voice-sample.wav"}
               {value?.durationSec ? ` · ~${Math.round(value.durationSec)}s` : ""}
-              {" · "}
-              {activeGuide.short}
             </span>
             <button
               type="button"

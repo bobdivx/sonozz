@@ -279,23 +279,38 @@ export function resolveVocalGender(artist) {
   };
 }
 
-function mapGenre(genre = "") {
-  // Prendre le 1er segment (évite « Indie Pop × Rock » → match rock trop agressif)
-  const first = String(genre || "")
+/**
+ * Genre pour SongGeneration Studio.
+ * Doit matcher GENRE_TO_AUTO_PROMPT (clés lowercased) pour activer auto_prompt_audio
+ * = extrait musical de la librairie → instruments. Sinon "Auto".
+ * @see BazedFrog/SongGeneration-Studio generation.py
+ */
+function mapGenreForStudio(genre = "") {
+  const g = String(genre || "")
     .split(/\s*[×xX|,/]\s*/)[0]
     .trim()
     .toLowerCase();
-  const g = first || String(genre || "").toLowerCase();
-  if (/hip[\s-]?hop|rap|trap|drill/.test(g)) return "Hip-Hop";
+  if (/hip[\s-]?hop|rap|trap|drill|boom\s*bap/.test(g)) return "Pop"; // Studio n’a pas Hip-Hop dans sa map → Pop + instru
   if (/r&?b|soul|neo-?soul/.test(g)) return "R&B";
   if (/metal/.test(g)) return "Metal";
-  if (/rock|indie rock|punk|garage/.test(g)) return "Rock";
+  if (/rock|punk|garage|indie rock/.test(g)) return "Rock";
   if (/jazz/.test(g)) return "Jazz";
-  if (/folk|acoustic|chanson/.test(g)) return "Folk";
-  if (/electro|edm|dance|house|techno|hyperpop|synth/.test(g)) return "Electronic";
+  if (/folk|acoustic|chanson|country/.test(g)) return "Folk";
+  if (/electro|edm|dance|house|techno|hyperpop|synth|electronic/.test(g)) return "Electronic";
   if (/reggae|dancehall|afro/.test(g)) return "Reggae";
+  if (/latin|reggaeton|salsa/.test(g)) return "Pop";
   if (/pop/.test(g)) return "Pop";
-  return String(genre || "Pop").split(/[,/|×]/)[0].trim().slice(0, 40) || "Pop";
+  return "Pop";
+}
+
+/** Timbre court pour le champ Studio (évite les pavés Gemini qui dégradent). */
+function shortTimbre(raw = "") {
+  const t = String(raw || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return "";
+  // Garder 2–5 mots max
+  return t.split(/[;,]/)[0].trim().split(/\s+/).slice(0, 5).join(" ").slice(0, 48);
 }
 
 export async function testSongGeneration(keys) {
@@ -323,7 +338,9 @@ export async function testSongGeneration(keys) {
 
 /**
  * Lance une génération SongGen (réponse rapide — le client poll ensuite).
- * @returns {Promise<{ generationId: string, provider: string, base: string }>}
+ *
+ * Règle d’or : JAMAIS d’extrait a cappella en reference_audio_id.
+ * Studio clone alors le style → sortie voix seule. On force auto_prompt + instruments.
  */
 export async function startSongGeneration(
   keys,
@@ -337,86 +354,83 @@ export async function startSongGeneration(
     styleLock: artist?.styleLock,
     visualIdentity: artist?.visualIdentity,
   });
-  const stylePrefix = `${vocal.code} vocals, ${vocal.voiceHint}`;
   const lock = artist?.styleLock;
   const voiceSample = artist?.voiceSample;
-  const guideMode =
-    voiceSample && (voiceSample.s3Key || voiceSample.url || voiceSample.dataUrl)
-      ? voiceSample.guideMode === "reference"
-        ? "reference"
-        : "timbre"
-      : null;
+  const wantsReference =
+    voiceSample?.guideMode === "reference" &&
+    (voiceSample.s3Key || voiceSample.url || voiceSample.dataUrl);
 
-  let referenceAudioId = null;
-  let personalTimbre = "";
-
-  if (guideMode === "reference") {
-    try {
-      referenceAudioId = await ensureSongGenVoiceReference(keys, voiceSample);
-      console.info("[songgen] voice reference (UX):", referenceAudioId);
-    } catch (e) {
-      console.warn("[songgen] reference KO — fallback timbre:", e.message);
-    }
+  // Référence audio perso désactivée côté génération (casse le mix).
+  // On log si l’UX demandait encore "reference".
+  if (wantsReference) {
+    console.warn(
+      "[songgen] guideMode=reference ignoré — un a cappella en prompt_audio sort voix seule. Mix forcé.",
+    );
   }
 
-  if (guideMode === "timbre" || (guideMode === "reference" && !referenceAudioId)) {
-    personalTimbre = await resolvePersonalVoiceTimbre(keys, artist);
-  }
-
-  const timbre = String(
-    referenceAudioId ? "" : personalTimbre || lock?.timbre || "",
-  )
-    .trim()
-    .slice(0, 120);
+  // Timbre : court, optionnel. Pas d’analyse Gemini à chaque gen (voix souvent pire).
+  const cachedTimbre = shortTimbre(
+    voiceSample?.songGenTimbre || voiceSample?.analyzedTimbre || lock?.timbre || "",
+  );
 
   const arrange = normalizeMusicArrange(artist?.musicArrange);
   const fromArrange = musicArrangeToSongGen(arrange, {
     styleLockInstruments: lock?.instruments,
   });
 
-  const instruments = referenceAudioId
-    ? ""
-    : fromArrange.instruments ||
-      (Array.isArray(lock?.instruments)
-        ? lock.instruments.filter(Boolean).slice(0, 6).join(", ").slice(0, 160)
-        : "") ||
-      "drums, bass, guitar, synths";
+  const defaultInstru = "drums, bass, electric guitar, piano, synths";
+  const instruments = (
+    fromArrange.instruments ||
+    (Array.isArray(lock?.instruments)
+      ? lock.instruments.filter(Boolean).slice(0, 6).join(", ")
+      : "") ||
+    defaultInstru
+  ).slice(0, 160);
 
-  const grooveBits = [lock?.rhythmFeel, lock?.tempoFeel].filter(Boolean).join("; ");
+  const studioGenre = mapGenreForStudio(
+    genre || lock?.genreSummary || lock?.genres?.[0] || artist?.genre,
+  );
 
-  // En mode reference, Studio ignore souvent les descriptions — on allège.
-  // En mode timbre (défaut), on force mix complet + instru + arrangement UX.
-  const custom = referenceAudioId
-    ? [stylePrefix, String(prompt || "").trim()].filter(Boolean).join(", ").slice(0, 500)
-    : [
-        stylePrefix,
-        personalTimbre ? `personal voice timbre ${personalTimbre}` : "",
-        timbre && !personalTimbre ? `timbre ${timbre}` : "",
-        grooveBits ? `groove ${grooveBits}` : "",
-        ...fromArrange.customFragments,
-        String(prompt || "").trim(),
-      ]
-        .filter(Boolean)
-        .join(", ")
-        .slice(0, 500);
+  // custom_style : instru d’abord, voix ensuite — pas de pavé "musicPrompt" qui dilue
+  const custom = [
+    "full mixed song with rich instrumental accompaniment",
+    "not a cappella",
+    "not vocals only",
+    "clear drums and bass",
+    ...fromArrange.customFragments.filter(
+      (f) => !/a\s*cappella|vocals only/i.test(f),
+    ),
+    lock?.rhythmFeel ? `groove ${lock.rhythmFeel}` : "",
+    cachedTimbre ? `vocal timbre ${cachedTimbre}` : "",
+    // Prompt lyrics/style artiste : tronqué, en fin
+    String(prompt || "")
+      .replace(/\bexactly in the style of\b[^,]*/gi, "")
+      .slice(0, 180),
+  ]
+    .filter(Boolean)
+    .join(", ")
+    .slice(0, 480);
 
   const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
   const body = {
     title: String(title || "SONOZZ Track").slice(0, 120),
     sections,
     gender: vocal.code,
-    timbre: referenceAudioId ? "" : timbre || "",
-    genre: mapGenre(genre || lock?.genreSummary || lock?.genres?.[0]),
-    emotion: String(mood || lock?.mood || "").slice(0, 80),
+    timbre: cachedTimbre || (vocal.code === "female" ? "bright" : "warm"),
+    genre: studioGenre,
+    emotion: String(mood || lock?.mood || "energetic")
+      .split(/[,/|]/)[0]
+      .trim()
+      .slice(0, 40),
     instruments,
-    custom_style: custom || stylePrefix,
+    custom_style: custom,
     bpm: Math.min(
       200,
       Math.max(60, Number.isFinite(lockBpm) && lockBpm >= 60 ? Math.round(lockBpm) : 110),
     ),
     output_mode: "mixed",
     memory_mode: "auto",
-    ...(referenceAudioId ? { reference_audio_id: referenceAudioId } : {}),
+    // Pas de reference_audio_id — laisse Studio brancher auto_prompt_audio_type via genre
   };
 
   console.info(
@@ -428,15 +442,9 @@ export async function startSongGeneration(
     `gender=${body.gender}`,
     `genre=${body.genre}`,
     `bpm=${body.bpm}`,
-    `guide=${guideMode || "none"}`,
-    fromArrange.summary ? `arrange=${fromArrange.summary.slice(0, 60)}` : "arrange=∅",
-    referenceAudioId
-      ? `ref=${referenceAudioId}`
-      : personalTimbre
-        ? `voiceTimbre=${personalTimbre.slice(0, 40)}`
-        : timbre
-          ? `timbre=${timbre.slice(0, 40)}`
-          : "timbre=∅",
+    `instruments=${body.instruments.slice(0, 50)}`,
+    `timbre=${body.timbre}`,
+    "ref=OFF mix=forced",
   );
   const created = await songGenFetch(base, "/api/generate", { method: "POST", body });
   const genId = created?.generation_id;
@@ -446,9 +454,9 @@ export async function startSongGeneration(
     provider: "songgeneration-studio",
     base,
     gender: body.gender,
-    referenceAudioId: referenceAudioId || null,
-    personalTimbre: personalTimbre || null,
-    guideMode: guideMode || null,
+    referenceAudioId: null,
+    personalTimbre: cachedTimbre || null,
+    guideMode: "timbre",
   };
 }
 

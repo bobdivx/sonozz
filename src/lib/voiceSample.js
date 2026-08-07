@@ -4,32 +4,23 @@ export const VOICE_SAMPLE_ACCEPT =
 
 /**
  * Comment SongGen utilise l’extrait vocal perso.
- * - timbre (défaut) : analyse Gemini → descriptions texte + mix complet
- * - reference : prompt_audio SongGen (clone le style de l’extrait — a cappella → souvent voix seule)
+ * - timbre (seul mode actif) : indices de timbre courts + mix complet forcé
+ * - reference : désactivé côté serveur (a cappella → voix seule)
  */
 export const VOICE_GUIDE_MODES = [
   {
     id: "timbre",
-    label: "Timbre (recommandé)",
-    short: "Mix complet",
-    hint: "Analyse ta voix et génère un morceau mixé (voix + instruments).",
-  },
-  {
-    id: "reference",
-    label: "Référence audio",
-    short: "Clone audio",
-    hint: "Envoie l’extrait brut à SongGen. Idéal si c’est un bout de chanson mixée — a cappella = souvent voix seule.",
+    label: "Mix complet (recommandé)",
+    short: "Mix + timbre",
+    hint: "Morceau avec instruments. Ton extrait sert seulement d’indice de timbre (pas de clone audio brut).",
   },
 ];
 
 export const DEFAULT_VOICE_GUIDE_MODE = "timbre";
 
-export function resolveVoiceGuideMode(sampleOrMode) {
-  const raw =
-    typeof sampleOrMode === "string"
-      ? sampleOrMode
-      : sampleOrMode?.guideMode || sampleOrMode?.mode;
-  return raw === "reference" ? "reference" : DEFAULT_VOICE_GUIDE_MODE;
+export function resolveVoiceGuideMode(_sampleOrMode) {
+  // Mode « référence audio » retiré : produisait systématiquement voix seule.
+  return DEFAULT_VOICE_GUIDE_MODE;
 }
 
 const ALLOWED_EXT = new Set(["wav", "mp3", "flac", "ogg"]);

@@ -76,8 +76,19 @@ function formatTrackProgress(tick = {}) {
  * Start + poll court (évite Cloudflare 524 — gen audio 2–10 min).
  * @param {object} payload
  * @param {(p: { percent: number, message: string }) => void} [onProgress]
+ * @param {{ signal?: AbortSignal }} [opts]
  */
-async function trackWithPoll(payload = {}, onProgress) {
+async function trackWithPoll(payload = {}, onProgress, opts = {}) {
+  const signal = opts.signal;
+  const throwIfAborted = () => {
+    if (signal?.aborted) {
+      const err = new Error("Génération audio annulée");
+      err.name = "AbortError";
+      throw err;
+    }
+  };
+
+  throwIfAborted();
   onProgress?.({ percent: 5, message: "Démarrage génération audio…" });
   const started = await request("/api/track", { ...payload, action: "start" });
   if (!started?.pollNeeded) {
@@ -99,7 +110,9 @@ async function trackWithPoll(payload = {}, onProgress) {
   const intervalMs = started.musicKind === "songgen" ? 3000 : 2500;
 
   for (let i = 0; i < maxPolls; i++) {
+    throwIfAborted();
     await sleep(intervalMs);
+    throwIfAborted();
     const tick = await request("/api/track", {
       action: "poll",
       generationId: started.generationId,
@@ -124,7 +137,7 @@ export const api = {
   trends: (seed = {}) => request("/api/trends", seed),
   artist: (payload) => request("/api/artist", payload),
   lyrics: (payload) => request("/api/lyrics", payload),
-  track: (payload, onProgress) => trackWithPoll(payload, onProgress),
+  track: (payload, onProgress, opts) => trackWithPoll(payload, onProgress, opts),
   /** Planifie les thèmes des pistes restantes d’un album (hors lead). */
   albumPlan: (payload) => request("/api/album", { action: "plan", ...payload }),
   /** Ping SongGeneration Studio (URL des clés) — ne lance pas de génération. */

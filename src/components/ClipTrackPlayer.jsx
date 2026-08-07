@@ -40,7 +40,7 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
       setCurrentTime(0);
       setDuration(0);
     }
-  }, [audioUrl]);
+  }, [audioUrl, track?.audioS3Key]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -49,10 +49,17 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
     const onTime = () => {
       if (!seekingRef.current) setCurrentTime(audio.currentTime || 0);
     };
-    const onMeta = () => setDuration(audio.duration || 0);
+    const onMeta = () => {
+      const d = audio.duration;
+      setDuration(Number.isFinite(d) && d > 0 ? d : 0);
+    };
     const onEnded = () => setPlaying(false);
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
+    const onError = () => {
+      setPlaying(false);
+      setDuration(0);
+    };
 
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("loadedmetadata", onMeta);
@@ -60,6 +67,7 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
     audio.addEventListener("ended", onEnded);
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
+    audio.addEventListener("error", onError);
     return () => {
       audio.removeEventListener("timeupdate", onTime);
       audio.removeEventListener("loadedmetadata", onMeta);
@@ -67,6 +75,7 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("error", onError);
     };
   }, []);
 
@@ -78,6 +87,31 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
       return;
     }
     try {
+      // Si metadata KO, recharger via proxy avant play
+      if (!Number.isFinite(audio.duration) || audio.duration === 0) {
+        const src = playableAudioSrc(audioUrl, track?.audioS3Key);
+        if (src && audio.src !== new URL(src, location.href).href) {
+          audio.src = src;
+        }
+        audio.load();
+        await new Promise((resolve) => {
+          const ok = () => {
+            cleanup();
+            resolve();
+          };
+          const fail = () => {
+            cleanup();
+            resolve();
+          };
+          const cleanup = () => {
+            audio.removeEventListener("loadedmetadata", ok);
+            audio.removeEventListener("error", fail);
+          };
+          audio.addEventListener("loadedmetadata", ok, { once: true });
+          audio.addEventListener("error", fail, { once: true });
+          setTimeout(fail, 8000);
+        });
+      }
       await audio.play();
     } catch {
       setPlaying(false);
