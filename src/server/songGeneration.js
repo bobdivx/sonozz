@@ -290,6 +290,7 @@ function mapGenreForStudio(genre = "") {
     .split(/\s*[×xX|,/]\s*/)[0]
     .trim()
     .toLowerCase();
+  if (/gospel|inspirational|choir|spiritual|worship/.test(g)) return "R&B";
   if (/hip[\s-]?hop|rap|trap|drill|boom\s*bap/.test(g)) return "Pop"; // Studio n’a pas Hip-Hop dans sa map → Pop + instru
   if (/r&?b|soul|neo-?soul/.test(g)) return "R&B";
   if (/metal/.test(g)) return "Metal";
@@ -377,35 +378,84 @@ export async function startSongGeneration(
   const fromArrange = musicArrangeToSongGen(arrange, {
     styleLockInstruments: lock?.instruments,
   });
+  const gospel = Boolean(fromArrange.gospel);
+  const wantsChoir = Boolean(fromArrange.wantsChoir);
 
-  const defaultInstru = "drums, bass, electric guitar, piano, synths";
-  const instruments = (
-    fromArrange.instruments ||
-    (Array.isArray(lock?.instruments)
-      ? lock.instruments.filter(Boolean).slice(0, 6).join(", ")
-      : "") ||
-    defaultInstru
-  ).slice(0, 160);
+  // Défaut bande complète — JAMAIS un seul instrument (style-lock pauvre → mix nul)
+  const defaultInstru = gospel
+    ? "gospel choir, church organ, piano, bass, drums"
+    : "bass, piano, electric guitar, drums, synths, pads";
+  let instruments = (fromArrange.instruments || "").trim();
+  if (!instruments) {
+    instruments = (
+      (Array.isArray(lock?.instruments)
+        ? lock.instruments.filter(Boolean).slice(0, 4).join(", ")
+        : "") || defaultInstru
+    );
+  }
+  // Si style-lock / arrange n’a renvoyé qu’1–2 tags, compléter
+  const instruCount = instruments.split(",").map((s) => s.trim()).filter(Boolean).length;
+  if (instruCount < 4) {
+    const merged = [
+      ...instruments.split(",").map((s) => s.trim()).filter(Boolean),
+      ...defaultInstru.split(",").map((s) => s.trim()),
+    ];
+    const seen = new Set();
+    instruments = merged
+      .filter((t) => {
+        const k = t.toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .slice(0, 8)
+      .join(", ");
+  }
+  instruments = instruments.slice(0, 160);
 
-  const studioGenre = mapGenreForStudio(
-    genre || lock?.genreSummary || lock?.genres?.[0] || artist?.genre,
-  );
+  // Gospel / chœur → ancrer R&B pour auto_prompt Studio (pas de genre Gospel natif)
+  const genreHint = gospel
+    ? "gospel soul R&B"
+    : genre || lock?.genreSummary || lock?.genres?.[0] || artist?.genre;
+  const studioGenre = mapGenreForStudio(genreHint);
 
-  // custom_style : instru d’abord, voix ensuite — pas de pavé "musicPrompt" qui dilue
+  // Fragments arrangement d’abord (chœur), puis garde-fous mix — filtre a cappella corrigé
+  const arrangeFrags = (fromArrange.customFragments || []).filter((f) => {
+    const s = String(f || "");
+    if (/\bnot\s+a\s*cappella\b|\bnot\s+vocals\s+only\b/i.test(s)) return true;
+    if (/\ba\s*cappella\b|\bvocals\s+only\b/i.test(s)) return false;
+    return true;
+  });
+
+  const mixGuard = gospel
+    ? [
+        "full mixed song with lead vocal, gospel choir and band",
+        "choir and organ clearly audible",
+        "balanced drums supporting the choir, never drums-only",
+        "rich multi-instrument arrangement",
+      ]
+    : wantsChoir
+      ? [
+          "full band mix with rich instrumental accompaniment",
+          "backing vocals clearly present",
+          "bass, keys or guitar, and drums all audible",
+          "never a single-instrument loop",
+        ]
+      : [
+          "full band radio-ready mix",
+          "lead vocal over complete arrangement",
+          "bass, harmony instruments, and drums all present",
+          "never a cappella, never vocals-only, never drums-only, never single-instrument",
+        ];
+
   const custom = [
-    "full mixed song with rich instrumental accompaniment",
-    "not a cappella",
-    "not vocals only",
-    "clear drums and bass",
-    ...fromArrange.customFragments.filter(
-      (f) => !/a\s*cappella|vocals only/i.test(f),
-    ),
+    ...arrangeFrags,
+    ...mixGuard,
     lock?.rhythmFeel ? `groove ${lock.rhythmFeel}` : "",
     cachedTimbre ? `vocal timbre ${cachedTimbre}` : "",
-    // Prompt lyrics/style artiste : tronqué, en fin
     String(prompt || "")
       .replace(/\bexactly in the style of\b[^,]*/gi, "")
-      .slice(0, 180),
+      .slice(0, 140),
   ]
     .filter(Boolean)
     .join(", ")
@@ -418,7 +468,7 @@ export async function startSongGeneration(
     gender: vocal.code,
     timbre: cachedTimbre || (vocal.code === "female" ? "bright" : "warm"),
     genre: studioGenre,
-    emotion: String(mood || lock?.mood || "energetic")
+    emotion: String(mood || lock?.mood || (gospel ? "uplifting" : "energetic"))
       .split(/[,/|]/)[0]
       .trim()
       .slice(0, 40),
@@ -430,7 +480,6 @@ export async function startSongGeneration(
     ),
     output_mode: "mixed",
     memory_mode: "auto",
-    // Pas de reference_audio_id — laisse Studio brancher auto_prompt_audio_type via genre
   };
 
   console.info(
@@ -441,8 +490,9 @@ export async function startSongGeneration(
     "sections",
     `gender=${body.gender}`,
     `genre=${body.genre}`,
+    `choir=${fromArrange.choir || "none"}`,
     `bpm=${body.bpm}`,
-    `instruments=${body.instruments.slice(0, 50)}`,
+    `instruments=${body.instruments.slice(0, 80)}`,
     `timbre=${body.timbre}`,
     "ref=OFF mix=forced",
   );

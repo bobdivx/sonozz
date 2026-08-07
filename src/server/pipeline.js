@@ -953,29 +953,43 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     styleLockInstruments: styleLock?.instruments,
   });
   const arrangeBits = packed.customFragments || [];
+  // Arrangement (chœur…) EN TÊTE pour MiniMax aussi + qualité production
+  const qualityBits = packed.gospel
+    ? [
+        "commercial contemporary gospel-soul production",
+        "full band with choir, organ, piano, bass and drums",
+        "radio-ready streaming quality",
+      ]
+    : [
+        "commercial radio-ready full-band production",
+        "polished multi-instrument arrangement like a Billboard hit",
+        "rich bass, harmony instruments, drums and pads — never thin or single-instrument",
+      ];
   const prompt = (
     styleLock?.musicPrompt
       ? [
+          ...arrangeBits,
+          ...qualityBits,
           vocal.voiceHint,
           styleLock.musicPrompt,
-          ...arrangeBits,
           `${artist?.mood || styleLock.mood || "emotional"} mood`,
           `vocals and lyrics in ${langName}`,
-          "radio-ready, original composition",
+          "original composition",
         ]
       : [
+          ...arrangeBits,
+          ...qualityBits,
           vocal.voiceHint,
-          `${artist?.genre || "pop"}`,
+          packed.gospel ? "contemporary gospel soul R&B" : `${artist?.genre || "pop"}`,
           artist?.styleArtists?.length
             ? `in the sonic lane of ${artist.styleArtists.join(" and ")} (original, not a cover)`
             : artist?.styleArtist
               ? `in the sonic lane of ${artist.styleArtist} (original, not a cover)`
               : "",
-          ...arrangeBits,
-          `${artist?.mood || "emotional"} mood`,
+          `${artist?.mood || (packed.gospel ? "uplifting" : "emotional")} mood`,
           vocal.voiceForPrompt,
           `vocals and lyrics in ${langName}`,
-          "contemporary production, radio-ready, emotional hook",
+          "emotional hook, wide stereo mix",
         ]
   )
     .filter(Boolean)

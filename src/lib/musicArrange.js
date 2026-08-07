@@ -16,10 +16,26 @@ export const LEAD_INSTRUMENTS = [
 
 export const CHOIR_OPTIONS = [
   { id: "none", label: "Pas de chœur", en: "" },
-  { id: "harmonies", label: "Harmonies backing", en: "soft backing vocal harmonies" },
-  { id: "gospel", label: "Chœur gospel", en: "powerful gospel choir call-and-response" },
-  { id: "stacked", label: "Doubles empilés", en: "stacked vocal doubles and ad-libs" },
-  { id: "pads", label: "Pads chorale", en: "ethereal choir pads in the background" },
+  {
+    id: "harmonies",
+    label: "Harmonies backing",
+    en: "soft layered backing vocal harmonies behind the lead throughout",
+  },
+  {
+    id: "gospel",
+    label: "Chœur gospel",
+    en: "large gospel choir backing vocals with SATB harmonies, call-and-response with the lead singer on every chorus, church organ and piano bed, never drums-only",
+  },
+  {
+    id: "stacked",
+    label: "Doubles empilés",
+    en: "stacked vocal doubles and ad-libs around the lead",
+  },
+  {
+    id: "pads",
+    label: "Pads chorale",
+    en: "ethereal choir pads supporting the lead in the background",
+  },
 ];
 
 export const DRUM_OPTIONS = [
@@ -86,35 +102,96 @@ export function normalizeMusicArrange(raw) {
   };
 }
 
+function looksLikeDrums(tag = "") {
+  return /\b(drum|drums|kit|808|trap|perc|beat|hi-?hat|snare)\b/i.test(String(tag));
+}
+
+/** Complète une liste d’instruments pour éviter les sorties « 1 piste seule ». */
+function ensureFullBandInstruments(bits, { gospel = false } = {}) {
+  const list = [...bits].filter(Boolean);
+  const has = (re) => list.some((t) => re.test(String(t)));
+  const add = (tag) => {
+    if (!list.some((t) => String(t).toLowerCase() === tag.toLowerCase())) list.push(tag);
+  };
+
+  if (gospel) {
+    add("gospel choir");
+    add("church organ");
+    add("piano");
+    add("bass");
+    add("drums");
+  } else {
+    // Toujours une section rythmique + harmonique + mélodie
+    if (!has(/\bbass|808\b/i)) add("bass");
+    if (!has(/\bpiano|keys|organ|synth\b/i)) add("piano");
+    if (!has(/\bguitar|strings|brass|sax|trumpet\b/i)) add("electric guitar");
+    if (!has(/\bdrum|kit|perc|808|trap\b/i)) add("drums");
+    if (!has(/\bsynth|pad\b/i)) add("synths");
+  }
+
+  return list.slice(0, 8);
+}
+
 /**
  * Convertit les réglages UX en champs SongGen (instruments + fragments custom_style).
+ * Priorité : chœur / lead utilisateur > style lock (sauf si chœur gospel → on filtre le biais batterie).
  */
 export function musicArrangeToSongGen(arrange, { styleLockInstruments } = {}) {
   const a = normalizeMusicArrange(arrange);
   const parts = [];
   const instrumentBits = [];
+  const wantsChoir = a.choir && a.choir !== "none";
+  const gospel = a.choir === "gospel";
 
-  if (Array.isArray(styleLockInstruments) && styleLockInstruments.length) {
-    instrumentBits.push(...styleLockInstruments.filter(Boolean).slice(0, 4));
+  const choir = CHOIR_OPTIONS.find((c) => c.id === a.choir);
+  // Chœur EN TÊTE — sinon SongGen / LeVo ignore le hint noyé derrière « drums »
+  if (choir?.en) {
+    parts.push(choir.en);
+    if (gospel) {
+      instrumentBits.push("gospel choir", "church organ", "piano");
+      parts.push("prominent gospel choir and organ, balanced rhythm section underneath");
+    } else if (a.choir === "harmonies" || a.choir === "stacked") {
+      instrumentBits.push("backing vocals");
+    } else if (a.choir === "pads") {
+      instrumentBits.push("choir pads");
+    }
   }
+
   if (a.leadInstrument) {
     instrumentBits.unshift(`lead ${a.leadInstrument}`);
     parts.push(`prominent lead ${a.leadInstrument}`);
   }
+
+  // Style-lock : couleur, sans monopoliser (surtout batteries)
+  if (Array.isArray(styleLockInstruments) && styleLockInstruments.length) {
+    const lockTags = styleLockInstruments.filter(Boolean).slice(0, 4);
+    for (const tag of lockTags) {
+      if (wantsChoir && looksLikeDrums(tag)) continue;
+      if (!instrumentBits.includes(tag)) instrumentBits.push(tag);
+    }
+  }
+
   if (a.drums) {
     instrumentBits.push(a.drums);
-    parts.push(`${a.drums} drums`);
+    parts.push(
+      gospel
+        ? `${a.drums} supporting the choir, not dominating`
+        : `${a.drums} drums`,
+    );
   }
 
-  const choir = CHOIR_OPTIONS.find((c) => c.id === a.choir);
-  if (choir?.en) {
-    parts.push(choir.en);
-    if (a.choir === "gospel") instrumentBits.push("gospel choir");
+  // Densité : gospel → densifier un peu pour forcer les couches vocales
+  const density = gospel && a.density === "mid" ? "dense" : a.density;
+  if (density === "sparse") parts.push("sparse arrangement, space and air");
+  else if (density === "dense") {
+    parts.push(
+      gospel
+        ? "dense layered gospel production, thick choir stacks, organ and keys"
+        : "dense maximalist production, rich layers, full band",
+    );
+  } else {
+    parts.push("balanced full-band mix with clear lead vocal and multiple instruments");
   }
-
-  if (a.density === "sparse") parts.push("sparse arrangement, space and air");
-  else if (a.density === "dense") parts.push("dense maximalist production, rich layers");
-  else parts.push("balanced full-band mix");
 
   for (const f of a.features) {
     parts.push(f);
@@ -123,12 +200,28 @@ export function musicArrangeToSongGen(arrange, { styleLockInstruments } = {}) {
 
   if (a.notes) parts.push(a.notes);
 
-    parts.push("full mixed song with vocals and instruments, not a cappella, rich accompaniment");
+  // Toujours compléter en bande complète (évite 1 seul instrument du style-lock)
+  const fullInstruments = ensureFullBandInstruments(instrumentBits, { gospel });
+
+  parts.unshift(
+    gospel
+      ? "commercial gospel-soul production quality, radio-ready full mix"
+      : "commercial radio-ready full-band production, polished multi-instrument arrangement like a streaming hit",
+  );
+
+  parts.push(
+    gospel
+      ? "full mixed song: lead vocal + gospel choir + band, never drums-only or instrumental bed alone"
+      : "full mixed song with lead vocals AND full band (bass, keys/guitar, drums, pads) — never a single instrument loop, never drums-only, never vocals-only",
+  );
 
   return {
-    instruments: instrumentBits.filter(Boolean).slice(0, 8).join(", ").slice(0, 160),
+    instruments: fullInstruments.join(", ").slice(0, 160),
     customFragments: parts.filter(Boolean),
     bpm: a.bpm,
+    choir: a.choir,
+    wantsChoir,
+    gospel,
     summary: [
       a.leadInstrument ? `Lead: ${a.leadInstrument}` : null,
       choir && a.choir !== "none" ? choir.label : null,

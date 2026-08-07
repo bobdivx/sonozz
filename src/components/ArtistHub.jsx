@@ -17,6 +17,7 @@ import AppShell from "./AppShell.jsx";
 import ArtistAlbumSection from "./ArtistAlbumSection.jsx";
 import { api } from "../lib/apiClient.js";
 import { loadKeys } from "../lib/keys.js";
+import { confirmDeleteProject } from "../lib/studio.js";
 
 const VERDICT_LABEL = {
   produce: "Produire",
@@ -267,9 +268,13 @@ export default function ArtistHub({ slug }) {
   async function deleteRelease(release) {
     const label = release?.trackTitle || release?.title || release?.id || "ce morceau";
     if (
-      !confirm(
-        `Supprimer définitivement « ${label} » ?\n\nLe projet disparaît de Turso (audio / paroles / album liés à ce projet).`,
-      )
+      !confirmDeleteProject(label, {
+        status: release?.onceStatus,
+        onceStatus: release?.onceStatus,
+        provider: release?.distributed ? "once" : undefined,
+        releaseId: release?.releaseId,
+        distributed: Boolean(release?.distributed),
+      })
     ) {
       return;
     }

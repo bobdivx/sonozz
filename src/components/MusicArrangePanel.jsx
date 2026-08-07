@@ -8,7 +8,7 @@ import {
 } from "../lib/musicArrange.js";
 
 /**
- * Panneau arrangement SongGen (chœur, lead, densité…).
+ * Panneau arrangement (chœur, lead, densité…) — SongGen + MiniMax.
  * @param {{
  *   value?: object,
  *   disabled?: boolean,

@@ -18,6 +18,7 @@ import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js"
 import { api } from "../../lib/apiClient.js";
 import MusicArrangePanel from "../MusicArrangePanel.jsx";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
+import { confirmDeleteProject } from "../../lib/studio.js";
 
 function songGenUrlFromKeys(keys) {
   return String(keys?.songGenBaseUrl || "")
@@ -335,6 +336,11 @@ export default function TracksStep({
           </div>
           {providerBusy && <span class="loading loading-spinner loading-xs" />}
         </div>
+        <p class="text-xs text-base-content/50">
+          {hasSongGen
+            ? "SongGen (LeVo local) : plus rapide / offline, mais le mix est souvent moins riche que MiniMax. Pour une prod type streaming, passe sur MiniMax."
+            : "MiniMax Music 2.6 : meilleure qualité de prod (bande complète, voix). Coût Replicate par génération."}
+        </p>
 
         {hasSongGen ? (
           <div class="space-y-2 text-sm">
@@ -445,7 +451,7 @@ export default function TracksStep({
         </div>
       )}
 
-      {hasSongGen && (
+      {(hasSongGen || hasReplicate) && (
         <MusicArrangePanel
           value={normalizeMusicArrange(musicArrange)}
           disabled={loading}
@@ -538,9 +544,15 @@ export default function TracksStep({
               onClick={() => {
                 const label = track?.title || lyrics?.title || "ce morceau";
                 if (
-                  !confirm(
-                    `Supprimer définitivement « ${label} » ?\n\nLe projet (audio, paroles, album) sera effacé de Turso.`,
-                  )
+                  !confirmDeleteProject(label, {
+                    status: distrokid?.status,
+                    onceStatus: distrokid?.status,
+                    provider: distrokid?.provider,
+                    releaseId: distrokid?.releaseId,
+                    distributed:
+                      distrokid?.status === "submitted" ||
+                      distrokid?.provider === "once",
+                  })
                 ) {
                   return;
                 }
