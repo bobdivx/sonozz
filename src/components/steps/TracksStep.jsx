@@ -11,14 +11,10 @@ import {
   RefreshCw,
   CheckCircle2,
   XCircle,
-  Library,
-  Trash2,
-  Ban,
 } from "lucide-preact";
 import { loadKeys, saveKeysAsync } from "../../lib/keys.js";
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
 import { api } from "../../lib/apiClient.js";
-import { ALBUM_SIZES } from "../../lib/studio.js";
 import MusicArrangePanel from "../MusicArrangePanel.jsx";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
 
@@ -34,15 +30,10 @@ export default function TracksStep({
   artist,
   loading,
   progress = null,
-  album = null,
   musicArrange = null,
   projectId,
   distrokid,
   onGenerate,
-  onGenerateAlbum,
-  onCancelAlbum,
-  onRemoveAlbumTrack,
-  onSelectAlbumTrack,
   onAttachAudio,
   onOpenSettings,
   onMusicArrangeChange,
@@ -59,7 +50,6 @@ export default function TracksStep({
   const [onceReleaseId, setOnceReleaseId] = useState("");
   const [onceBusy, setOnceBusy] = useState(false);
   const [onceHint, setOnceHint] = useState("");
-  const [albumSize, setAlbumSize] = useState(8);
   const onceFileRef = useRef(null);
   const probeSeq = useRef(0);
 
@@ -293,9 +283,7 @@ export default function TracksStep({
   const audioReady = Boolean(track?.audioUrl);
   const isOnceOriginal = track?.provider === "once-original";
   const canGenerateAudio = hasSongGen || hasReplicate;
-  const albumRunning = album?.status === "running";
-  const albumTracks = Array.isArray(album?.tracks) ? album.tracks : [];
-  const albumDoneCount = albumTracks.filter((t) => t.status === "done").length;
+  const artistSlug = artist?.slug;
   const voiceCode = String(artist?.gender || "").toLowerCase();
   const voiceLabel =
     voiceCode === "female"
@@ -310,16 +298,6 @@ export default function TracksStep({
     (onceReleaseId.trim()
       ? `https://beta.once.app/releases/${onceReleaseId.trim()}`
       : "https://beta.once.app/");
-
-  function albumStatusLabel(st) {
-    if (st === "done") return "OK";
-    if (st === "lyrics") return "Paroles…";
-    if (st === "audio") return "Audio…";
-    if (st === "error") return "Erreur";
-    if (st === "pending") return "En attente";
-    if (st === "cancelled") return "Annulé";
-    return st || "—";
-  }
 
   return (
     <section class="animate-rise space-y-6">
@@ -468,7 +446,7 @@ export default function TracksStep({
       {hasSongGen && (
         <MusicArrangePanel
           value={normalizeMusicArrange(musicArrange)}
-          disabled={loading || albumRunning}
+          disabled={loading}
           onChange={(next) => onMusicArrangeChange?.(next)}
         />
       )}
@@ -479,7 +457,6 @@ export default function TracksStep({
           loading ||
           !lyrics ||
           (hasSongGen && probeStatus === "error") ||
-          albumRunning ||
           (hasSongGen && !voiceLabel)
         }
         onClick={onGenerate}
@@ -542,140 +519,13 @@ export default function TracksStep({
             </div>
           </div>
 
-          {audioReady && (
-            <div class="space-y-3 border border-primary/25 bg-primary/5 p-4">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div class="min-w-0 flex-1">
-                  <p class="flex items-center gap-2 text-sm font-medium">
-                    <Library size={16} class="text-primary" />
-                    Album autonome
-                  </p>
-                  <p class="mt-1 text-xs text-base-content/60">
-                    Le single lead est validé. Génère le reste de l’album (paroles + audio) sans
-                    intervention — même style / même provider.
-                  </p>
-                </div>
-                <select
-                  class="select select-bordered select-sm bg-base-100"
-                  value={albumSize}
-                  disabled={loading || album?.status === "running"}
-                  onChange={(e) => setAlbumSize(Number(e.currentTarget.value) || 8)}
-                >
-                  {ALBUM_SIZES.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  class="btn btn-outline btn-sm gap-2"
-                  disabled={
-                    loading ||
-                    albumRunning ||
-                    !canGenerateAudio ||
-                    (hasSongGen && probeStatus === "error")
-                  }
-                  onClick={() => onGenerateAlbum?.(albumSize)}
-                >
-                  {albumRunning ? (
-                    <span class="loading loading-spinner loading-xs" />
-                  ) : (
-                    <Library size={14} />
-                  )}
-                  {albumRunning
-                    ? `Album en cours (${albumDoneCount}/${album.targetCount || albumSize})…`
-                    : album?.status === "done" || album?.status === "cancelled"
-                      ? `Relancer un album (${albumSize} titres)`
-                      : `Créer l’album (${albumSize} titres)`}
-                </button>
-                {albumRunning && (
-                  <button
-                    type="button"
-                    class="btn btn-ghost btn-sm gap-2 text-error"
-                    onClick={() => onCancelAlbum?.()}
-                  >
-                    <Ban size={14} />
-                    Annuler
-                  </button>
-                )}
-              </div>
-              {album?.title && (
-                <p class="text-xs text-base-content/55">
-                  <span class="font-medium text-base-content/80">{album.title}</span>
-                  {album.concept ? ` — ${album.concept}` : ""}
-                </p>
-              )}
-              {albumTracks.length > 0 && (
-                <ul class="divide-y divide-base-content/10 border border-base-content/10 bg-base-100/60">
-                  {albumTracks.map((entry) => (
-                    <li
-                      key={entry.id}
-                      class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
-                    >
-                      <div class="min-w-0 flex-1">
-                        <p class="truncate font-medium">
-                          {entry.index}.{" "}
-                          {entry.lyrics?.title || entry.workingTitle || entry.theme || "Sans titre"}
-                          {entry.role === "lead" ? (
-                            <span class="badge badge-primary badge-xs ml-2">Lead</span>
-                          ) : null}
-                        </p>
-                        <p class="truncate text-xs text-base-content/50">{entry.theme}</p>
-                        {entry.error && <p class="text-xs text-error">{entry.error}</p>}
-                        {entry.track?.warning && (
-                          <p class="text-xs text-warning">{entry.track.warning}</p>
-                        )}
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <span
-                          class={`badge badge-sm ${
-                            entry.status === "done"
-                              ? "badge-success"
-                              : entry.status === "error"
-                                ? "badge-error"
-                                : entry.status === "pending"
-                                  ? "badge-ghost"
-                                  : "badge-warning"
-                          }`}
-                        >
-                          {albumStatusLabel(entry.status)}
-                        </span>
-                        {(entry.track?.audioUrl || entry.lyrics) && (
-                          <button
-                            type="button"
-                            class="btn btn-ghost btn-xs"
-                            disabled={loading && albumRunning}
-                            onClick={() => onSelectAlbumTrack?.(entry)}
-                          >
-                            Ouvrir
-                          </button>
-                        )}
-                        {entry.role !== "lead" && (
-                          <button
-                            type="button"
-                            class="btn btn-ghost btn-xs text-error"
-                            title="Retirer ce morceau"
-                            disabled={false}
-                            onClick={() => onRemoveAlbumTrack?.(entry.id)}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {albumRunning && (
-                <p class="text-xs text-base-content/50">
-                  L’onglet qui a lancé la génération doit rester ouvert. Les autres appareils voient
-                  la progression toutes les ~4 s.
-                </p>
-              )}
-            </div>
+          {audioReady && artistSlug && (
+            <p class="text-sm text-base-content/60">
+              Album autonome :{" "}
+              <a class="link link-primary" href={`/artiste/${encodeURIComponent(artistSlug)}`}>
+                gérer sur la fiche artiste
+              </a>
+            </p>
           )}
 
           {audioReady ? (

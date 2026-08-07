@@ -44,6 +44,7 @@ import {
   upsertProjectClip,
 } from "../lib/clipsModel.js";
 import { patchJob } from "../lib/jobStore.js";
+import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
 import {
   bootJobRunner,
   finishPipelineJob,
@@ -180,14 +181,14 @@ export default function Dashboard() {
       try {
         const { project: saved } = await api.getProject(pid);
         setProjectId(saved.id);
-        setProject(
-          normalizeProjectClips({ ...emptyProject(), ...(saved.project || {}) }),
-        );
+        const loaded = normalizeProjectClips({ ...emptyProject(), ...(saved.project || {}) });
+        setProject(loaded);
         if (saved.seed) setSeed((s) => ({ ...s, ...saved.seed }));
         if (stepParam >= 1 && stepParam <= STEPS.length) setStep(stepParam);
         else if (!saved.project?.lyrics) setStep(3);
         else if (!saved.project?.track) setStep(4);
         setSaveMsg(`Projet ${saved.title}`);
+        if (loaded.album) mirrorAlbumJob(loaded.album, saved.id);
       } catch (e) {
         setError(e.message);
       } finally {
@@ -209,6 +210,7 @@ export default function Dashboard() {
         if (cancelled || albumLocalRunRef.current) return;
         const remoteAlbum = saved?.project?.album;
         if (!remoteAlbum) return;
+        mirrorAlbumJob(remoteAlbum, projectId);
         setProject((prev) => {
           const prevUpdated = prev.album?.updatedAt || "";
           const nextUpdated = remoteAlbum.updatedAt || "";
@@ -221,10 +223,14 @@ export default function Dashboard() {
             const nextActive = (remoteAlbum.tracks || []).filter((t) =>
               t.status === "lyrics" || t.status === "audio",
             ).length;
+            const prevLive = prev.album?.live?.percent || 0;
+            const nextLive = remoteAlbum.live?.percent || 0;
             if (
               nextDone <= prevDone &&
               nextActive <= prevActive &&
-              prev.album?.status === remoteAlbum.status
+              nextLive <= prevLive &&
+              prev.album?.status === remoteAlbum.status &&
+              (prev.album?.live?.message || "") === (remoteAlbum.live?.message || "")
             ) {
               return prev;
             }
@@ -425,6 +431,11 @@ export default function Dashboard() {
       album: {
         ...project.album,
         status: "cancelled",
+        live: {
+          percent: 100,
+          message: "Album arrêté",
+          label: project.album?.live?.label || project.album?.title || "Album",
+        },
         tracks: (project.album.tracks || []).map((t) =>
           t.status === "lyrics" || t.status === "audio"
             ? { ...t, status: "pending", error: undefined }
@@ -434,6 +445,7 @@ export default function Dashboard() {
       },
     };
     setProject(next);
+    mirrorAlbumJob(next.album, projectId);
     persist(next, {
       stepKey: "album",
       eventType: "album",
@@ -446,11 +458,30 @@ export default function Dashboard() {
     const base = albumWorkingRef.current || project;
     if (!base?.album?.tracks?.length) return;
     const entry = base.album.tracks.find((t) => t.id === trackId);
-    if (!entry || entry.role === "lead") return;
+    if (!entry) return;
 
-    const tracks = base.album.tracks
-      .filter((t) => t.id !== trackId)
-      .map((t, i) => ({ ...t, index: i + 1 }));
+    // Retirer le lead (ou la dernière piste) = effacer l’album (le single projet reste)
+    const remaining = base.album.tracks.filter((t) => t.id !== trackId);
+    if (entry.role === "lead" || remaining.length === 0) {
+      const next = {
+        ...base,
+        album: null,
+      };
+      syncAlbumWorking(next);
+      albumWorkingRef.current = next;
+      await persist(
+        next,
+        {
+          stepKey: "album",
+          eventType: "album",
+          message: "Album effacé",
+        },
+        { skipLocalUpdate: albumLocalRunRef.current },
+      );
+      return;
+    }
+
+    const tracks = remaining.map((t, i) => ({ ...t, index: i + 1 }));
     const doneCount = tracks.filter((t) => t.status === "done").length;
     const stillPending = tracks.some(
       (t) => t.status === "pending" || t.status === "lyrics" || t.status === "audio",
@@ -482,6 +513,22 @@ export default function Dashboard() {
       },
       { skipLocalUpdate: albumLocalRunRef.current },
     );
+  }
+
+  async function clearAlbum() {
+    if (albumLocalRunRef.current) {
+      cancelAlbumGeneration();
+    }
+    const base = albumWorkingRef.current || project;
+    if (!base?.album) return;
+    const next = { ...base, album: null };
+    syncAlbumWorking(next);
+    albumWorkingRef.current = next;
+    await persist(next, {
+      stepKey: "album",
+      eventType: "album",
+      message: "Album effacé",
+    });
   }
 
   /**
@@ -523,6 +570,35 @@ export default function Dashboard() {
       href: projectId ? `/?project=${projectId}&step=4` : "/?step=4",
     });
 
+    let lastLivePersistAt = 0;
+
+    const setAlbumLive = (percent, message, { persistNow = false } = {}) => {
+      working = albumWorkingRef.current || working;
+      working = {
+        ...working,
+        album: {
+          ...working.album,
+          live: {
+            percent,
+            message,
+            label: working.album?.title
+              ? `Album · ${working.album.title}`
+              : `Album · ${working.album?.targetCount || total} titres`,
+          },
+          updatedAt: new Date().toISOString(),
+        },
+      };
+      syncAlbumWorking(working);
+      // Ne pas mirror ici : ce client possède déjà le job local (trackStepJob)
+      patchJob(jobId, { progress: percent, message });
+      const now = Date.now();
+      if (persistNow || now - lastLivePersistAt > 20_000) {
+        lastLivePersistAt = now;
+        return persist(working, null, { skipLocalUpdate: true });
+      }
+      return Promise.resolve(null);
+    };
+
     let working = {
       ...project,
       album: {
@@ -531,6 +607,12 @@ export default function Dashboard() {
         concept: "",
         targetCount: total,
         status: "running",
+        jobId,
+        live: {
+          percent: 2,
+          message: "Planification de la tracklist…",
+          label: `Album · ${total} titres`,
+        },
         tracks: [
           {
             id: createAlbumTrackId(),
@@ -547,11 +629,20 @@ export default function Dashboard() {
       },
     };
     syncAlbumWorking(working);
+    // Job local via trackStepJob — les autres appareils liront album.live via Turso
 
     const persistAlbum = (event) =>
       persist(working, event, { skipLocalUpdate: true });
 
     try {
+      // Persiste tout de suite pour que mobile voie la tâche
+      await persistAlbum({
+        stepKey: "album",
+        eventType: "album",
+        message: "Album · génération démarrée",
+      });
+      lastLivePersistAt = Date.now();
+
       const plan = await api.albumPlan({
         artist: project.artist,
         lyrics: project.lyrics,
@@ -566,6 +657,14 @@ export default function Dashboard() {
           ...working.album,
           title: plan.albumTitle || working.album.title,
           concept: plan.concept || "",
+          jobId,
+          live: {
+            percent: 8,
+            message: "Tracklist prête — génération des titres…",
+            label: plan.albumTitle
+              ? `Album · ${plan.albumTitle}`
+              : `Album · ${total} titres`,
+          },
           tracks: [
             working.album.tracks[0],
             ...(plan.tracks || []).map((t, i) => ({
@@ -587,6 +686,12 @@ export default function Dashboard() {
         stepKey: "album",
         eventType: "album",
         message: `Tracklist « ${working.album.title} » planifiée`,
+      });
+      lastLivePersistAt = Date.now();
+      patchJob(jobId, {
+        progress: 8,
+        message: "Tracklist prête — génération des titres…",
+        label: plan.albumTitle ? `Album · ${plan.albumTitle}` : `Album · ${total} titres`,
       });
 
       const slots = working.album.tracks.filter((t) => t.role !== "lead");
@@ -647,18 +752,14 @@ export default function Dashboard() {
         };
 
         mark({ status: "lyrics", error: undefined });
-        await persistAlbum({
-          stepKey: "album",
-          eventType: "album-track",
-          message: `Album · paroles en cours · titre ${slot.index}`,
-        });
+        await setAlbumLive(
+          basePct,
+          `Titre ${slot.index}/${total} — paroles « ${slot.workingTitle} »…`,
+          { persistNow: true },
+        );
         setStepProgress({
           percent: basePct,
           message: `Titre ${slot.index}/${total} — paroles « ${slot.workingTitle} »…`,
-        });
-        patchJob(jobId, {
-          progress: basePct,
-          message: `Paroles ${slot.index}/${total}…`,
         });
 
         if (abortState.aborted) break;
@@ -674,30 +775,21 @@ export default function Dashboard() {
         } catch (e) {
           if (abortState.aborted) break;
           mark({ status: "error", error: e.message || "Paroles échouées" });
-          await persistAlbum({
-            stepKey: "album",
-            eventType: "album-track",
-            message: `Album · erreur paroles titre ${slot.index}`,
-          });
+          await setAlbumLive(basePct, `Erreur paroles titre ${slot.index}`, { persistNow: true });
           continue;
         }
         if (abortState.aborted) break;
         if (!working.album.tracks.some((t) => t.id === slot.id)) continue;
 
         mark({ lyrics: lyricsI, workingTitle: lyricsI?.title || slot.workingTitle, status: "audio" });
-        await persistAlbum({
-          stepKey: "album",
-          eventType: "album-track",
-          message: `Album · audio en cours · titre ${slot.index}`,
-        });
-
+        await setAlbumLive(
+          basePct + 4,
+          `Titre ${slot.index}/${total} — composition audio…`,
+          { persistNow: true },
+        );
         setStepProgress({
           percent: basePct + 4,
           message: `Titre ${slot.index}/${total} — composition audio…`,
-        });
-        patchJob(jobId, {
-          progress: basePct + 4,
-          message: `Audio ${slot.index}/${total}…`,
         });
 
         let trackI;
@@ -716,25 +808,16 @@ export default function Dashboard() {
                 96,
                 basePct + 4 + Math.round(((Number(p?.percent) || 0) / 100) * (80 / slots.length)),
               );
-              setStepProgress({
-                percent: local,
-                message: `Titre ${slot.index}/${total} — ${p?.message || "composition…"}`,
-              });
-              patchJob(jobId, {
-                progress: local,
-                message: `${slot.index}/${total} · ${p?.message || "audio…"}`,
-              });
+              const msg = `Titre ${slot.index}/${total} — ${p?.message || "composition…"}`;
+              setStepProgress({ percent: local, message: msg });
+              void setAlbumLive(local, `${slot.index}/${total} · ${p?.message || "audio…"}`);
             },
             { signal: abortState },
           );
         } catch (e) {
           if (abortState.aborted || e?.name === "AbortError") break;
           mark({ status: "error", error: e.message || "Audio échoué" });
-          await persistAlbum({
-            stepKey: "album",
-            eventType: "album-track",
-            message: `Album · erreur audio titre ${slot.index}`,
-          });
+          await setAlbumLive(basePct + 4, `Erreur audio titre ${slot.index}`, { persistNow: true });
           continue;
         }
         if (abortState.aborted) break;
@@ -772,11 +855,12 @@ export default function Dashboard() {
           error: trackI?.audioUrl ? undefined : "Pas d’audio",
         });
 
-        await persistAlbum({
-          stepKey: "album",
-          eventType: "album-track",
-          message: `Album · titre ${slot.index} « ${lyricsI?.title || slot.workingTitle} »`,
-        });
+        const doneSoFar = working.album.tracks.filter((t) => t.status === "done").length;
+        await setAlbumLive(
+          Math.min(96, Math.round((doneSoFar / total) * 90) + 5),
+          `Album · titre ${slot.index} « ${lyricsI?.title || slot.workingTitle} »`,
+          { persistNow: true },
+        );
       }
 
       working = albumWorkingRef.current || working;
@@ -790,16 +874,29 @@ export default function Dashboard() {
         }
         return t;
       });
+      const finalStatus = wasCancelled
+        ? "cancelled"
+        : failed && doneCount <= 1
+          ? "error"
+          : "done";
+      const finalMsg = wasCancelled
+        ? `Album annulé · ${doneCount}/${tracks.length} titres`
+        : failed > 0
+          ? `Album partiel · ${doneCount} OK, ${failed} en erreur`
+          : `Album prêt · ${doneCount} titres`;
       working = {
         ...working,
         album: {
           ...working.album,
           tracks,
-          status: wasCancelled
-            ? "cancelled"
-            : failed && doneCount <= 1
-              ? "error"
-              : "done",
+          status: finalStatus,
+          live: {
+            percent: 100,
+            message: finalMsg,
+            label: working.album?.title
+              ? `Album · ${working.album.title}`
+              : `Album · ${tracks.length} titres`,
+          },
           updatedAt: new Date().toISOString(),
         },
       };
@@ -807,17 +904,11 @@ export default function Dashboard() {
       await persist(working, {
         stepKey: "album",
         eventType: "album",
-        message: wasCancelled
-          ? `Album annulé · ${doneCount}/${tracks.length} titres`
-          : `Album terminé · ${doneCount}/${tracks.length} titres`,
+        message: finalMsg,
       });
       finishStepJob(jobId, {
         ok: !wasCancelled && failed === 0,
-        message: wasCancelled
-          ? `Album annulé · ${doneCount} titres gardés`
-          : failed > 0
-            ? `Album partiel · ${doneCount} OK, ${failed} en erreur`
-            : `Album prêt · ${doneCount} titres`,
+        message: finalMsg,
         progress: 100,
       });
       setStepProgress({
@@ -835,6 +926,11 @@ export default function Dashboard() {
         album: {
           ...(working.album || {}),
           status: wasAbort ? "cancelled" : "error",
+          live: {
+            percent: 100,
+            message: wasAbort ? "Album annulé" : e.message || "Album en erreur",
+            label: working.album?.live?.label || `Album · ${total} titres`,
+          },
           updatedAt: new Date().toISOString(),
         },
       };
@@ -1444,7 +1540,6 @@ export default function Dashboard() {
             track={project.track}
             lyrics={project.lyrics}
             artist={project.artist}
-            album={project.album}
             musicArrange={project.musicArrange}
             loading={loading}
             progress={step === 4 ? stepProgress : null}
@@ -1473,17 +1568,6 @@ export default function Dashboard() {
                 4,
               )
             }
-            onGenerateAlbum={(totalCount) => runAlbumGeneration(totalCount)}
-            onCancelAlbum={() => cancelAlbumGeneration()}
-            onRemoveAlbumTrack={(trackId) => removeAlbumTrack(trackId)}
-            onSelectAlbumTrack={(entry) => {
-              if (!entry?.lyrics && !entry?.track) return;
-              setProject((prev) => ({
-                ...prev,
-                ...(entry.lyrics ? { lyrics: entry.lyrics } : {}),
-                ...(entry.track ? { track: entry.track } : {}),
-              }));
-            }}
             onAttachAudio={(audioUrl, meta = {}) => {
               setError("");
               setProject((prev) => {

@@ -273,11 +273,15 @@ export async function listArtistReleases(slug, limit = 40) {
         updated_at,
         json_extract(project_json, '$.track.title') AS track_title_json,
         json_extract(project_json, '$.lyrics.title') AS lyrics_title,
+        json_extract(project_json, '$.lyrics.theme') AS lyrics_theme,
         json_extract(project_json, '$.track.audioUrl') AS audio_url,
         json_extract(project_json, '$.cover.imageUrl') AS cover_url,
         json_extract(project_json, '$.distrokid.status') AS once_status,
         json_extract(project_json, '$.distrokid.provider') AS once_provider,
-        json_extract(project_json, '$.distrokid.releaseId') AS release_id
+        json_extract(project_json, '$.distrokid.releaseId') AS release_id,
+        json_extract(project_json, '$.album.status') AS album_status,
+        json_extract(project_json, '$.album.title') AS album_title,
+        json_extract(project_json, '$.album.targetCount') AS album_target
       FROM projects
       WHERE artist_slug = ? OR artist_name = ?
       ORDER BY updated_at DESC
@@ -290,6 +294,7 @@ export async function listArtistReleases(slug, limit = 40) {
     const audioUrl = lightAssetUrl(row.audio_url);
     const coverUrl = lightAssetUrl(row.cover_url);
     const onceStatus = row.once_status || null;
+    const hasLyrics = Boolean(row.lyrics_title || row.lyrics_theme);
     return {
       id: row.id,
       title: row.title,
@@ -299,7 +304,11 @@ export async function listArtistReleases(slug, limit = 40) {
       status: row.status,
       slug: row.artist_slug || slug,
       hasAudio: Boolean(row.audio_url),
+      hasLyrics,
       hasCover: Boolean(row.cover_url),
+      albumStatus: row.album_status || null,
+      albumTitle: row.album_title || null,
+      albumTargetCount: row.album_target ? Number(row.album_target) : null,
       distributed: Boolean(
         onceStatus === "submitted" || row.once_provider === "once",
       ),

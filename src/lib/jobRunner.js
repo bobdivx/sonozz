@@ -538,6 +538,8 @@ export function interruptHttpBoundJob(jobId, message) {
   if (!jobId) return;
   const job = getJob(jobId);
   if (!job || job.status !== "running" || !HTTP_BOUND_TYPES.has(job.type)) return;
+  // Miroir multi-appareils : ne pas couper (la gen tourne ailleurs)
+  if (job.remoteAlbum) return;
   patchJob(jobId, {
     status: "interrupted",
     phase: "interrupted",
@@ -908,6 +910,7 @@ async function runWan2gpJob(job) {
 /** Au chargement de chaque page : reprend les jobs running. */
 export function resumeAllJobs() {
   for (const job of listActiveJobs()) {
+    if (job.remoteAlbum) continue;
     if (HTTP_BOUND_TYPES.has(job.type)) {
       interruptHttpBoundJob(
         job.id,

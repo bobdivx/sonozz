@@ -13,6 +13,7 @@ import {
   UserRound,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
+import ArtistAlbumSection from "./ArtistAlbumSection.jsx";
 import { loadKeys } from "../lib/keys.js";
 
 const VERDICT_LABEL = {
@@ -765,6 +766,8 @@ export default function ArtistHub({ slug }) {
               </button>
             </div>
           </section>
+
+          <ArtistAlbumSection slug={data.slug} releases={releases} />
 
           <section class="space-y-4">
             <h2 class="font-display flex items-center gap-2 text-2xl font-bold">

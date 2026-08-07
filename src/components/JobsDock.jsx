@@ -19,6 +19,8 @@ import {
   subscribeJobs,
 } from "../lib/jobStore.js";
 import { bootJobRunner } from "../lib/jobRunner.js";
+import { api } from "../lib/apiClient.js";
+import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
 
 function StatusIcon({ status }) {
   if (status === "running") return <Loader2 size={14} class="animate-spin text-primary" />;
@@ -87,7 +89,7 @@ function JobsList({ visible, active, recent }) {
       {active.length > 0 && (
         <p class="mt-2 px-1 text-[10px] text-base-content/40">
           Clips (Veo / Seedance / Wan2GP) : tu peux naviguer. Étapes Studio / Auto :
-          reste sur le Studio.
+          reste sur le Studio. Album : visible sur tous les appareils du même projet.
         </p>
       )}
       {recent.length > 0 && (
@@ -111,6 +113,33 @@ function useJobs() {
   useEffect(() => {
     bootJobRunner();
     return subscribeJobs(setJobs);
+  }, []);
+
+  // Sync album distant → dock Tâches (localStorage ne traverse pas les appareils)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pid = params.get("project");
+    if (!pid) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const { project: saved } = await api.getProject(pid);
+        if (cancelled) return;
+        const album = saved?.project?.album;
+        if (album) mirrorAlbumJob(album, saved.id || pid);
+      } catch {
+        /* ignore */
+      }
+    };
+
+    tick();
+    const id = window.setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, []);
 
   const active = jobs.filter((j) => j.status === "running");
