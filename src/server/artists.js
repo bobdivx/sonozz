@@ -1,4 +1,4 @@
-import { ensureSchema, getDb, uid, saveProject } from "./db.js";
+import { ensureSchema, getDb, uid, saveProject, getProject } from "./db.js";
 import { runCareerAgent } from "./careerAgent.js";
 
 export function slugify(input = "") {
@@ -651,12 +651,17 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
 
   const themeHint =
     theme?.trim() ||
-    (variantOf ? `Suite / variante de « ${variantOf} »` : "Nouveau single");
+    (variantOf ? `Suite / variante de « ${variantOf} »` : "");
+
+  const language = artist.profile?.language || "fr";
 
   const project = {
     trends: null,
     artist: { ...artist.profile, slug: artist.slug, name: artist.name },
-    lyrics: null,
+    // Préremplit l’étape paroles quand un thème vient de l’agent carrière
+    lyrics: themeHint
+      ? { theme: themeHint, language }
+      : null,
     track: null,
     cover: null,
     distrokid: null,
@@ -669,7 +674,7 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
   const seed = {
     name: artist.name,
     bioHint: artist.profile?.bio || "",
-    theme: themeHint,
+    theme: themeHint || "Nouveau single",
     market: "FR",
     artistSlug: artist.slug,
   };
@@ -695,8 +700,55 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
   return {
     projectId: saved.id,
     slug: artist.slug,
-    theme: themeHint,
+    theme: themeHint || "Nouveau single",
     studioUrl: `/?project=${saved.id}&step=3`,
+  };
+}
+
+/**
+ * Ouvre le studio à l’étape Artiste pour éditer genre / références / DNA style.
+ * Réutilise le projet le plus récent (profil hub resynchronisé), sinon en crée un.
+ */
+export async function openArtistStyleEditor(slug) {
+  const artist = await getArtistBySlug(slug);
+  if (!artist) throw new Error("Artiste introuvable");
+
+  const releases = await listArtistReleases(slug, 1);
+  if (releases[0]?.id) {
+    const existing = await getProject(releases[0].id);
+    if (existing?.project) {
+      const next = {
+        ...existing.project,
+        artist: {
+          ...existing.project.artist,
+          ...artist.profile,
+          slug: artist.slug,
+          name: artist.name,
+        },
+      };
+      await saveProject({
+        id: existing.id,
+        project: next,
+        event: {
+          stepKey: "artist",
+          eventType: "edit-style",
+          message: `Édition style — ${artist.name}`,
+        },
+      });
+    }
+    return {
+      projectId: releases[0].id,
+      slug,
+      created: false,
+      studioUrl: `/?project=${releases[0].id}&step=2`,
+    };
+  }
+  const created = await createArtistRelease(slug, {});
+  return {
+    projectId: created.projectId,
+    slug,
+    created: true,
+    studioUrl: `/?project=${created.projectId}&step=2`,
   };
 }
 

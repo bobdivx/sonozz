@@ -82,7 +82,7 @@ export default function LyricsStep({ lyrics, artist, loading, onGenerate }) {
         {!artist && <p class="text-sm text-warning">Créez d'abord un artiste (étape 2).</p>}
       </div>
 
-      {lyrics && (
+      {lyrics?.text && (
         <div class="animate-rise space-y-3">
           <div class="flex flex-wrap items-baseline gap-3">
             <h3 class="font-display text-xl font-semibold">{lyrics.title}</h3>

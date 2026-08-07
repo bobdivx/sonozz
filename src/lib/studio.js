@@ -44,6 +44,60 @@ export const MUSIC_STYLES = [
   { value: "World / Fusion", label: "World" },
 ];
 
+/**
+ * Mappe un genre catalogue (ex. "Alternative", "Hip-Hop") vers une entrée MUSIC_STYLES.
+ * @returns {{ value: string, label: string } | null}
+ */
+export function matchMusicStyleFromGenre(raw) {
+  const g = String(raw || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+  if (!g) return null;
+
+  const rules = [
+    { re: /gospel|worship|inspirational/, value: "Gospel / Inspirational" },
+    { re: /neo-?soul|quiet storm/, value: "Neo-soul / Quiet storm" },
+    { re: /r&?b|soul/, value: "R&B / Soul moderne" },
+    { re: /drill|rap|hip[\s-]?hop/, value: "Rap / Drill francophone" },
+    { re: /trap|cloud/, value: "Trap / Cloud rap" },
+    { re: /boom\s*bap|old\s*school/, value: "Hip-hop old school / Boom bap" },
+    { re: /amapiano/, value: "Amapiano / Afro-house" },
+    { re: /afro|afrobeats/, value: "Afrobeats / Afro-pop" },
+    { re: /hyperpop|electro|electronic|synth/, value: "Électro / Hyperpop" },
+    { re: /house|dance(?!hall)/, value: "House / Dance" },
+    { re: /techno/, value: "Techno / Underground" },
+    { re: /edm|festival/, value: "EDM / Festival" },
+    { re: /indie|alternative|alt/, value: "Indie / Alternative" },
+    { re: /folk|acoustic/, value: "Folk / Acoustique" },
+    { re: /chanson|variete/, value: "Variété / Chanson" },
+    { re: /reggaeton|latin|salsa/, value: "Latin / Reggaeton" },
+    { re: /dancehall|reggae/, value: "Dancehall / Reggae" },
+    { re: /metal/, value: "Metal / Hard rock" },
+    { re: /punk|garage/, value: "Punk / Garage" },
+    { re: /rock/, value: "Rock / Indie rock" },
+    { re: /jazz/, value: "Jazz / Nu-jazz" },
+    { re: /blues/, value: "Blues / Roots" },
+    { re: /funk|disco/, value: "Funk / Disco" },
+    { re: /k-?pop|j-?pop/, value: "K-pop / J-pop" },
+    { re: /lo-?fi|chill/, value: "Lo-fi / Chill" },
+    { re: /synthwave|retrowave/, value: "Synthwave / Retrowave" },
+    { re: /country|americana/, value: "Country / Americana" },
+    { re: /world|fusion/, value: "World / Fusion" },
+    { re: /melodic|urbaine|urban/, value: "Pop urbaine / Melodic" },
+    { re: /pop/, value: "Pop contemporaine" },
+  ];
+
+  for (const { re, value } of rules) {
+    if (re.test(g)) {
+      const hit = MUSIC_STYLES.find((s) => s.value === value);
+      return hit || { value, label: value };
+    }
+  }
+  return null;
+}
+
 /** Normalise genres (tableau ou string legacy) → string[]. */
 export function parseGenres(genreOrGenres) {
   if (Array.isArray(genreOrGenres)) {

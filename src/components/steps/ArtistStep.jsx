@@ -16,9 +16,11 @@ import {
   MUSIC_STYLES,
   formatGenres,
   languageLabel,
+  matchMusicStyleFromGenre,
   parseGenres,
 } from "../../lib/studio.js";
 import StyleArtistPicker from "../StyleArtistPicker.jsx";
+import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "../ArtistNameField.jsx";
 import PhotoUpload from "../PhotoUpload.jsx";
 import VoiceSampleUpload from "../VoiceSampleUpload.jsx";
@@ -72,6 +74,21 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
         }));
     }
     return [];
+  });
+  const [styleTrackPick, setStyleTrackPick] = useState(() => {
+    const st = artist?.styleLock?.seedTrack;
+    if (st?.source && st?.sourceId) {
+      return {
+        source: st.source,
+        id: String(st.sourceId),
+        name: st.title,
+        artistName: st.artistName || "",
+        album: st.album || "",
+        image: st.image || null,
+        url: st.url || null,
+      };
+    }
+    return null;
   });
   const [age, setAge] = useState(artist?.age != null ? String(artist.age) : "");
   const [gender, setGender] = useState(artist?.gender || "");
@@ -158,8 +175,50 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     ...(showCustom && customGenre.trim() ? [customGenre.trim()] : []),
   ];
   const resolvedGenre = formatGenres(resolvedGenres);
-  const nameBlocked = isArtistNameBlocked(name, nameStatus, allowTakenName);
   const isSelf = mode === "self";
+  const hasStyleRef = Boolean(
+    styleTrackPick?.id ||
+      styleArtistPick?.id ||
+      (Array.isArray(styleArtistPicks) && styleArtistPicks.length > 0),
+  );
+
+  /** Genres catalogue issus des artistes sélectionnés. */
+  const artistRefGenres = (() => {
+    const raw = [];
+    if (isSelf) {
+      for (const p of styleArtistPicks || []) {
+        if (Array.isArray(p.genres)) raw.push(...p.genres);
+      }
+    } else if (Array.isArray(styleArtistPick?.genres)) {
+      raw.push(...styleArtistPick.genres);
+    }
+    return [...new Set(raw.map((g) => String(g || "").trim()).filter(Boolean))];
+  })();
+
+  /** Genres issus du titre (ou fallback artiste si le titre n’en a pas). */
+  const trackRefGenres = (() => {
+    if (!styleTrackPick?.id) return [];
+    const fromTrack = Array.isArray(styleTrackPick.genres)
+      ? styleTrackPick.genres.map((g) => String(g || "").trim()).filter(Boolean)
+      : [];
+    if (fromTrack.length) return [...new Set(fromTrack)];
+    // Deezer sans genre → reprendre ceux de l’artiste ref
+    if (artistRefGenres.length) return artistRefGenres;
+    return [];
+  })();
+
+  const trackStyleHits = trackRefGenres
+    .map((g) => ({ raw: g, hit: matchMusicStyleFromGenre(g) }))
+    .filter((x) => x.hit);
+  const artistStyleHits = artistRefGenres
+    .map((g) => ({ raw: g, hit: matchMusicStyleFromGenre(g) }))
+    .filter((x) => x.hit);
+
+  const trackStyleValues = new Set(trackStyleHits.map((x) => x.hit.value));
+  const artistOnlyStyleValues = new Set(
+    [...artistStyleHits.map((x) => x.hit.value)].filter((v) => !trackStyleValues.has(v)),
+  );
+  const nameBlocked = isArtistNameBlocked(name, nameStatus, allowTakenName);
 
   function handleGenerate() {
     if (isSelf) {
@@ -208,6 +267,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
         language,
         bioHint: bioHint.trim(),
         styleArtistPicks,
+        styleTrackPick: styleTrackPick || undefined,
         styleArtist: styleArtistPicks.map((p) => p.name).join(" × "),
         allowTakenName: allowTakenName || undefined,
         trends,
@@ -215,8 +275,8 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
       return;
     }
 
-    if (styleArtist.trim() && !styleArtistPick?.id) {
-      setPickError("Choisis et valide un artiste dans la liste avant de générer.");
+    if (styleArtist.trim() && !styleArtistPick?.id && !styleTrackPick?.id) {
+      setPickError("Choisis et valide un artiste (ou un titre) dans la liste avant de générer.");
       return;
     }
     if (nameBlocked) {
@@ -233,6 +293,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
       bioHint: bioHint.trim(),
       styleArtist: styleArtistPick?.name || styleArtist.trim() || undefined,
       styleArtistPick: styleArtistPick || undefined,
+      styleTrackPick: styleTrackPick || undefined,
       allowTakenName: allowTakenName || undefined,
       trends,
     });
@@ -366,56 +427,17 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
           </>
         )}
 
-        <fieldset class="space-y-2">
+        <fieldset class="space-y-3">
           <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
             <Music2 size={14} class="text-primary" />
-            Styles musicaux{isSelf ? " (optionnel)" : ""}
+            Références sonores
           </legend>
           <p class="text-xs text-base-content/45">
             {isSelf
-              ? "Complète si besoin — le son principal vient de tes artistes favoris."
-              : "Multi-sélection — mélange possible (ex. Rap × Électro). Définit le son, les paroles et la prod."}
+              ? "Choisis les artistes (et éventuellement un titre précis) — c’est la source principale du style."
+              : "Artiste et/ou titre de référence : le genre, le BPM et la prod viennent d’ici. Pas besoin de cocher un style à la main."}
           </p>
-          <div class="flex flex-wrap gap-2">
-            {MUSIC_STYLES.map((s) => {
-              const active = s.value
-                ? genres.includes(s.value)
-                : genres.length === 0 && !showCustom;
-              return (
-                <button
-                  key={s.label}
-                  type="button"
-                  class={`btn btn-sm ${active ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-                  onClick={() => toggleStyle(s.value)}
-                >
-                  {s.label}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              class={`btn btn-sm ${showCustom ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-              onClick={() => {
-                setShowCustom((v) => !v);
-                if (showCustom) setCustomGenre("");
-              }}
-            >
-              Personnalisé
-            </button>
-          </div>
-          {resolvedGenres.length > 0 && (
-            <p class="text-xs text-primary">Sélection : {formatGenres(resolvedGenres)}</p>
-          )}
-          {showCustom && (
-            <input
-              class="input input-bordered mt-2 w-full bg-base-200"
-              type="text"
-              placeholder="Ex. duo électro-rap aux influences orientales"
-              value={customGenre}
-              onInput={(e) => setCustomGenre(e.currentTarget.value)}
-            />
-          )}
-          <div class="pt-1">
+          <div class="space-y-3">
             {isSelf ? (
               <StyleArtistPicker
                 multiple
@@ -423,7 +445,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                 picks={styleArtistPicks}
                 disabled={loading}
                 label="Artistes que tu aimes"
-                hint="Ajoute 1 à 5 artistes — les paroles et le son des morceaux seront calés dessus."
+                hint="Ajoute 1 à 5 artistes — les paroles et le son seront calés dessus."
                 onQueryChange={() => setPickError("")}
                 onPicksChange={(next) => {
                   setStyleArtistPicks(next);
@@ -447,8 +469,151 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                 }}
               />
             )}
-            {pickError && <p class="mt-1 text-xs text-warning">{pickError}</p>}
+            <StyleTrackPicker
+              pick={styleTrackPick}
+              disabled={loading}
+              onPickChange={(p) => {
+                if (!p) {
+                  setStyleTrackPick(null);
+                  setPickError("");
+                  return;
+                }
+                const artistGenres = (() => {
+                  const raw = [];
+                  if (mode === "self") {
+                    for (const a of styleArtistPicks || []) {
+                      if (Array.isArray(a.genres)) raw.push(...a.genres);
+                    }
+                  } else if (Array.isArray(styleArtistPick?.genres)) {
+                    raw.push(...styleArtistPick.genres);
+                  }
+                  return [...new Set(raw.map((g) => String(g || "").trim()).filter(Boolean))];
+                })();
+                const genres =
+                  Array.isArray(p.genres) && p.genres.length ? p.genres : artistGenres;
+                setStyleTrackPick({ ...p, genres });
+                setPickError("");
+              }}
+            />
+            {pickError && <p class="text-xs text-warning">{pickError}</p>}
           </div>
+        </fieldset>
+
+        <fieldset class="space-y-2">
+          <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
+            <Palette size={14} class="text-primary" />
+            Styles musicaux (optionnel)
+          </legend>
+
+          {hasStyleRef && (trackRefGenres.length > 0 || artistRefGenres.length > 0) && (
+            <div class="space-y-2 rounded-lg border border-base-content/10 bg-base-200/40 p-3">
+              <p class="text-xs text-base-content/55">Déduit de ta référence — pas besoin de recocher :</p>
+              <div class="flex flex-wrap gap-2">
+                {trackRefGenres.map((g) => {
+                  const mapped = matchMusicStyleFromGenre(g);
+                  return (
+                    <span
+                      key={`track-${g}`}
+                      class="badge badge-lg gap-1 border-0 bg-info/25 font-medium text-info"
+                      title="Depuis le titre de référence"
+                    >
+                      {mapped?.label || g}
+                      <span class="opacity-70">· titre</span>
+                    </span>
+                  );
+                })}
+                {artistRefGenres
+                  .filter((g) => !trackRefGenres.some((t) => t.toLowerCase() === g.toLowerCase()))
+                  .map((g) => {
+                    const mapped = matchMusicStyleFromGenre(g);
+                    return (
+                      <span
+                        key={`artist-${g}`}
+                        class="badge badge-lg gap-1 border-0 bg-secondary/25 font-medium text-secondary"
+                        title="Depuis l’artiste de référence"
+                      >
+                        {mapped?.label || g}
+                        <span class="opacity-70">· artiste</span>
+                      </span>
+                    );
+                  })}
+              </div>
+              <p class="text-[11px] text-base-content/45">
+                <span class="text-info">Bleu = titre</span>
+                {" · "}
+                <span class="text-secondary">Violet = artiste</span>
+                {" · "}
+                <span class="text-primary">Jaune = forçage manuel</span>
+              </p>
+            </div>
+          )}
+
+          {hasStyleRef ? (
+            <p class="text-xs text-base-content/45">
+              Ne coche un style jaune que si tu veux <strong>forcer</strong> un genre différent de la
+              référence.
+            </p>
+          ) : (
+            <p class="text-xs text-base-content/45">
+              Utile si tu n’as pas encore choisi d’artiste / titre — sinon laisse vide et utilise les
+              références ci-dessus.
+            </p>
+          )}
+          <div class="flex flex-wrap gap-2">
+            {MUSIC_STYLES.map((s) => {
+              const manual = s.value
+                ? genres.includes(s.value)
+                : genres.length === 0 && !showCustom && !hasStyleRef;
+              const fromTrack = s.value && trackStyleValues.has(s.value);
+              const fromArtist = s.value && artistOnlyStyleValues.has(s.value);
+              let cls = "btn btn-sm btn-ghost border border-base-content/15";
+              if (manual) cls = "btn btn-sm btn-primary";
+              else if (fromTrack) cls = "btn btn-sm border-0 bg-info/25 text-info hover:bg-info/35";
+              else if (fromArtist)
+                cls = "btn btn-sm border-0 bg-secondary/25 text-secondary hover:bg-secondary/35";
+              return (
+                <button
+                  key={s.label}
+                  type="button"
+                  class={cls}
+                  title={
+                    fromTrack
+                      ? "Déjà couvert par le titre de référence"
+                      : fromArtist
+                        ? "Déjà couvert par l’artiste de référence"
+                        : undefined
+                  }
+                  onClick={() => toggleStyle(s.value)}
+                >
+                  {s.label}
+                  {fromTrack && !manual ? " · titre" : ""}
+                  {fromArtist && !manual && !fromTrack ? " · artiste" : ""}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              class={`btn btn-sm ${showCustom ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+              onClick={() => {
+                setShowCustom((v) => !v);
+                if (showCustom) setCustomGenre("");
+              }}
+            >
+              Personnalisé
+            </button>
+          </div>
+          {resolvedGenres.length > 0 && (
+            <p class="text-xs text-primary">Forçage manuel : {formatGenres(resolvedGenres)}</p>
+          )}
+          {showCustom && (
+            <input
+              class="input input-bordered mt-2 w-full bg-base-200"
+              type="text"
+              placeholder="Ex. duo électro-rap aux influences orientales"
+              value={customGenre}
+              onInput={(e) => setCustomGenre(e.currentTarget.value)}
+            />
+          )}
         </fieldset>
 
         <fieldset class="space-y-2">
@@ -498,7 +663,11 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
           disabled={
             loading ||
             nameBlocked ||
-            (showCustom && !customGenre.trim() && genres.length === 0 && !isSelf) ||
+            (showCustom &&
+              !customGenre.trim() &&
+              genres.length === 0 &&
+              !isSelf &&
+              !hasStyleRef) ||
             (isSelf &&
               (!name.trim() ||
                 !gender ||

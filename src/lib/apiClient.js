@@ -307,6 +307,9 @@ export const api = {
   },
   saveKeysRemote: (keys) => request("/api/keys", { keys }),
   searchStyleArtists: (query) => request("/api/style-artists", { query }),
+  searchStyleTracks: (query) => request("/api/style-tracks", { query }),
+  resolveStyleTrack: (pick) =>
+    request("/api/style-tracks", { action: "resolve", pick }),
   checkArtistName: (query) => request("/api/artist-name-check", { query }),
   tiktokAuthUrl: (payload = {}) =>
     request("/api/tiktok/auth", {

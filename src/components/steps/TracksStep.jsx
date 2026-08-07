@@ -13,11 +13,12 @@ import {
   XCircle,
   Trash2,
 } from "lucide-preact";
-import { loadKeys, saveKeysAsync } from "../../lib/keys.js";
+import { loadKeys, saveKeysAsync, ensureKeysHydrated } from "../../lib/keys.js";
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
 import { api } from "../../lib/apiClient.js";
 import MusicArrangePanel from "../MusicArrangePanel.jsx";
-import { normalizeMusicArrange } from "../../lib/musicArrange.js";
+import StyleTrackPicker from "../StyleTrackPicker.jsx";
+import { normalizeMusicArrange, musicArrangeFromStyleLock, isDefaultMusicArrange } from "../../lib/musicArrange.js";
 import { confirmDeleteProject, isTrackAudioFinal } from "../../lib/studio.js";
 
 function songGenUrlFromKeys(keys) {
@@ -42,6 +43,7 @@ export default function TracksStep({
   onRejectTrackPreview,
   onOpenSettings,
   onMusicArrangeChange,
+  onApplyStyleTrack,
   onDeleteProject,
 }) {
   const [musicProvider, setMusicProvider] = useState("replicate");
@@ -49,6 +51,7 @@ export default function TracksStep({
   const [hasReplicateToken, setHasReplicateToken] = useState(false);
   const [hasOnce, setHasOnce] = useState(false);
   const [providerBusy, setProviderBusy] = useState(false);
+  const [keysHydrated, setKeysHydrated] = useState(false);
   const [probeStatus, setProbeStatus] = useState("idle"); // idle | checking | ok | error
   const [probeMessage, setProbeMessage] = useState("");
   const [audioUrlInput, setAudioUrlInput] = useState("");
@@ -56,11 +59,87 @@ export default function TracksStep({
   const [onceReleaseId, setOnceReleaseId] = useState("");
   const [onceBusy, setOnceBusy] = useState(false);
   const [onceHint, setOnceHint] = useState("");
+  const [styleTrackPick, setStyleTrackPick] = useState(() => {
+    const st = artist?.styleLock?.seedTrack;
+    if (st?.source && st?.sourceId) {
+      return {
+        source: st.source,
+        id: String(st.sourceId),
+        name: st.title,
+        artistName: st.artistName || "",
+        album: st.album || "",
+        image: st.image || null,
+        url: st.url || null,
+      };
+    }
+    return null;
+  });
+  const [styleTrackBusy, setStyleTrackBusy] = useState(false);
   const onceFileRef = useRef(null);
   const probeSeq = useRef(0);
+  const lastArrangeLockKey = useRef("");
 
   const hasSongGen = musicProvider === "songgen";
   const hasReplicate = musicProvider === "replicate" && hasReplicateToken;
+  const voiceCode = String(artist?.gender || "").toLowerCase();
+  const voiceLabel =
+    voiceCode === "female"
+      ? "Femme"
+      : voiceCode === "male"
+        ? "Homme"
+        : voiceCode === "nonbinary"
+          ? "Non-binaire"
+          : null;
+
+  const inferredArrange = artist?.styleLock
+    ? musicArrangeFromStyleLock(artist.styleLock)
+    : null;
+
+  const styleLockKey = (() => {
+    const lock = artist?.styleLock;
+    if (!lock) return "";
+    const seed = lock.seedTrack;
+    return [
+      lock.source || "",
+      lock.sourceId || "",
+      seed?.source || "",
+      seed?.sourceId || "",
+      seed?.title || "",
+      lock.bpm ?? "",
+      (lock.instruments || []).join(","),
+    ].join("|");
+  })();
+
+  // Pré-sélection arrangement depuis artiste / titre de référence (comme les styles)
+  useEffect(() => {
+    if (!styleLockKey || !inferredArrange || !onMusicArrangeChange) return;
+    const current = normalizeMusicArrange(musicArrange);
+    const lockChanged = lastArrangeLockKey.current !== styleLockKey;
+    const shouldApply =
+      !musicArrange ||
+      isDefaultMusicArrange(current) ||
+      current.source === "ref" ||
+      (lockChanged && current.source !== "manual");
+
+    if (!shouldApply) {
+      lastArrangeLockKey.current = styleLockKey;
+      return;
+    }
+
+    const next = normalizeMusicArrange({ ...inferredArrange, source: "ref" });
+    const same =
+      current.leadInstrument === next.leadInstrument &&
+      current.choir === next.choir &&
+      current.drums === next.drums &&
+      current.density === next.density &&
+      current.bpm === next.bpm &&
+      current.notes === next.notes &&
+      [...current.features].sort().join("|") === [...next.features].sort().join("|") &&
+      current.source === "ref";
+
+    lastArrangeLockKey.current = styleLockKey;
+    if (!same) onMusicArrangeChange(next);
+  }, [styleLockKey]);
 
   function refreshFromKeys() {
     const keys = loadKeys();
@@ -96,13 +175,34 @@ export default function TracksStep({
   }
 
   useEffect(() => {
-    const { provider } = refreshFromKeys();
-    if (provider === "songgen") void probeSongGen();
-    else {
-      setProbeStatus("idle");
-      setProbeMessage("");
-    }
-  }, [track, loading]);
+    let cancelled = false;
+    (async () => {
+      await ensureKeysHydrated();
+      if (cancelled) return;
+      const { provider } = refreshFromKeys();
+      setKeysHydrated(true);
+      if (provider === "songgen") void probeSongGen();
+      else {
+        setProbeStatus("idle");
+        setProbeMessage("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onFocus = () => {
+      void ensureKeysHydrated().then(() => {
+        refreshFromKeys();
+        setKeysHydrated(true);
+      });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   useEffect(() => {
     const id = distrokid?.releaseId || "";
@@ -110,15 +210,16 @@ export default function TracksStep({
   }, [distrokid?.releaseId]);
 
   async function switchMusicProvider(next) {
-    if (next === musicProvider || providerBusy || loading) return;
+    if (next === musicProvider || providerBusy || loading || !keysHydrated) return;
     setProviderBusy(true);
     setImportError("");
     try {
+      await ensureKeysHydrated();
       const keys = loadKeys();
-      await saveKeysAsync({ ...keys, musicProvider: next });
+      const { keys: saved } = await saveKeysAsync({ ...keys, musicProvider: next });
       setMusicProvider(next);
-      setSongGenUrl(songGenUrlFromKeys({ ...keys, musicProvider: next }));
-      setHasReplicateToken(Boolean(keys.replicateApiToken?.trim()));
+      setSongGenUrl(songGenUrlFromKeys(saved));
+      setHasReplicateToken(Boolean(saved.replicateApiToken?.trim()));
       if (next === "songgen") await probeSongGen();
       else {
         probeSeq.current += 1;
@@ -292,21 +393,12 @@ export default function TracksStep({
   const audioReady = isTrackAudioFinal(track);
   const isOnceOriginal = track?.provider === "once-original";
   const canGenerateAudio = hasSongGen || hasReplicate;
+  const artistSlug = artist?.slug;
   const genDisabled =
     loading ||
     !lyrics ||
     (hasSongGen && probeStatus === "error") ||
     (hasSongGen && !voiceLabel);
-  const artistSlug = artist?.slug;
-  const voiceCode = String(artist?.gender || "").toLowerCase();
-  const voiceLabel =
-    voiceCode === "female"
-      ? "Femme"
-      : voiceCode === "male"
-        ? "Homme"
-        : voiceCode === "nonbinary"
-          ? "Non-binaire"
-          : null;
   const onceDashboard =
     distrokid?.dashboardUrl ||
     (onceReleaseId.trim()
@@ -336,7 +428,7 @@ export default function TracksStep({
             <button
               type="button"
               class={`btn join-item btn-sm ${hasSongGen ? "btn-primary" : "btn-ghost"}`}
-              disabled={providerBusy || loading}
+              disabled={providerBusy || loading || !keysHydrated}
               onClick={() => switchMusicProvider("songgen")}
             >
               SongGeneration
@@ -344,14 +436,17 @@ export default function TracksStep({
             <button
               type="button"
               class={`btn join-item btn-sm ${!hasSongGen ? "btn-primary" : "btn-ghost"}`}
-              disabled={providerBusy || loading}
+              disabled={providerBusy || loading || !keysHydrated}
               onClick={() => switchMusicProvider("replicate")}
             >
               MiniMax
             </button>
           </div>
-          {providerBusy && <span class="loading loading-spinner loading-xs" />}
+          {(providerBusy || !keysHydrated) && <span class="loading loading-spinner loading-xs" />}
         </div>
+        {!keysHydrated && (
+          <p class="text-xs text-base-content/50">Chargement des clés depuis Turso…</p>
+        )}
         <p class="text-xs text-base-content/50">
           {hasSongGen
             ? "Local auto : SONOZZ lit la VRAM libre via SongGen et choisit le meilleur modèle prêt (Large sur 3090 si téléchargé et assez de mémoire)."
@@ -414,7 +509,7 @@ export default function TracksStep({
             </a>
             .
           </p>
-        ) : (
+        ) : keysHydrated ? (
           <div class="space-y-2">
             <p class="text-sm text-warning">
               Token Replicate manquant — ajoute-le dans Paramètres, ou passe sur SongGeneration.
@@ -423,10 +518,10 @@ export default function TracksStep({
               <KeyRound size={14} /> Paramètres audio
             </button>
           </div>
-        )}
+        ) : null}
       </div>
 
-      {!canGenerateAudio && !hasSongGen && (
+      {!canGenerateAudio && !hasSongGen && keysHydrated && (
         <div class="border border-warning/40 bg-warning/10 p-4">
           <p class="font-medium text-warning">Aucun provider audio prêt</p>
           <p class="mt-1 text-sm text-base-content/70">
@@ -472,10 +567,59 @@ export default function TracksStep({
       {(hasSongGen || hasReplicate) && (
         <MusicArrangePanel
           value={normalizeMusicArrange(musicArrange)}
+          inferred={inferredArrange}
           disabled={loading}
           onChange={(next) => onMusicArrangeChange?.(next)}
+          onApplyInferred={() => {
+            if (!inferredArrange) return;
+            onMusicArrangeChange?.(
+              normalizeMusicArrange({ ...inferredArrange, source: "ref" }),
+            );
+          }}
         />
       )}
+
+      <div class="space-y-2 border border-base-content/10 bg-base-200/30 p-4">
+        <StyleTrackPicker
+          pick={styleTrackPick}
+          disabled={loading || styleTrackBusy}
+          label="Titre de référence pour ce morceau"
+          hint="Optionnel — recalibre le styleLock sur CE titre (preview DNA) avant de générer."
+          onPickChange={(p) => setStyleTrackPick(p)}
+        />
+        {styleTrackPick?.id && onApplyStyleTrack && (
+          <button
+            type="button"
+            class="btn btn-outline btn-sm"
+            disabled={loading || styleTrackBusy}
+            onClick={async () => {
+              setStyleTrackBusy(true);
+              setImportError("");
+              try {
+                await onApplyStyleTrack(styleTrackPick);
+              } catch (e) {
+                setImportError(e.message || "Impossible d’appliquer ce titre");
+              } finally {
+                setStyleTrackBusy(false);
+              }
+            }}
+          >
+            {styleTrackBusy ? (
+              <span class="loading loading-spinner loading-xs" />
+            ) : null}
+            Appliquer ce titre au style
+          </button>
+        )}
+        {artist?.styleLock?.seedTrack?.title && (
+          <p class="text-xs text-success">
+            Style calé sur « {artist.styleLock.seedTrack.title} »
+            {artist.styleLock.seedTrack.artistName
+              ? ` — ${artist.styleLock.seedTrack.artistName}`
+              : ""}
+            {artist.styleLock.audioListened ? " · preview écouté" : ""}
+          </p>
+        )}
+      </div>
 
       <div class="flex flex-wrap gap-2">
         <button

@@ -42,7 +42,9 @@ import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
 import { migrateProjectClipBlobs } from "../lib/clipStore.js";
+import { musicArrangeFromStyleLock } from "../lib/musicArrange.js";
 import StyleArtistPicker from "./StyleArtistPicker.jsx";
+import StyleTrackPicker from "./StyleTrackPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "./ArtistNameField.jsx";
 import {
   isClipReady,
@@ -133,6 +135,7 @@ export default function Dashboard() {
     language: "fr",
     styleArtist: "",
     styleArtistPick: null,
+    styleTrackPick: null,
     allowTakenName: false,
   });
   const [seedNameStatus, setSeedNameStatus] = useState(null);
@@ -993,9 +996,9 @@ export default function Dashboard() {
       window.location.href = "/parametres?section=ia";
       return;
     }
-    if (seed.styleArtist?.trim() && !seed.styleArtistPick?.id) {
+    if (seed.styleArtist?.trim() && !seed.styleArtistPick?.id && !seed.styleTrackPick?.id) {
       setError(
-        "Choisis et valide un artiste dans les résultats de recherche avant de lancer l'auto.",
+        "Choisis et valide un artiste ou un titre dans les résultats avant de lancer l'auto.",
       );
       return;
     }
@@ -1284,8 +1287,13 @@ export default function Dashboard() {
             </label>
             <div class="form-control w-full md:col-span-2">
               <span class="label-text mb-1 text-xs text-base-content/55">
-                Styles musicaux (multi)
+                Styles musicaux (optionnel)
               </span>
+              <p class="mb-2 text-[11px] text-base-content/45">
+                {seed.styleTrackPick?.id || seed.styleArtistPick?.id
+                  ? "Inutile si tu as déjà un artiste / titre de référence — ne coche que pour forcer un genre."
+                  : "Ou choisis plutôt un artiste / titre ci-dessous pour caler le style automatiquement."}
+              </p>
               <div class="flex flex-wrap gap-2">
                 {MUSIC_STYLES.map((s) => {
                   const selected = s.value
@@ -1317,10 +1325,10 @@ export default function Dashboard() {
                 })}
               </div>
               {(seed.genres || []).length > 0 && (
-                <p class="mt-1 text-[11px] text-primary">{formatGenres(seed.genres)}</p>
+                <p class="mt-1 text-[11px] text-primary">Forçage : {formatGenres(seed.genres)}</p>
               )}
             </div>
-            <div class="md:col-span-2">
+            <div class="md:col-span-2 space-y-3">
               <StyleArtistPicker
                 value={seed.styleArtist}
                 pick={seed.styleArtistPick}
@@ -1335,6 +1343,14 @@ export default function Dashboard() {
                     styleArtist: pick?.name || s.styleArtist,
                     styleArtistPick: pick,
                   }))
+                }
+              />
+              <StyleTrackPicker
+                pick={seed.styleTrackPick}
+                disabled={autoRunning}
+                compact
+                onPickChange={(pick) =>
+                  setSeed((s) => ({ ...s, styleTrackPick: pick }))
                 }
               />
             </div>
@@ -1588,6 +1604,41 @@ export default function Dashboard() {
             }}
             onMusicArrangeChange={(next) => {
               setProject((prev) => ({ ...prev, musicArrange: next }));
+            }}
+            onApplyStyleTrack={async (pick) => {
+              if (!pick?.source || !pick?.id) return;
+              const data = await api.resolveStyleTrack(pick);
+              if (!data?.styleLock) throw new Error("Style lock vide");
+              setProject((prev) => {
+                if (!prev.artist) return prev;
+                const mergedLock = {
+                  ...(prev.artist.styleLock || {}),
+                  ...data.styleLock,
+                };
+                const next = {
+                  ...prev,
+                  artist: {
+                    ...prev.artist,
+                    styleLock: mergedLock,
+                    styleTrack: data.styleLock.seedTrack?.title
+                      ? `${data.styleLock.seedTrack.title}${
+                          data.styleLock.seedTrack.artistName
+                            ? ` — ${data.styleLock.seedTrack.artistName}`
+                            : ""
+                        }`
+                      : prev.artist.styleTrack,
+                  },
+                  styleTrackPick: pick,
+                  // Pré-sélection arrangement comme pour les styles (titre prime)
+                  musicArrange: musicArrangeFromStyleLock(mergedLock),
+                };
+                persist(next, {
+                  stepKey: "artist",
+                  eventType: "style-track",
+                  message: `Style calé sur « ${pick.name} »`,
+                });
+                return next;
+              });
             }}
             onDeleteProject={async () => {
               if (!projectId) return;

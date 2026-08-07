@@ -80,6 +80,153 @@ export function emptyMusicArrange() {
   };
 }
 
+/** True si l’utilisateur n’a rien personnalisé (valeurs par défaut). */
+export function isDefaultMusicArrange(raw) {
+  const a = normalizeMusicArrange(raw);
+  const d = emptyMusicArrange();
+  return (
+    a.leadInstrument === d.leadInstrument &&
+    a.choir === d.choir &&
+    a.drums === d.drums &&
+    a.density === d.density &&
+    a.bpm == null &&
+    a.features.length === 0 &&
+    !a.notes
+  );
+}
+
+/**
+ * Déduit un arrangement depuis le styleLock (artiste / titre de référence).
+ * Priorité DNA titre (instruments, BPM, groove, chœur…).
+ */
+export function musicArrangeFromStyleLock(styleLock) {
+  const lock = styleLock && typeof styleLock === "object" ? styleLock : null;
+  if (!lock) return emptyMusicArrange();
+
+  const bits = [
+    ...(Array.isArray(lock.instruments) ? lock.instruments : []),
+    ...(Array.isArray(lock.sonicKeywords) ? lock.sonicKeywords : []),
+    ...(Array.isArray(lock.genres) ? lock.genres : []),
+    lock.production,
+    lock.rhythmFeel,
+    lock.tempoFeel,
+    lock.genreSummary,
+    lock.mood,
+    lock.energy,
+    lock.musicPrompt,
+    lock.vocalStyle,
+    lock.seedTrack?.title,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  let choir = "none";
+  if (/gospel|church choir|satb|call and response|call-and-response/.test(bits)) {
+    choir = "gospel";
+  } else if (/choir pad|ethereal choir|ambient choir/.test(bits)) {
+    choir = "pads";
+  } else if (/backing vocal|vocal harmon|harmonies|bgv/.test(bits)) {
+    choir = "harmonies";
+  } else if (/stacked|vocal double|ad-?libs|ad libs/.test(bits)) {
+    choir = "stacked";
+  } else if (/\bchoir\b|\bchoeur\b/.test(bits)) {
+    choir = "harmonies";
+  }
+
+  let leadInstrument = "";
+  const leadRules = [
+    { re: /\borgan\b|church organ|hammond/, id: "organ" },
+    { re: /\bpiano\b|keys\b|rhodes|wurlitzer/, id: "piano" },
+    { re: /acoustic guitar|fingerpick|nylon/, id: "acoustic guitar" },
+    { re: /electric guitar|distorted guitar|guitar riff/, id: "electric guitar" },
+    { re: /\bguitar\b/, id: "electric guitar" },
+    { re: /synth lead|lead synth|arvo/, id: "synth lead" },
+    { re: /808 bass|\b808\b|sub bass/, id: "808 bass" },
+    { re: /\bstrings\b|string section|orchestral/, id: "strings" },
+    { re: /brass section|horn section/, id: "brass section" },
+    { re: /\bsaxophone\b|\bsax\b/, id: "saxophone" },
+    { re: /\btrumpet\b/, id: "trumpet" },
+  ];
+  for (const { re, id } of leadRules) {
+    if (re.test(bits)) {
+      leadInstrument = id;
+      break;
+    }
+  }
+
+  let drums = "";
+  const drumRules = [
+    { re: /trap|808s|hi-?hat roll/, id: "trap 808s" },
+    { re: /boom[\s-]?bap|boom bap/, id: "boom bap" },
+    { re: /four[\s-]?on[\s-]?floor|4 on the floor|house beat|disco/, id: "four-on-floor" },
+    { re: /brush|jazz kit|brushed/, id: "brush jazz" },
+    { re: /latin perc|conga|bongo|timbale|afrobeats perc/, id: "latin percussion" },
+    { re: /live kit|live drum|acoustic drum|rock drum|indie drum/, id: "live kit" },
+    { re: /\bdrums?\b|\bkit\b/, id: "live kit" },
+  ];
+  for (const { re, id } of drumRules) {
+    if (re.test(bits) || (lock.rhythmFeel && re.test(String(lock.rhythmFeel).toLowerCase()))) {
+      drums = id;
+      break;
+    }
+  }
+
+  let density = "mid";
+  if (
+    lock.energy === "high" ||
+    /dense|maximal|wall of sound|layered|full band|lush|thick/.test(bits)
+  ) {
+    density = "dense";
+  } else if (
+    lock.energy === "low" ||
+    /sparse|minimal|intimate|stripped|airy|space/.test(bits)
+  ) {
+    density = "sparse";
+  }
+
+  const features = [];
+  for (const f of FEATURE_TAGS) {
+    const id = f.id.toLowerCase();
+    if (bits.includes(id)) {
+      features.push(f.id);
+      continue;
+    }
+    // aliases
+    if (f.id === "gospel choir" && /gospel/.test(bits)) features.push(f.id);
+    else if (f.id === "call and response" && /call.?and.?response/.test(bits)) features.push(f.id);
+    else if (f.id === "brass stabs" && /brass|horn stab/.test(bits)) features.push(f.id);
+    else if (f.id === "string swell" && /string swell|string rise/.test(bits)) features.push(f.id);
+    else if (f.id === "organ pads" && /organ pad|pad organ/.test(bits)) features.push(f.id);
+    else if (f.id === "fingerpicked guitar" && /fingerpick/.test(bits)) features.push(f.id);
+    else if (f.id === "sidechain pump" && /sidechain/.test(bits)) features.push(f.id);
+  }
+
+  const bpmNum = Number(lock.bpm);
+  const bpm =
+    Number.isFinite(bpmNum) && bpmNum >= 60 && bpmNum <= 200 ? Math.round(bpmNum) : null;
+
+  const seed = lock.seedTrack;
+  const notes = seed?.title
+    ? `Réf. « ${seed.title} »${seed.artistName ? ` — ${seed.artistName}` : ""}`
+    : lock.matchedName
+      ? `Réf. artiste ${lock.matchedName}`
+      : "";
+
+  return normalizeMusicArrange({
+    leadInstrument,
+    choir,
+    drums,
+    density,
+    bpm,
+    features: features.slice(0, 6),
+    notes,
+    source: "ref",
+  });
+}
+
 export function normalizeMusicArrange(raw) {
   const base = emptyMusicArrange();
   if (!raw || typeof raw !== "object") return base;
@@ -87,6 +234,7 @@ export function normalizeMusicArrange(raw) {
   const densityIds = new Set(DENSITY_OPTIONS.map((d) => d.id));
   const featureIds = new Set(FEATURE_TAGS.map((f) => f.id));
   const bpmNum = Number(raw.bpm);
+  const source = raw.source === "manual" || raw.source === "ref" ? raw.source : null;
   return {
     leadInstrument: String(raw.leadInstrument || "").trim().slice(0, 60),
     choir: choirIds.has(raw.choir) ? raw.choir : "none",
@@ -99,6 +247,7 @@ export function normalizeMusicArrange(raw) {
       .filter((f) => featureIds.has(f))
       .slice(0, 8),
     notes: String(raw.notes || "").trim().slice(0, 240),
+    source,
   };
 }
 

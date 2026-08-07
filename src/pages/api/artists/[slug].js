@@ -2,6 +2,7 @@ import { json, error, readBody } from "../../../server/http.js";
 import {
   getArtistHub,
   createArtistRelease,
+  openArtistStyleEditor,
   computeArtistStats,
   adviseArtistCareer,
 } from "../../../server/artists.js";
@@ -79,6 +80,11 @@ export async function POST({ params, request }) {
         variantOf: body.variantOf || null,
       });
       return json(created);
+    }
+
+    if (action === "edit-style") {
+      const opened = await openArtistStyleEditor(slug);
+      return json(opened);
     }
 
     return error("Action inconnue", 400);

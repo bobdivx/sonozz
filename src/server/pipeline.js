@@ -5,6 +5,7 @@ import {
   checkArtistNameAvailability,
   resolveStyleReference,
   resolveStyleReferences,
+  resolveStyleTrackReference,
 } from "./styleReference.js";
 import { submitOnceRelease } from "./once.js";
 import {
@@ -393,6 +394,17 @@ function serializeStyleLock(styleLock) {
     musicPrompt: styleLock.musicPrompt,
     topTracks: styleLock.topTracks,
     audioListened: Boolean(styleLock.audioListened),
+    seedTrack: styleLock.seedTrack
+      ? {
+          title: styleLock.seedTrack.title,
+          artistName: styleLock.seedTrack.artistName,
+          source: styleLock.seedTrack.source,
+          sourceId: styleLock.seedTrack.sourceId,
+          album: styleLock.seedTrack.album,
+          url: styleLock.seedTrack.url,
+          image: styleLock.seedTrack.image,
+        }
+      : undefined,
     refs: Array.isArray(styleLock.refs)
       ? styleLock.refs.map((r) => ({
           matchedName: r.matchedName,
@@ -414,7 +426,11 @@ async function resolveArtistStyleLock({
   styleArtist,
   styleArtistPick,
   styleArtistPicks,
+  styleTrackPick,
 }) {
+  if (styleTrackPick?.source && styleTrackPick?.id) {
+    return resolveStyleTrackReference(keys, styleTrackPick);
+  }
   const picks = Array.isArray(styleArtistPicks)
     ? styleArtistPicks.filter((p) => p?.source && p?.id).slice(0, 5)
     : [];
@@ -469,6 +485,7 @@ export async function runArtist({
   styleArtist,
   styleArtistPick,
   styleArtistPicks,
+  styleTrackPick,
   allowTakenName = false,
   mode = "fiction",
   age,
@@ -526,6 +543,7 @@ export async function runArtist({
     styleArtist,
     styleArtistPick,
     styleArtistPicks,
+    styleTrackPick,
   });
 
   if (isSelf && !styleLock) {
@@ -656,7 +674,11 @@ ${
 Requête: "${styleLock.query}"
 Match catalogue: "${styleLock.matchedName}"
 ${styleLock.url ? `URL: ${styleLock.url}` : ""}
-Titres phares: ${(styleLock.topTracks || []).join(" · ") || "n/a"}
+${
+  styleLock.seedTrack?.title
+    ? `MORCEAU SEED (priorité DNA): "${styleLock.seedTrack.title}"${styleLock.seedTrack.artistName ? ` — ${styleLock.seedTrack.artistName}` : ""}`
+    : `Titres phares: ${(styleLock.topTracks || []).join(" · ") || "n/a"}`
+}
 Albums: ${(styleLock.albums || []).join(" · ") || "n/a"}
 Related: ${(styleLock.related || []).slice(0, 5).join(", ") || "n/a"}
 
@@ -858,6 +880,9 @@ JSON strict: { "name": string, "aka": string }
     styleArtist: styleArtistNames[0] || undefined,
     styleArtists: styleArtistNames.length ? styleArtistNames : undefined,
     styleLock: serializeStyleLock(styleLock),
+    styleTrack: styleLock?.seedTrack
+      ? `${styleLock.seedTrack.title}${styleLock.seedTrack.artistName ? ` — ${styleLock.seedTrack.artistName}` : ""}`
+      : undefined,
     influences: lockedInfluences,
     voice: lockedVoice,
     slug: slugify((forcedName || data.aka || data.name) || "artiste"),
@@ -1414,6 +1439,7 @@ export async function runFullPipeline({
   styleArtist,
   styleArtistPick,
   styleArtistPicks,
+  styleTrackPick,
   allowTakenName = false,
   mode,
   age,
@@ -1451,6 +1477,7 @@ export async function runFullPipeline({
     styleArtist,
     styleArtistPick,
     styleArtistPicks,
+    styleTrackPick,
     allowTakenName,
     mode,
     age,

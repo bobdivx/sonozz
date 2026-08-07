@@ -433,10 +433,29 @@ export function loadKeys() {
 }
 
 async function pushKeysToTurso(keys) {
+  // Ne jamais écraser Turso avec un blob local « vide » (ex. switch provider avant hydrate)
+  let payload = keys;
+  try {
+    const res = await fetch("/api/keys");
+    const data = await res.json().catch(() => ({}));
+    const remote = data.keys && typeof data.keys === "object" ? data.keys : null;
+    if (remote && keysHaveUserData(remote)) {
+      const merged = { ...remote, ...keys };
+      for (const k of Object.keys(remote)) {
+        const localV = String(keys?.[k] ?? "").trim();
+        const remoteV = String(remote[k] ?? "").trim();
+        if (!localV && remoteV) merged[k] = remote[k];
+      }
+      payload = merged;
+    }
+  } catch {
+    /* garde le payload local */
+  }
+
   const res = await fetch("/api/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ keys }),
+    body: JSON.stringify({ keys: payload }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -444,6 +463,8 @@ async function pushKeysToTurso(keys) {
   }
   if (typeof localStorage !== "undefined") {
     localStorage.setItem(HYDRATED_FLAG, "1");
+    // Ré-écrire le merge pour que loadKeys() voie les secrets Turso
+    writeLocalKeys(payload);
   }
   return data;
 }
@@ -464,8 +485,8 @@ export function saveKeys(keys) {
 
 /** Cache local + await Turso. Retourne { keys, labelSync? }. */
 export async function saveKeysAsync(keys) {
-  const next = writeLocalKeys(keys);
-  const data = await pushKeysToTurso(next);
+  const data = await pushKeysToTurso(keys);
+  const next = loadKeys();
   return { keys: next, labelSync: data?.labelSync || null };
 }
 

@@ -59,18 +59,11 @@ export default function StyleArtistPicker({
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState("");
   const [searched, setSearched] = useState(false);
-  const debounceRef = useRef(0);
   const lastQueryRef = useRef("");
 
   useEffect(() => {
     if (!multiple && single?.name && !query) setQuery(single.name);
   }, [single?.id]);
-
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    };
-  }, []);
 
   function updateQuery(next) {
     setQuery(next);
@@ -81,13 +74,6 @@ export default function StyleArtistPicker({
     setCandidates([]);
     setSearched(false);
     setError("");
-
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    const q = next.trim();
-    if (q.length < 2) return;
-    debounceRef.current = window.setTimeout(() => {
-      runSearch(q);
-    }, 450);
   }
 
   async function runSearch(q = query) {
@@ -168,8 +154,8 @@ export default function StyleArtistPicker({
   const help =
     hint ||
     (multiple
-      ? `Ajoute jusqu’à ${maxPicks} artistes — les morceaux seront calés sur leur son.`
-      : "Tape un nom, choisis le bon résultat (iTunes / Spotify / Deezer), puis valide.");
+      ? `Ajoute jusqu’à ${maxPicks} artistes — tape un nom puis clique sur la loupe.`
+      : "Tape un nom, clique sur la loupe (ou Entrée), puis choisis le bon résultat.");
 
   return (
     <div class={`space-y-2 ${compact ? "" : "w-full"}`}>
@@ -187,7 +173,6 @@ export default function StyleArtistPicker({
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              if (debounceRef.current) window.clearTimeout(debounceRef.current);
               runSearch();
             }
           }}
@@ -196,10 +181,7 @@ export default function StyleArtistPicker({
           type="button"
           class="btn btn-ghost border border-base-content/15"
           disabled={disabled || searching || query.trim().length < 2}
-          onClick={() => {
-            if (debounceRef.current) window.clearTimeout(debounceRef.current);
-            runSearch();
-          }}
+          onClick={() => runSearch()}
           title="Rechercher"
         >
           {searching ? (

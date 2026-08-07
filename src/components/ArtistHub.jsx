@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Headphones,
   Music2,
+  Pencil,
   Plus,
   RefreshCw,
   Sparkles,
@@ -17,7 +18,7 @@ import AppShell from "./AppShell.jsx";
 import ArtistAlbumSection from "./ArtistAlbumSection.jsx";
 import { api } from "../lib/apiClient.js";
 import { loadKeys } from "../lib/keys.js";
-import { confirmDeleteProject } from "../lib/studio.js";
+import { confirmDeleteProject, languageLabel } from "../lib/studio.js";
 
 const VERDICT_LABEL = {
   produce: "Produire",
@@ -54,12 +55,48 @@ function storeBadgeClass(status = "") {
   return "text-base-content/55";
 }
 
+function styleRowsFromProfile(profile = {}) {
+  const lock = profile.styleLock || {};
+  const genres = Array.isArray(profile.genres)
+    ? profile.genres.filter(Boolean)
+    : profile.genre
+      ? [profile.genre]
+      : [];
+  const refs =
+    Array.isArray(profile.styleArtists) && profile.styleArtists.length
+      ? profile.styleArtists
+      : Array.isArray(lock.refs)
+        ? lock.refs.map((r) => r.matchedName).filter(Boolean)
+        : profile.styleArtist
+          ? [profile.styleArtist]
+          : lock.matchedName
+            ? [lock.matchedName]
+            : [];
+  const topTracks = Array.isArray(lock.topTracks) ? lock.topTracks.filter(Boolean) : [];
+  const instruments = Array.isArray(lock.instruments) ? lock.instruments.filter(Boolean) : [];
+  const influences = Array.isArray(profile.influences) ? profile.influences.filter(Boolean) : [];
+
+  return {
+    genres,
+    refs,
+    topTracks,
+    instruments,
+    influences,
+    lock,
+    language: profile.language,
+    mood: profile.mood || lock.mood,
+    voice: profile.voice || lock.vocalStyle,
+    genreSummary: lock.genreSummary || genres.join(" · "),
+    production: lock.production,
+    mode: profile.mode,
+  };
+}
+
 export default function ArtistHub({ slug }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [theme, setTheme] = useState("");
   const [msg, setMsg] = useState("");
   const [careerBusy, setCareerBusy] = useState(false);
   const [scheduleBusy, setScheduleBusy] = useState(false);
@@ -73,8 +110,6 @@ export default function ArtistHub({ slug }) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Artiste introuvable");
       setData(json.artist);
-      const suggested = json.artist?.career?.nextSingle?.theme;
-      if (suggested && !theme.trim()) setTheme(suggested);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -109,9 +144,6 @@ export default function ArtistHub({ slug }) {
             }
           : prev,
       );
-      if (json.career?.nextSingle?.theme) {
-        setTheme(json.career.nextSingle.theme);
-      }
       const unison = json.stats?.unisonReady || 0;
       setMsg(
         [
@@ -138,7 +170,7 @@ export default function ArtistHub({ slug }) {
     setMsg("");
     try {
       const themeValue =
-        typeof themeOverride === "string" ? themeOverride.trim() : theme.trim();
+        typeof themeOverride === "string" ? themeOverride.trim() : "";
       const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -150,6 +182,25 @@ export default function ArtistHub({ slug }) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Création impossible");
       window.location.href = json.studioUrl || `/?project=${json.projectId}&step=3`;
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  }
+
+  async function openStyleEditor() {
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "edit-style" }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Ouverture impossible");
+      window.location.href = json.studioUrl || `/?project=${json.projectId}&step=2`;
     } catch (e) {
       setError(e.message);
       setBusy(false);
@@ -178,9 +229,6 @@ export default function ArtistHub({ slug }) {
             }
           : prev,
       );
-      if (json.career?.nextSingle?.theme) {
-        setTheme(json.career.nextSingle.theme);
-      }
       setMsg(
         json.cached
           ? "Conseil carrière (cache < 6 h) — force pour recalculer"
@@ -319,6 +367,7 @@ export default function ArtistHub({ slug }) {
   const streams = stats.streams || {};
   const deliveryMap = stats.delivery || {};
   const releaseStreamsMap = stats.releaseStreams || {};
+  const style = styleRowsFromProfile(profile);
   const links = stats.links || {
     once: "https://once.app/",
     spotifyForArtists: "https://artists.spotify.com/",
@@ -405,6 +454,153 @@ export default function ArtistHub({ slug }) {
               )}
             </div>
           </header>
+
+          <section class="space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <h2 class="font-display flex items-center gap-2 text-2xl font-bold">
+                <Music2 size={22} /> Style musical
+              </h2>
+              <button
+                type="button"
+                class="btn btn-outline btn-sm gap-1"
+                disabled={busy}
+                onClick={openStyleEditor}
+              >
+                <Pencil size={14} /> Modifier
+              </button>
+            </div>
+            <p class="text-sm text-base-content/65">
+              Synthèse des choix qui guident paroles, audio et jaquette. Modifie-les dans le studio
+              (étape Artiste) — le profil artiste est mis à jour pour les prochains morceaux.
+            </p>
+
+            {!style.genreSummary && !style.refs.length ? (
+              <div class="border border-dashed border-base-content/20 bg-base-200/20 px-4 py-5">
+                <p class="text-sm text-base-content/60">
+                  Aucun style défini pour cet artiste.
+                </p>
+                <button
+                  type="button"
+                  class="btn btn-primary btn-sm mt-3 gap-1"
+                  disabled={busy}
+                  onClick={openStyleEditor}
+                >
+                  <Pencil size={14} /> Définir le style
+                </button>
+              </div>
+            ) : (
+              <div class="space-y-4 border border-base-content/10 bg-base-200/30 p-4">
+                <div class="flex flex-wrap gap-2">
+                  {(style.genres.length ? style.genres : style.genreSummary ? [style.genreSummary] : []).map(
+                    (g) => (
+                      <span
+                        key={g}
+                        class="inline-flex items-center gap-1.5 border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary"
+                      >
+                        <Music2 size={12} />
+                        {g}
+                      </span>
+                    ),
+                  )}
+                  {style.language && (
+                    <span class="inline-flex items-center border border-base-content/15 px-2.5 py-1 text-xs text-base-content/70">
+                      {languageLabel(style.language)}
+                    </span>
+                  )}
+                  {style.mood && (
+                    <span class="inline-flex items-center border border-base-content/15 px-2.5 py-1 text-xs text-base-content/70">
+                      {style.mood}
+                    </span>
+                  )}
+                  {style.mode === "self" && (
+                    <span class="inline-flex items-center border border-secondary/30 bg-secondary/10 px-2.5 py-1 text-xs text-secondary">
+                      Profil « c’est moi »
+                    </span>
+                  )}
+                </div>
+
+                {style.refs.length > 0 && (
+                  <div>
+                    <p class="text-xs uppercase tracking-wider text-base-content/45">
+                      {style.mode === "self" ? "Artistes aimés" : "Artistes modèles"}
+                    </p>
+                    <p class="mt-1 text-sm text-primary">{style.refs.join(" · ")}</p>
+                    {style.lock.source && (
+                      <p class="mt-0.5 text-xs text-base-content/40">
+                        {style.lock.source}
+                        {style.lock.confidence ? ` · ${style.lock.confidence}` : ""}
+                        {style.lock.audioListened ? " · preview écouté" : ""}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {style.topTracks.length > 0 && (
+                  <div>
+                    <p class="text-xs uppercase tracking-wider text-base-content/45">
+                      Morceaux de référence
+                    </p>
+                    <p class="mt-1 text-sm text-base-content/80">{style.topTracks.slice(0, 6).join(" · ")}</p>
+                  </div>
+                )}
+
+                {style.influences.length > 0 && (
+                  <div>
+                    <p class="text-xs uppercase tracking-wider text-base-content/45">Influences</p>
+                    <p class="mt-1 text-sm text-base-content/70">{style.influences.join(" · ")}</p>
+                  </div>
+                )}
+
+                {(style.lock.timbre ||
+                  style.lock.rhythmFeel ||
+                  style.lock.tempoFeel ||
+                  style.lock.bpm ||
+                  style.instruments.length > 0 ||
+                  style.voice) && (
+                  <div class="space-y-1 border-t border-base-content/10 pt-3 text-xs text-base-content/65">
+                    <p class="font-medium uppercase tracking-wider text-base-content/45">DNA sonore</p>
+                    {style.lock.timbre && (
+                      <p>
+                        Timbre — <span class="text-base-content/80">{style.lock.timbre}</span>
+                      </p>
+                    )}
+                    {(style.lock.rhythmFeel || style.lock.tempoFeel) && (
+                      <p>
+                        Groove —{" "}
+                        <span class="text-base-content/80">
+                          {style.lock.rhythmFeel || style.lock.tempoFeel}
+                        </span>
+                      </p>
+                    )}
+                    {style.lock.bpm ? (
+                      <p>
+                        Tempo — <span class="text-base-content/80">~{style.lock.bpm} BPM</span>
+                        {style.lock.energy ? ` · énergie ${style.lock.energy}` : ""}
+                      </p>
+                    ) : null}
+                    {style.instruments.length > 0 && (
+                      <p>
+                        Instruments —{" "}
+                        <span class="text-base-content/80">{style.instruments.slice(0, 6).join(" · ")}</span>
+                      </p>
+                    )}
+                    {style.voice && (
+                      <p>
+                        Voix —{" "}
+                        <span class="text-base-content/80">
+                          {[style.voice, style.lock.vocalRegister].filter(Boolean).join(" · ")}
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {style.production && (
+                  <p class="text-xs text-base-content/45">{style.production}</p>
+                )}
+              </div>
+            )}
+          </section>
 
           <section class="space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
@@ -773,11 +969,7 @@ export default function ArtistHub({ slug }) {
                       type="button"
                       class="btn btn-primary btn-sm gap-2"
                       disabled={busy}
-                      onClick={() => {
-                        const t = career.nextSingle.theme;
-                        setTheme(t);
-                        createTrack(t);
-                      }}
+                      onClick={() => createTrack(career.nextSingle.theme)}
                     >
                       <AudioLines size={14} /> Lancer ce single dans le studio
                     </button>
@@ -793,24 +985,17 @@ export default function ArtistHub({ slug }) {
             </h2>
             <p class="text-sm text-base-content/65">
               Garde le même artiste et lance un nouveau single (paroles → audio → jaquette → ONCE → short).
+              Le thème se choisit à l’étape paroles dans le studio.
             </p>
-            <div class="flex flex-col gap-3 sm:flex-row">
-              <input
-                class="input input-bordered flex-1 bg-base-200"
-                placeholder="Thème / titre suggéré (ex. nuit d’été, version acoustique…)"
-                value={theme}
-                onInput={(e) => setTheme(e.currentTarget.value)}
-              />
-              <button
-                type="button"
-                class="btn btn-primary gap-2"
-                disabled={busy}
-                onClick={() => createTrack()}
-              >
-                {busy ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={16} />}
-                Créer dans le studio
-              </button>
-            </div>
+            <button
+              type="button"
+              class="btn btn-primary gap-2"
+              disabled={busy}
+              onClick={() => createTrack()}
+            >
+              {busy ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={16} />}
+              Créer morceau
+            </button>
           </section>
 
           <ArtistAlbumSection slug={data.slug} releases={releases} />
