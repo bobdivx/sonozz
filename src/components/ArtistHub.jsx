@@ -10,10 +10,12 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
+  Trash2,
   UserRound,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import ArtistAlbumSection from "./ArtistAlbumSection.jsx";
+import { api } from "../lib/apiClient.js";
 import { loadKeys } from "../lib/keys.js";
 
 const VERDICT_LABEL = {
@@ -259,6 +261,45 @@ export default function ArtistHub({ slug }) {
       setError(e.message);
     } finally {
       setScheduleBusy(false);
+    }
+  }
+
+  async function deleteRelease(release) {
+    const label = release?.trackTitle || release?.title || release?.id || "ce morceau";
+    if (
+      !confirm(
+        `Supprimer définitivement « ${label} » ?\n\nLe projet disparaît de Turso (audio / paroles / album liés à ce projet).`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      await api.deleteProject(release.id);
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              releases: (prev.releases || []).filter((r) => r.id !== release.id),
+              stats: prev.stats
+                ? {
+                    ...prev.stats,
+                    tracks: Math.max(0, (prev.stats.tracks ?? 1) - 1),
+                    withAudio: release.hasAudio
+                      ? Math.max(0, (prev.stats.withAudio ?? 1) - 1)
+                      : prev.stats.withAudio,
+                  }
+                : prev.stats,
+            }
+          : prev,
+      );
+      setMsg(`« ${label} » supprimé`);
+    } catch (e) {
+      setError(e.message || "Suppression impossible");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -889,6 +930,15 @@ export default function ArtistHub({ slug }) {
                           <Headphones size={12} /> Lire
                         </a>
                       )}
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-sm gap-1 text-error"
+                        disabled={busy}
+                        title="Supprimer ce morceau"
+                        onClick={() => deleteRelease(r)}
+                      >
+                        <Trash2 size={12} /> Supprimer
+                      </button>
                     </div>
                   </li>
                   );

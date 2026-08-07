@@ -11,6 +11,7 @@ import {
   RefreshCw,
   CheckCircle2,
   XCircle,
+  Trash2,
 } from "lucide-preact";
 import { loadKeys, saveKeysAsync } from "../../lib/keys.js";
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
@@ -37,6 +38,7 @@ export default function TracksStep({
   onAttachAudio,
   onOpenSettings,
   onMusicArrangeChange,
+  onDeleteProject,
 }) {
   const [musicProvider, setMusicProvider] = useState("replicate");
   const [songGenUrl, setSongGenUrl] = useState("http://127.0.0.1:7860");
@@ -526,6 +528,28 @@ export default function TracksStep({
                 gérer sur la fiche artiste
               </a>
             </p>
+          )}
+
+          {projectId && onDeleteProject && (
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm gap-2 text-error"
+              disabled={loading}
+              onClick={() => {
+                const label = track?.title || lyrics?.title || "ce morceau";
+                if (
+                  !confirm(
+                    `Supprimer définitivement « ${label} » ?\n\nLe projet (audio, paroles, album) sera effacé de Turso.`,
+                  )
+                ) {
+                  return;
+                }
+                onDeleteProject();
+              }}
+            >
+              <Trash2 size={14} />
+              Supprimer ce morceau
+            </button>
           )}
 
           {audioReady ? (

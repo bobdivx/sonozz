@@ -1551,6 +1551,21 @@ export default function Dashboard() {
             onMusicArrangeChange={(next) => {
               setProject((prev) => ({ ...prev, musicArrange: next }));
             }}
+            onDeleteProject={async () => {
+              if (!projectId) return;
+              setLoading(true);
+              setError("");
+              try {
+                await api.deleteProject(projectId);
+                const slug = project.artist?.slug;
+                window.location.href = slug
+                  ? `/artiste/${encodeURIComponent(slug)}`
+                  : "/";
+              } catch (e) {
+                setError(e.message || "Suppression impossible");
+                setLoading(false);
+              }
+            }}
             onGenerate={() =>
               runStep(
                 (onProgress) =>
