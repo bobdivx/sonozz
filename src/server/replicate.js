@@ -127,8 +127,43 @@ function normalizeLyrics(lyricsText = "") {
     .slice(0, 3500);
 }
 
-function minimaxMusicInput({ prompt, lyrics }) {
-  const lyricsText = normalizeLyrics(lyrics);
+/**
+ * Paroles courtes pour un brouillon MiniMax (1er Verse + 1er Chorus).
+ * Pas de durée API — gain partiel vs paroles complètes.
+ */
+export function truncateLyricsForPreview(lyricsText = "") {
+  const text = normalizeLyrics(lyricsText);
+  if (!text) return "";
+
+  const tagRe = /\[([^\]]+)\]/g;
+  const tags = [...text.matchAll(tagRe)];
+  if (!tags.length) {
+    return text.slice(0, 500);
+  }
+
+  let verse = "";
+  let chorus = "";
+  for (let i = 0; i < tags.length; i++) {
+    const raw = String(tags[i][1] || "").trim().toLowerCase();
+    const start = tags[i].index + tags[i][0].length;
+    const end = i + 1 < tags.length ? tags[i + 1].index : text.length;
+    const body = text.slice(start, end).trim();
+    if (/^verse|couplet/.test(raw) && !verse) {
+      verse = `[Verse]\n${body.slice(0, 400)}`;
+    } else if (/^chorus|refrain/.test(raw) && !chorus) {
+      chorus = `[Chorus]\n${body.slice(0, 280)}`;
+    }
+    if (verse && chorus) break;
+  }
+
+  const out = [verse, chorus].filter(Boolean).join("\n\n").trim();
+  return out || text.slice(0, 500);
+}
+
+function minimaxMusicInput({ prompt, lyrics, preview = false }) {
+  const lyricsText = preview
+    ? truncateLyricsForPreview(lyrics)
+    : normalizeLyrics(lyrics);
   const stylePrompt = String(prompt || "modern french pop, emotional vocals").slice(0, 2000);
   return lyricsText
     ? {
@@ -145,8 +180,8 @@ function minimaxMusicInput({ prompt, lyrics }) {
 }
 
 /** Crée la prediction MiniMax sans attendre (évite timeout proxy). */
-export async function startMinimaxMusic(token, { prompt, lyrics } = {}) {
-  const input = minimaxMusicInput({ prompt, lyrics });
+export async function startMinimaxMusic(token, { prompt, lyrics, preview = false } = {}) {
+  const input = minimaxMusicInput({ prompt, lyrics, preview });
 
   let { res, data } = await replicateJson(token, "/models/minimax/music-2.6/predictions", {
     method: "POST",

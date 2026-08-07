@@ -114,7 +114,10 @@ export function createAlbumTrackId() {
 /** Audio généré/importé et validé — utilisable pour Cover, ONCE, clips, catalogue. */
 export function isTrackAudioFinal(track) {
   if (!track?.audioUrl) return false;
-  return String(track.status || "") !== "pending-review";
+  const st = String(track.status || "");
+  if (st === "pending-review" || st === "preview-ready") return false;
+  if (track.isPreview) return false;
+  return true;
 }
 
 /** True si le projet / release a été soumis ou livré via ONCE. */

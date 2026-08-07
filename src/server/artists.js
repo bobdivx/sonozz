@@ -292,7 +292,9 @@ export async function listArtistReleases(slug, limit = 40) {
   });
 
   return res.rows.map((row) => {
-    const pendingReview = String(row.track_status || "") === "pending-review";
+    const pendingReview =
+      String(row.track_status || "") === "pending-review" ||
+      String(row.track_status || "") === "preview-ready";
     const audioUrl = pendingReview ? null : lightAssetUrl(row.audio_url);
     const coverUrl = lightAssetUrl(row.cover_url);
     const onceStatus = row.once_status || null;
@@ -353,7 +355,10 @@ export async function listLibraryTracks(limit = 200) {
         AND length(json_extract(project_json, '$.track.audioUrl')) > 8
         AND (
           json_extract(project_json, '$.track.status') IS NULL
-          OR json_extract(project_json, '$.track.status') != 'pending-review'
+          OR (
+            json_extract(project_json, '$.track.status') != 'pending-review'
+            AND json_extract(project_json, '$.track.status') != 'preview-ready'
+          )
         )
       ORDER BY updated_at DESC
       LIMIT ?
@@ -363,7 +368,11 @@ export async function listLibraryTracks(limit = 200) {
 
   return res.rows
     .map((row) => {
-      if (String(row.track_status || "") === "pending-review") return null;
+      if (
+        String(row.track_status || "") === "pending-review" ||
+        String(row.track_status || "") === "preview-ready"
+      )
+        return null;
       const audioUrl = lightAssetUrl(row.audio_url);
       if (!audioUrl) return null;
       const coverUrl = lightAssetUrl(row.cover_url);

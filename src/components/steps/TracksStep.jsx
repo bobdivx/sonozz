@@ -20,8 +20,6 @@ import MusicArrangePanel from "../MusicArrangePanel.jsx";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
 import { confirmDeleteProject, isTrackAudioFinal } from "../../lib/studio.js";
 
-const PREVIEW_SECONDS = 40;
-
 function songGenUrlFromKeys(keys) {
   return String(keys?.songGenBaseUrl || "")
     .trim()
@@ -38,6 +36,7 @@ export default function TracksStep({
   projectId,
   distrokid,
   onGenerate,
+  onGeneratePreview,
   onAttachAudio,
   onAcceptTrackPreview,
   onRejectTrackPreview,
@@ -288,10 +287,16 @@ export default function TracksStep({
   }
 
   const hasAudio = Boolean(track?.audioUrl);
-  const pendingReview = track?.status === "pending-review";
+  const previewReady =
+    track?.status === "preview-ready" || Boolean(track?.isPreview && track?.audioUrl);
   const audioReady = isTrackAudioFinal(track);
   const isOnceOriginal = track?.provider === "once-original";
   const canGenerateAudio = hasSongGen || hasReplicate;
+  const genDisabled =
+    loading ||
+    !lyrics ||
+    (hasSongGen && probeStatus === "error") ||
+    (hasSongGen && !voiceLabel);
   const artistSlug = artist?.slug;
   const voiceCode = String(artist?.gender || "").toLowerCase();
   const voiceLabel =
@@ -314,8 +319,13 @@ export default function TracksStep({
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Créer les morceaux</h2>
         <p class="max-w-xl text-base-content/70">
           {hasSongGen
-            ? "SongGeneration Studio local (LeVo) — sur RTX 3090, utilise le modèle Large (~8–15 min) pour se rapprocher d’une prod cloud."
+            ? "SongGeneration Studio local (LeVo) — sur RTX 3090, modèle Large auto si VRAM OK."
             : "Replicate → MiniMax Music 2.6 (voix + paroles, ~2–4 min)."}
+        </p>
+        <p class="max-w-xl text-sm text-base-content/55">
+          1) Génère un <strong>extrait court</strong> pour vérifier le style · 2) Si OK, lance le{" "}
+          <strong>morceau complet</strong> (nouvelle génération, mêmes réglages — pas le même
+          fichier).
         </p>
       </header>
 
@@ -467,38 +477,57 @@ export default function TracksStep({
         />
       )}
 
-      <button
-        class="btn btn-primary gap-2"
-        disabled={
-          loading ||
-          !lyrics ||
-          (hasSongGen && probeStatus === "error") ||
-          (hasSongGen && !voiceLabel)
-        }
-        onClick={onGenerate}
-        title={
-          hasSongGen && probeStatus === "error"
-            ? "SongGeneration injoignable — corrige l’URL ou Retester"
-            : hasSongGen
-              ? `Génère via SongGeneration @ ${songGenUrl}`
-              : !hasReplicate
-                ? "Sans provider → brief Suno uniquement"
-                : "Génère via MiniMax Music 2.6"
-        }
-      >
-        {loading ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={18} />}
-        {loading
-          ? typeof progress?.percent === "number"
-            ? `${progress.percent}% — ${progress.message || "Composition…"}`
-            : hasSongGen
-              ? "Composition SongGen (3–6 min)…"
-              : "Composition MiniMax (2–5 min)…"
-          : canGenerateAudio
-            ? hasSongGen
-              ? "Générer la chanson (SongGen local)"
-              : "Générer la chanson (MiniMax + paroles)"
-            : "Générer le brief (sans audio)"}
-      </button>
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="btn btn-secondary gap-2"
+          disabled={genDisabled || !canGenerateAudio}
+          onClick={() => onGeneratePreview?.()}
+          title={
+            hasSongGen
+              ? "Brouillon court (intro + couplet + refrain) — moins de GPU"
+              : "Brouillon avec paroles tronquées — MiniMax reste cloud"
+          }
+        >
+          {loading ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={18} />}
+          {loading
+            ? typeof progress?.percent === "number"
+              ? `${progress.percent}% — ${progress.message || "Extrait…"}`
+              : "Génération extrait…"
+            : "Écouter un extrait"}
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary gap-2"
+          disabled={genDisabled}
+          onClick={onGenerate}
+          title={
+            hasSongGen && probeStatus === "error"
+              ? "SongGeneration injoignable — corrige l’URL ou Retester"
+              : hasSongGen
+                ? `Morceau complet via SongGeneration @ ${songGenUrl}`
+                : !hasReplicate
+                  ? "Sans provider → brief Suno uniquement"
+                  : "Morceau complet via MiniMax Music 2.6"
+          }
+        >
+          {loading ? <span class="loading loading-spinner loading-sm" /> : <Disc3 size={18} />}
+          {loading
+            ? "Génération en cours…"
+            : canGenerateAudio
+              ? "Générer le morceau complet"
+              : "Générer le brief (sans audio)"}
+        </button>
+      </div>
+      {!loading && canGenerateAudio && (
+        <p class="text-xs text-base-content/50">
+          L’extrait est un <strong>brouillon</strong> : le complet sera régénéré avec les mêmes
+          réglages (style / arrangement / voix), pas une copie de l’extrait.
+          {hasSongGen
+            ? " SongGen : extrait = peu de sections (plus rapide)."
+            : " MiniMax : paroles tronquées (gain partiel)."}
+        </p>
+      )}
       {loading && typeof progress?.percent === "number" && (
         <div class="space-y-1.5" aria-live="polite">
           <div class="h-2 overflow-hidden rounded-full bg-base-300">
@@ -529,14 +558,14 @@ export default function TracksStep({
               </p>
               <p
                 class={`text-xs ${
-                  pendingReview ? "text-warning" : audioReady ? "text-success" : "text-warning"
+                  previewReady ? "text-warning" : audioReady ? "text-success" : "text-warning"
                 }`}
               >
-                {pendingReview
-                  ? "Extrait à valider — écoute les 40 premières secondes"
+                {previewReady
+                  ? "Extrait prêt — brouillon à valider avant le complet"
                   : audioReady
                     ? "Audio prêt ✓"
-                    : "Pas d’audio — importe un fichier ou configure SongGen / Replicate"}
+                    : "Pas d’audio — importe un fichier ou génère un extrait / le complet"}
               </p>
             </div>
           </div>
@@ -578,51 +607,34 @@ export default function TracksStep({
             </button>
           )}
 
-          {pendingReview && hasAudio ? (
+          {previewReady && hasAudio ? (
             <div class="space-y-4 border border-warning/40 bg-warning/10 p-4">
               <div class="space-y-1">
                 <h4 class="font-display text-lg font-semibold text-warning">
-                  Écoute avant validation
+                  Extrait — brouillon indicatif
                 </h4>
                 <p class="text-sm text-base-content/75">
-                  Tu entends le début du morceau <strong>définitif</strong> (même fichier). Si tu
-                  gardes, Cover / ONCE / clips utilisent exactement cet audio.
+                  Vérifie le style / la voix / le groove. Si ça te convient, lance le{" "}
+                  <strong>morceau complet</strong> (nouvelle génération, mêmes réglages —{" "}
+                  <em>pas</em> le même enregistrement).
                 </p>
               </div>
               {(track.audioEphemeral || track.warning) && (
                 <div class="border border-warning/40 bg-base-100/40 p-3 text-sm text-warning">
                   {track.warning ||
-                    "Ce lien audio est temporaire (Replicate ~1 h). Valide vite ou réimporte."}
+                    "Lien audio temporaire — valide vite ou réimporte."}
                 </div>
               )}
               <audio
-                key={`preview-${track.audioS3Key || track.audioUrl}`}
+                key={`draft-${track.audioS3Key || track.audioUrl}`}
                 controls
                 class="w-full"
                 src={playableAudioSrc(track.audioUrl, track.audioS3Key)}
                 preload="auto"
-                onTimeUpdate={(e) => {
-                  const el = e.currentTarget;
-                  if (el.currentTime >= PREVIEW_SECONDS) {
-                    el.pause();
-                    el.currentTime = PREVIEW_SECONDS;
-                  }
-                }}
-                onSeeked={(e) => {
-                  const el = e.currentTarget;
-                  if (el.currentTime > PREVIEW_SECONDS) {
-                    el.currentTime = PREVIEW_SECONDS;
-                  }
-                }}
                 onError={() => {
-                  setImportError(
-                    "Lecture impossible — clique « Re-sauver audio (S3) » puis réessaie.",
-                  );
+                  setImportError("Lecture impossible — réessaie ou régénère l’extrait.");
                 }}
               />
-              <p class="text-xs text-base-content/50">
-                Aperçu limité à {PREVIEW_SECONDS} s — le fichier complet est déjà généré.
-              </p>
               <div class="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -631,7 +643,7 @@ export default function TracksStep({
                   onClick={() => onAcceptTrackPreview?.()}
                 >
                   <CheckCircle2 size={16} />
-                  Garder ce morceau
+                  Valider → générer le complet
                 </button>
                 <button
                   type="button"
@@ -640,7 +652,7 @@ export default function TracksStep({
                   onClick={() => {
                     if (
                       !confirm(
-                        "Rejeter cet extrait ? L’audio sera retiré du projet — tu pourras régénérer.",
+                        "Rejeter cet extrait ? Tu pourras en générer un autre ou passer au complet.",
                       )
                     ) {
                       return;
@@ -649,7 +661,7 @@ export default function TracksStep({
                   }}
                 >
                   <XCircle size={16} />
-                  Rejeter et régénérer
+                  Rejeter l’extrait
                 </button>
               </div>
             </div>

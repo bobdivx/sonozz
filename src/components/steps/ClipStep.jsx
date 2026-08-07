@@ -82,7 +82,10 @@ function probeVideoDuration(blob) {
 
 function hasAudio(track) {
   if (!track?.audioUrl) return false;
-  return String(track.status || "") !== "pending-review";
+  const st = String(track.status || "");
+  if (st === "pending-review" || st === "preview-ready") return false;
+  if (track.isPreview) return false;
+  return true;
 }
 
 function isEphemeralHttp(url = "") {

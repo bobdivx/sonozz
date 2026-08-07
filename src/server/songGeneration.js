@@ -349,6 +349,56 @@ export function lyricsToSections(lyricsText = "") {
   return sections.length ? sections : [{ type: "verse", lyrics: text.slice(0, 800) }];
 }
 
+/**
+ * Extrait court SongGen : intro + 1er verse + 1er chorus (pas de bridge/outro/2e couplet).
+ * Vrai gain GPU vs morceau complet.
+ */
+export function lyricsToPreviewSections(lyricsText = "") {
+  const full = lyricsToSections(lyricsText);
+  const out = [];
+  let hasVerse = false;
+  let hasChorus = false;
+
+  for (const s of full) {
+    if (s.type === "intro" && !out.some((x) => x.type === "intro")) {
+      out.push(s);
+      continue;
+    }
+    if (s.type === "verse" && !hasVerse) {
+      out.push({
+        ...s,
+        lyrics: s.lyrics ? String(s.lyrics).slice(0, 400) : s.lyrics,
+      });
+      hasVerse = true;
+      continue;
+    }
+    if (s.type === "chorus" && !hasChorus) {
+      out.push({
+        ...s,
+        lyrics: s.lyrics ? String(s.lyrics).slice(0, 280) : s.lyrics,
+      });
+      hasChorus = true;
+      continue;
+    }
+    if (hasVerse && hasChorus) break;
+  }
+
+  if (!out.length) {
+    return [
+      { type: "intro", lyrics: null },
+      { type: "verse", lyrics: "la la la" },
+      { type: "chorus", lyrics: "oh oh oh" },
+    ];
+  }
+  if (!hasVerse) {
+    out.push({ type: "verse", lyrics: "la la la" });
+  }
+  if (!hasChorus) {
+    out.push({ type: "chorus", lyrics: "oh oh oh" });
+  }
+  return out;
+}
+
 function mapGender(gender) {
   const g = String(gender || "")
     .toLowerCase()
@@ -473,10 +523,10 @@ export async function testSongGeneration(keys) {
  */
 export async function startSongGeneration(
   keys,
-  { prompt, lyrics, title, gender, genre, mood, bpm, artist } = {},
+  { prompt, lyrics, title, gender, genre, mood, bpm, artist, preview = false } = {},
 ) {
   const base = resolveSongGenBaseUrl(keys);
-  const sections = lyricsToSections(lyrics);
+  const sections = preview ? lyricsToPreviewSections(lyrics) : lyricsToSections(lyrics);
   const vocal = resolveVocalGender({
     gender: gender || artist?.gender,
     voice: artist?.voice,
@@ -603,7 +653,9 @@ export async function startSongGeneration(
   const infer = pick.params || MODEL_INFER_PARAMS.songgeneration_base;
 
   const body = {
-    title: String(title || "SONOZZ Track").slice(0, 120),
+    title: String(
+      preview ? `${title || "SONOZZ"} · extrait` : title || "SONOZZ Track",
+    ).slice(0, 120),
     sections,
     gender: vocal.code,
     timbre: cachedTimbre || (vocal.code === "female" ? "bright" : "warm"),
@@ -634,6 +686,7 @@ export async function startSongGeneration(
     body.title,
     sections.length,
     "sections",
+    preview ? "PREVIEW" : "FULL",
     `model=${body.model}`,
     `pick=${pick.reason}`,
     `vram≥${pick.vramRequired || "?"}Go`,

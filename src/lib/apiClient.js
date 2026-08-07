@@ -89,7 +89,11 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
   };
 
   throwIfAborted();
-  onProgress?.({ percent: 5, message: "Démarrage génération audio…" });
+  const isPreview = Boolean(payload?.preview);
+  onProgress?.({
+    percent: 5,
+    message: isPreview ? "Démarrage extrait audio…" : "Démarrage génération audio…",
+  });
   const started = await request("/api/track", { ...payload, action: "start" });
   if (!started?.pollNeeded) {
     const { pollNeeded: _p, musicKind: _m, generationId: _g, draft, ...rest } = started || {};
@@ -101,12 +105,16 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     percent: 12,
     message:
       started.musicKind === "songgen"
-        ? "SongGen démarré — attente GPU…"
-        : "MiniMax démarré — attente Replicate…",
+        ? isPreview
+          ? "Extrait SongGen — attente GPU…"
+          : "SongGen démarré — attente GPU…"
+        : isPreview
+          ? "Extrait MiniMax — attente Replicate…"
+          : "MiniMax démarré — attente Replicate…",
     musicKind: started.musicKind,
   });
 
-  const maxPolls = started.musicKind === "songgen" ? 400 : 180;
+  const maxPolls = started.musicKind === "songgen" ? (isPreview ? 200 : 400) : 180;
   const intervalMs = started.musicKind === "songgen" ? 3000 : 2500;
 
   for (let i = 0; i < maxPolls; i++) {
@@ -120,7 +128,10 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
       draft: started.draft,
     });
     if (tick?.done && tick.track) {
-      onProgress?.({ percent: 100, message: "Audio prêt" });
+      onProgress?.({
+        percent: 100,
+        message: isPreview || tick.track.isPreview ? "Extrait prêt" : "Audio prêt",
+      });
       return tick.track;
     }
     onProgress?.(formatTrackProgress({ ...tick, musicKind: started.musicKind }));
@@ -128,7 +139,9 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
 
       throw new Error(
         started.musicKind === "songgen"
-          ? "Timeout SongGeneration Studio (~20 min) — modèle Large = plus long sur 3090."
+          ? isPreview
+            ? "Timeout extrait SongGen — réessaie ou lance le complet."
+            : "Timeout SongGeneration Studio (~20 min) — modèle Large = plus long sur 3090."
           : "Timeout MiniMax Replicate (~7 min).",
       );
 }

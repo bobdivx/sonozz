@@ -1049,7 +1049,8 @@ ${lyrics?.text || ""}
  * Démarre la gen audio sans bloquer (évite Cloudflare 524 / proxy ~100s).
  * Le client poll via pollTrack.
  */
-export async function startTrack({ keys, lyrics, artist }) {
+export async function startTrack({ keys, lyrics, artist, preview = false }) {
+  const isPreview = Boolean(preview);
   const { prompt, styleLock, vocal, arrangeBpm } = buildTrackMusicPrompt({ lyrics, artist });
   const lockBpm = Number(arrangeBpm ?? styleLock?.bpm);
   const bpmGuess =
@@ -1081,12 +1082,14 @@ export async function startTrack({ keys, lyrics, artist }) {
       genre: artist?.genre || styleLock?.genre,
       mood: artist?.mood || styleLock?.mood,
       bpm: bpmGuess,
+      preview: isPreview,
     });
     return {
       pollNeeded: true,
       musicKind: "songgen",
       generationId: started.generationId,
       provider: started.provider,
+      preview: isPreview,
       draft: {
         ...draft,
         provider: started.provider,
@@ -1094,9 +1097,13 @@ export async function startTrack({ keys, lyrics, artist }) {
         voiceGender: started.gender || vocal?.code,
         songGenModel: started.model || null,
         songGenQuality: started.quality || null,
-        note: started.model
-          ? `SongGen · ${started.model}${started.quality ? ` · ${started.quality}` : ""}`
-          : draft.note,
+        isPreview,
+        status: isPreview ? "preview-ready" : "prompt-ready",
+        note: isPreview
+          ? `Extrait SongGen · ${started.model || "auto"} — brouillon indicatif`
+          : started.model
+            ? `SongGen · ${started.model}${started.quality ? ` · ${started.quality}` : ""}`
+            : draft.note,
       },
     };
   }
@@ -1105,13 +1112,24 @@ export async function startTrack({ keys, lyrics, artist }) {
     const started = await startMinimaxMusic(keys.replicateApiToken.trim(), {
       prompt,
       lyrics: lyrics?.text || "",
+      preview: isPreview,
     });
     return {
       pollNeeded: true,
       musicKind: "replicate",
       generationId: started.generationId,
       provider: started.provider,
-      draft: { ...draft, provider: started.provider, bpm: bpmGuess },
+      preview: isPreview,
+      draft: {
+        ...draft,
+        provider: started.provider,
+        bpm: bpmGuess,
+        isPreview,
+        status: isPreview ? "preview-ready" : "prompt-ready",
+        note: isPreview
+          ? "Extrait MiniMax (paroles tronquées) — brouillon indicatif"
+          : draft.note,
+      },
     };
   }
 
@@ -1157,15 +1175,20 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
   }
 
   const base = draft && typeof draft === "object" ? draft : {};
+  const isPreview = Boolean(base.isPreview);
   const track = {
     ...base,
     audioUrl: tick.url,
     provider: tick.provider || base.provider,
     hasVocals: Boolean(tick.hasVocals),
-    duration: tick.durationLabel || base.duration || "~2–4 min",
-    status: "audio-ready",
-    note:
-      tick.provider === "songgeneration-studio"
+    duration: isPreview
+      ? tick.durationLabel || "~extrait"
+      : tick.durationLabel || base.duration || "~2–4 min",
+    status: isPreview ? "preview-ready" : "audio-ready",
+    isPreview,
+    note: isPreview
+      ? "Extrait prêt — brouillon indicatif (le complet sera une nouvelle génération, mêmes réglages)."
+      : tick.provider === "songgeneration-studio"
         ? "Chanson générée via SongGeneration Studio (LeVo local)."
         : "Chanson générée via MiniMax Music 2.6 (voix + paroles).",
     warning: undefined,

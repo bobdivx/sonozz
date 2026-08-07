@@ -220,8 +220,8 @@ export default function ArtistAlbumSection({ slug, releases = [] }) {
     }
     if (!isTrackAudioFinal(project?.track)) {
       setError(
-        project?.track?.status === "pending-review"
-          ? "Valide d’abord l’extrait du lead dans le Studio (étape Morceaux)."
+        project?.track?.status === "preview-ready" || project?.track?.isPreview
+          ? "Génère d’abord le morceau complet du lead (après l’extrait) dans le Studio."
           : "Le lead doit avoir un audio prêt.",
       );
       return;

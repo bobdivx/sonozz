@@ -395,28 +395,38 @@ export default function Dashboard() {
               "Audio non persisté (expire ~1 h) — configure S3 ou réimporte bientôt.",
           };
         }
-        // Gate Studio : même fichier, validation humaine avant audio-ready
-        result = { ...result, status: "pending-review" };
+        // Preview court vs morceau final
+        if (result.isPreview || result.status === "preview-ready") {
+          result = {
+            ...result,
+            status: "preview-ready",
+            isPreview: true,
+          };
+        } else {
+          result = {
+            ...result,
+            status: "audio-ready",
+            isPreview: false,
+          };
+        }
       }
 
       patchJob(stepJobId, { progress: 88, message: "Sauvegarde projet…" });
       const next = { ...project, [key]: result };
       setProject(next);
       if (goTo) setStep(goTo);
+      const isPreviewTrack =
+        key === "track" && (result?.status === "preview-ready" || result?.isPreview);
       await persist(next, {
         stepKey: key,
         eventType: "step",
-        message:
-          key === "track" && result?.status === "pending-review"
-            ? "Extrait prêt — écoute et valide"
-            : `Étape ${stepLabel} générée`,
+        message: isPreviewTrack
+          ? "Extrait prêt — écoute le brouillon"
+          : `Étape ${stepLabel} générée`,
       });
       finishStepJob(stepJobId, {
         ok: true,
-        message:
-          key === "track" && result?.status === "pending-review"
-            ? "Extrait prêt — écoute et valide"
-            : `${stepLabel} terminé`,
+        message: isPreviewTrack ? "Extrait prêt — écoute le brouillon" : `${stepLabel} terminé`,
       });
     } catch (e) {
       setError(e.message);
@@ -560,8 +570,8 @@ export default function Dashboard() {
     }
     if (!isTrackAudioFinal(project.track)) {
       setError(
-        project.track?.status === "pending-review"
-          ? "Valide d’abord l’extrait du single lead (étape Morceaux) avant de lancer l’album."
+        (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
+          ? "Génère d’abord le morceau complet (l’extrait ne suffit pas) avant de lancer l’album."
           : "Valide d’abord le single lead (audio prêt) avant de lancer l’album.",
       );
       return;
@@ -1489,9 +1499,9 @@ export default function Dashboard() {
               key={s.id}
               type="button"
               onClick={() => {
-                if (s.id > 4 && project.track?.status === "pending-review") {
+                if (s.id > 4 && (project.track?.status === "preview-ready" || project.track?.status === "pending-review")) {
                   setStep(4);
-                  setError("Valide d’abord l’extrait du morceau avant de continuer.");
+                  setError("Génère d’abord le morceau complet (l’extrait ne suffit pas) avant de continuer.");
                   return;
                 }
                 setStep(s.id);
@@ -1594,11 +1604,30 @@ export default function Dashboard() {
                 setLoading(false);
               }
             }}
+            onGeneratePreview={() =>
+              runStep(
+                (onProgress) =>
+                  api.track(
+                    {
+                      preview: true,
+                      lyrics: project.lyrics,
+                      artist: {
+                        ...project.artist,
+                        musicArrange: project.musicArrange,
+                      },
+                    },
+                    onProgress,
+                  ),
+                "track",
+                4,
+              )
+            }
             onGenerate={() =>
               runStep(
                 (onProgress) =>
                   api.track(
                     {
+                      preview: false,
                       lyrics: project.lyrics,
                       artist: {
                         ...project.artist,
@@ -1612,28 +1641,23 @@ export default function Dashboard() {
               )
             }
             onAcceptTrackPreview={() => {
-              setError("");
-              setProject((prev) => {
-                if (!prev.track?.audioUrl) return prev;
-                const next = {
-                  ...prev,
-                  track: {
-                    ...prev.track,
-                    status: "audio-ready",
-                    note: prev.track.note
-                      ? String(prev.track.note).includes("validé")
-                        ? prev.track.note
-                        : `${prev.track.note} · validé`
-                      : "Audio validé",
-                  },
-                };
-                persist(next, {
-                  stepKey: "track",
-                  eventType: "track-accept",
-                  message: "Morceau validé",
-                });
-                return next;
-              });
+              // Valider le style de l’extrait → lancer la gen complète (nouvelle génération)
+              runStep(
+                (onProgress) =>
+                  api.track(
+                    {
+                      preview: false,
+                      lyrics: project.lyrics,
+                      artist: {
+                        ...project.artist,
+                        musicArrange: project.musicArrange,
+                      },
+                    },
+                    onProgress,
+                  ),
+                "track",
+                4,
+              );
             }}
             onRejectTrackPreview={() => {
               setError("");
@@ -1648,14 +1672,15 @@ export default function Dashboard() {
                     audioEphemeral: false,
                     waveform: [],
                     status: "prompt-ready",
+                    isPreview: false,
                     warning: undefined,
-                    note: "Extrait rejeté — relance une génération.",
+                    note: "Extrait rejeté — relance un extrait ou le complet.",
                     assetMissingReason: undefined,
                   },
                 };
                 persist(next, {
                   stepKey: "track",
-                  eventType: "track-reject",
+                  eventType: "track-reject-preview",
                   message: "Extrait rejeté",
                 });
                 return next;
@@ -1718,8 +1743,8 @@ export default function Dashboard() {
               if (!isTrackAudioFinal(project.track)) {
                 setStep(4);
                 setError(
-                  project.track?.status === "pending-review"
-                    ? "Valide d’abord l’extrait du morceau (étape 4) avant la jaquette."
+                  (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
+                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas pour la jaquette."
                     : "Crée d'abord le morceau audio (étape 4) avant la jaquette.",
                 );
                 return;
@@ -1748,8 +1773,8 @@ export default function Dashboard() {
               if (!isTrackAudioFinal(project.track)) {
                 setStep(4);
                 setError(
-                  project.track?.status === "pending-review"
-                    ? "Valide d’abord l’extrait du morceau (étape 4) avant ONCE."
+                  (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
+                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas pour ONCE."
                     : "Crée d'abord le morceau audio (étape 4) avant ONCE.",
                 );
                 return;
@@ -1783,8 +1808,8 @@ export default function Dashboard() {
               if (!isTrackAudioFinal(project.track)) {
                 setStep(4);
                 setError(
-                  project.track?.status === "pending-review"
-                    ? "Valide d’abord l’extrait du morceau (étape 4) avant ONCE."
+                  (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
+                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas pour ONCE."
                     : "Crée d'abord le morceau audio (étape 4) avant ONCE.",
                 );
                 return;
@@ -1856,8 +1881,8 @@ export default function Dashboard() {
               if (!isTrackAudioFinal(project.track)) {
                 setStep(4);
                 setError(
-                  project.track?.status === "pending-review"
-                    ? "Valide d’abord l’extrait du morceau (étape 4) avant le clip."
+                  (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
+                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas pour le clip."
                     : "Crée d'abord le morceau audio (étape 4) avant le clip.",
                 );
                 return;
@@ -1953,8 +1978,8 @@ export default function Dashboard() {
               if (!isTrackAudioFinal(project.track)) {
                 setStep(4);
                 setError(
-                  project.track?.status === "pending-review"
-                    ? "Valide d’abord l’extrait du morceau (étape 4)."
+                  (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
+                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas."
                     : "Crée d'abord le morceau audio (étape 4).",
                 );
                 return;
@@ -2000,8 +2025,8 @@ export default function Dashboard() {
             class="btn btn-primary btn-sm gap-1"
             disabled={step >= STEPS.length}
             onClick={() => {
-              if (step === 4 && project.track?.status === "pending-review") {
-                setError("Valide d’abord l’extrait du morceau avant de continuer.");
+              if (step === 4 && (project.track?.status === "preview-ready" || project.track?.status === "pending-review")) {
+                setError("Génère d’abord le morceau complet (l’extrait ne suffit pas) avant de continuer.");
                 return;
               }
               setStep((s) => Math.min(STEPS.length, s + 1));
