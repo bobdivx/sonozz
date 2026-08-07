@@ -86,26 +86,57 @@ function readyModelIds(catalog) {
  * @param {{ models?: array, ready_models?: array, default?: string, recommended?: string }} catalog
  * @returns {{ modelId: string, reason: string, params: object }}
  */
-export function pickSongGenModel(catalog = {}) {
+/**
+ * Meilleur modèle prêt qui tient dans la VRAM actuelle.
+ * Fait confiance à Studio (`default`), avec overrides SONOZZ :
+ * - préférence utilisateur (songGenPreferredModel)
+ * - Large sur carte ≥22 Go totales / ≥18 Go libres (seuil Studio 22 trop strict sur 3090)
+ *
+ * @param {{ models?: array, ready_models?: array, default?: string, recommended?: string }} catalog
+ * @param {{ preferredId?: string|null, freeGb?: number|null, totalGb?: number|null }} [opts]
+ * @returns {{ modelId: string, reason: string, params: object, vramRequired: number|null, recommendedDownload: string|null }}
+ */
+export function pickSongGenModel(catalog = {}, opts = {}) {
   const readyIds = readyModelIds(catalog);
   const readySet = new Set(readyIds);
+  const preferredId = String(opts?.preferredId || "").trim();
+  const freeGb = Number(opts?.freeGb);
+  const totalGb = Number(opts?.totalGb);
+  const hasFree = Number.isFinite(freeGb);
+  const hasTotal = Number.isFinite(totalGb);
 
-  // Source de vérité Studio : modèle prêt + VRAM libre
-  const studioBest = String(catalog?.default || "").trim();
-  if (studioBest && readySet.has(studioBest)) {
-    const params = MODEL_INFER_PARAMS[studioBest] || MODEL_INFER_PARAMS.songgeneration_base;
+  const pack = (modelId, reason) => {
+    const params = MODEL_INFER_PARAMS[modelId] || MODEL_INFER_PARAMS.songgeneration_base;
     return {
-      modelId: studioBest,
-      reason: `auto · VRAM → ${studioBest}`,
+      modelId,
+      reason,
       params,
-      vramRequired: MODEL_VRAM[studioBest] || null,
+      vramRequired: MODEL_VRAM[modelId] || null,
       recommendedDownload: !readySet.has(catalog?.recommended)
         ? catalog?.recommended || null
         : null,
     };
+  };
+
+  if (preferredId && readySet.has(preferredId)) {
+    return pack(preferredId, `forcé · ${preferredId}`);
   }
 
-  // Fallback : meilleur rank parmi les ready (si Studio n’a pas renvoyé default)
+  // 3090 (24 Go) : le driver + OS mangent ~3–4 Go → free < 22 alors que Large tourne
+  const largeOkSoft =
+    readySet.has("songgeneration_large") &&
+    ((hasFree && freeGb >= 18) || (hasTotal && totalGb >= 22));
+  if (largeOkSoft) {
+    return pack("songgeneration_large", "auto · Large (carte 24 Go / soft VRAM)");
+  }
+
+  // Source de vérité Studio : modèle prêt + VRAM libre
+  const studioBest = String(catalog?.default || "").trim();
+  if (studioBest && readySet.has(studioBest)) {
+    return pack(studioBest, `auto · VRAM Studio → ${studioBest}`);
+  }
+
+  // Fallback : meilleur rank parmi les ready
   let best = null;
   let bestRank = -1;
   for (const id of readyIds) {
@@ -116,13 +147,20 @@ export function pickSongGenModel(catalog = {}) {
     }
   }
   const modelId = best || "songgeneration_base";
-  const params = MODEL_INFER_PARAMS[modelId] || MODEL_INFER_PARAMS.songgeneration_base;
+  return pack(modelId, `fallback · meilleur ready ${modelId}`);
+}
+
+function parseGpuFromHealth(health) {
+  const g = health?.gpu?.gpu || health?.gpu || null;
+  if (!g || typeof g !== "object") return { freeGb: null, totalGb: null, name: null };
+  const freeGb = Number(g.free_gb);
+  const totalGb = Number(g.total_gb);
   return {
-    modelId,
-    reason: `fallback · meilleur ready ${modelId}`,
-    params,
-    vramRequired: MODEL_VRAM[modelId] || null,
-    recommendedDownload: catalog?.recommended || null,
+    freeGb: Number.isFinite(freeGb) ? freeGb : null,
+    totalGb: Number.isFinite(totalGb) ? totalGb : null,
+    name: g.name ? String(g.name) : null,
+    usedGb:
+      Number.isFinite(Number(g.used_mb)) ? Math.round((Number(g.used_mb) / 1024) * 10) / 10 : null,
   };
 }
 
@@ -478,40 +516,358 @@ function shortTimbre(raw = "") {
   return t.split(/[;,]/)[0].trim().split(/\s+/).slice(0, 5).join(" ").slice(0, 48);
 }
 
+function findModelEntry(catalog, modelId) {
+  const list = Array.isArray(catalog?.models) ? catalog.models : [];
+  return list.find((m) => String(m?.id || "").trim() === modelId) || null;
+}
+
+/** Statut / progression d’un modèle Studio (ready, downloading, not_downloaded…). */
+function modelDownloadInfo(catalog, modelId) {
+  const entry = findModelEntry(catalog, modelId);
+  if (!entry) {
+    return {
+      id: modelId,
+      status: "unknown",
+      progress: null,
+      downloadedGb: null,
+      totalGb: null,
+      sizeGb: null,
+      etaSeconds: null,
+    };
+  }
+  return normalizeModelRow(entry, {});
+}
+
+function normalizeModelRow(entry, { pickedId = null, recommendedId = null } = {}) {
+  const id = String(entry?.id || "").trim();
+  const params = MODEL_INFER_PARAMS[id];
+  const progress =
+    typeof entry?.progress === "number"
+      ? entry.progress
+      : entry?.status === "ready"
+        ? 100
+        : null;
+  const sizeGb = typeof entry?.size_gb === "number" ? entry.size_gb : null;
+  const totalGb =
+    typeof entry?.total_gb === "number" ? entry.total_gb : sizeGb;
+  const status = String(entry?.status || "unknown");
+  return {
+    id,
+    name: String(entry?.name || params?.label || id),
+    description: String(entry?.description || ""),
+    status,
+    progress,
+    downloadedGb:
+      typeof entry?.downloaded_gb === "number" ? entry.downloaded_gb : null,
+    totalGb,
+    sizeGb,
+    etaSeconds: typeof entry?.eta_seconds === "number" ? entry.eta_seconds : null,
+    speedMbps: typeof entry?.speed_mbps === "number" ? entry.speed_mbps : null,
+    warmth: entry?.warmth || null,
+    vramRequired:
+      typeof entry?.vram_required === "number"
+        ? entry.vram_required
+        : MODEL_VRAM[id] || null,
+    rank: MODEL_RANK[id] || 0,
+    qualityLabel: params?.label || null,
+    isPicked: Boolean(pickedId && id === pickedId),
+    isRecommended: Boolean(recommendedId && id === recommendedId),
+    isLoaded: String(entry?.warmth || "") === "loaded",
+  };
+}
+
+/** Catalogue Studio normalisé pour l’UI SONOZZ. */
+export function normalizeSongGenCatalog(catalog = {}, pick = null) {
+  const pickedId = pick?.modelId || catalog?.default || null;
+  const recommendedId = catalog?.recommended || null;
+  const raw = Array.isArray(catalog?.models) ? catalog.models : [];
+  const models = raw
+    .map((m) => normalizeModelRow(m, { pickedId, recommendedId }))
+    .filter((m) => m.id)
+    .sort((a, b) => (b.rank || 0) - (a.rank || 0));
+  return {
+    models,
+    pickedModelId: pickedId,
+    recommendedModelId: recommendedId,
+    hasReadyModel: Boolean(catalog?.has_ready_model),
+  };
+}
+
+async function fetchSongGenModelsCatalog(base) {
+  return songGenFetch(base, "/api/models");
+}
+
+/**
+ * Déclenche le téléchargement d’un modèle sur SongGeneration Studio
+ * (POST /api/models/{id}/download — fond Hugging Face ~20 Go pour Large).
+ */
+export async function startSongGenModelDownload(
+  keys,
+  modelId = "songgeneration_large",
+) {
+  const base = resolveSongGenBaseUrl(keys);
+  const id = String(modelId || "songgeneration_large").trim();
+  if (!id) throw new Error("modelId manquant");
+
+  let catalog;
+  try {
+    catalog = await fetchSongGenModelsCatalog(base);
+  } catch {
+    catalog = null;
+  }
+  const info = catalog ? modelDownloadInfo(catalog, id) : null;
+  if (info?.status === "ready") {
+    return { ok: true, alreadyReady: true, base, modelId: id, model: info };
+  }
+  if (info?.status === "downloading") {
+    return { ok: true, alreadyDownloading: true, base, modelId: id, model: info };
+  }
+
+  let result;
+  try {
+    result = await songGenFetch(base, `/api/models/${encodeURIComponent(id)}/download`, {
+      method: "POST",
+    });
+  } catch (e) {
+    const msg = String(e?.message || e);
+    // Studio répond 400 si déjà en cours / déjà prêt — on renvoie un statut propre
+    if (/already downloading/i.test(msg)) {
+      let mid = info;
+      try {
+        mid = modelDownloadInfo(await fetchSongGenModelsCatalog(base), id);
+      } catch {
+        /* ignore */
+      }
+      return {
+        ok: true,
+        alreadyDownloading: true,
+        base,
+        modelId: id,
+        model: mid || { id, status: "downloading", progress: null },
+      };
+    }
+    if (/already downloaded|already ready/i.test(msg)) {
+      return {
+        ok: true,
+        alreadyReady: true,
+        base,
+        modelId: id,
+        model: { id, status: "ready", progress: 100 },
+      };
+    }
+    throw e;
+  }
+  let after = info;
+  try {
+    after = modelDownloadInfo(await fetchSongGenModelsCatalog(base), id);
+  } catch {
+    /* ignore */
+  }
+  return {
+    ok: true,
+    started: true,
+    base,
+    modelId: id,
+    model: after,
+    studio: result,
+  };
+}
+
+/** Annule un téléchargement en cours (DELETE /api/models/{id}/download). */
+export async function cancelSongGenModelDownload(keys, modelId) {
+  const base = resolveSongGenBaseUrl(keys);
+  const id = String(modelId || "").trim();
+  if (!id) throw new Error("modelId manquant");
+  const result = await songGenFetch(
+    base,
+    `/api/models/${encodeURIComponent(id)}/download`,
+    { method: "DELETE" },
+  );
+  return { ok: true, base, modelId: id, studio: result };
+}
+
+/** Supprime un modèle téléchargé du disque Studio (DELETE /api/models/{id}). */
+export async function deleteSongGenModel(keys, modelId) {
+  const base = resolveSongGenBaseUrl(keys);
+  const id = String(modelId || "").trim();
+  if (!id) throw new Error("modelId manquant");
+  const result = await songGenFetch(base, `/api/models/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  return { ok: true, base, modelId: id, studio: result };
+}
+
+/** Décharge le modèle actuellement en VRAM. */
+export async function unloadSongGenModel(keys) {
+  const base = resolveSongGenBaseUrl(keys);
+  const result = await songGenFetch(base, "/api/model-server/unload", { method: "POST" });
+  return { ok: true, base, studio: result };
+}
+
+/**
+ * Charge un modèle en VRAM.
+ * Hot-swap Studio casse souvent (« resolver eval already registered ») —
+ * on tente unload → load, puis stop/start du model-server en secours.
+ */
+export async function loadSongGenModel(keys, modelId) {
+  const base = resolveSongGenBaseUrl(keys);
+  const id = String(modelId || "").trim();
+  if (!id) throw new Error("modelId manquant");
+
+  const tryLoad = async () =>
+    songGenFetch(base, `/api/model-server/load/${encodeURIComponent(id)}`, {
+      method: "POST",
+    });
+
+  try {
+    await songGenFetch(base, "/api/model-server/unload", { method: "POST" });
+  } catch {
+    /* pas de modèle chargé */
+  }
+
+  try {
+    const result = await tryLoad();
+    return { ok: true, base, modelId: id, loaded: true, studio: result };
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (!/already registered|Failed to load model/i.test(msg)) throw e;
+
+    // Restart model-server puis reload
+    try {
+      await songGenFetch(base, "/api/model-server/stop", { method: "POST" });
+    } catch {
+      /* ignore */
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      await songGenFetch(base, "/api/model-server/start", { method: "POST" });
+    } catch (startErr) {
+      return {
+        ok: true,
+        base,
+        modelId: id,
+        loaded: false,
+        hotSwapIssue: true,
+        message:
+          "Impossible de relancer le model-server Studio. Stop/Start Pinokio, puis Retester.",
+        studioError: String(startErr?.message || startErr),
+      };
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const result = await tryLoad();
+      return {
+        ok: true,
+        base,
+        modelId: id,
+        loaded: true,
+        restartedServer: true,
+        studio: result,
+      };
+    } catch (e2) {
+      return {
+        ok: true,
+        base,
+        modelId: id,
+        loaded: false,
+        hotSwapIssue: true,
+        message:
+          "Studio n’a pas pu charger le modèle après restart. Stop/Start Pinokio, puis Retester.",
+        studioError: String(e2?.message || e2),
+      };
+    }
+  }
+}
+
 export async function testSongGeneration(keys) {
   const base = resolveSongGenBaseUrl(keys);
   const health = await songGenFetch(base, "/api/health");
+  const gpu = parseGpuFromHealth(health);
   let models;
   try {
-    models = await songGenFetch(base, "/api/models");
+    models = await fetchSongGenModelsCatalog(base);
   } catch {
     models = null;
   }
   const ready = Boolean(models?.has_ready_model);
-  if (models && !ready) {
-    throw new Error(
-      `Studio OK (${base}) mais aucun modèle prêt — laisse Pinokio finir le download (~15–20 Go).`,
-    );
-  }
-  const pick = models ? pickSongGenModel(models) : null;
-  const readyList = readyModelIds(models || {});
-  const needDownload =
-    models?.recommended && !readyList.includes(models.recommended)
-      ? models.recommended
+  const preferredId = String(keys?.songGenPreferredModel || "").trim() || null;
+  const pick =
+    models && ready
+      ? pickSongGenModel(models, {
+          preferredId,
+          freeGb: gpu.freeGb,
+          totalGb: gpu.totalGb,
+        })
       : null;
+  const readyList = readyModelIds(models || {});
+  const catalog = models
+    ? normalizeSongGenCatalog(models, pick)
+    : { models: [] };
+  const large =
+    catalog.models.find((m) => m.id === "songgeneration_large") ||
+    (models ? modelDownloadInfo(models, "songgeneration_large") : null);
+  const needDownload =
+    large && large.status !== "ready" && large.status !== "unknown"
+      ? "songgeneration_large"
+      : models?.recommended && !readyList.includes(models.recommended)
+        ? models.recommended
+        : null;
+
+  const vramBit =
+    gpu.freeGb != null && gpu.totalGb != null
+      ? ` · VRAM ${gpu.freeGb}/${gpu.totalGb} Go`
+      : "";
+
+  if (models && !ready) {
+    return {
+      base,
+      health,
+      gpu,
+      defaultModel: models?.default || null,
+      recommended: models?.recommended || null,
+      pickedModel: null,
+      pickReason: "aucun modèle prêt",
+      vramRequired: null,
+      readyModels: [],
+      qualityPreset: "auto",
+      hasReadyModel: false,
+      hasLarge: false,
+      recommendDownload: needDownload || models?.recommended || "songgeneration_large",
+      largeModel: large,
+      models: catalog.models,
+      preferredModel: preferredId,
+      message: `Studio OK${vramBit} — aucun modèle prêt. Télécharge Large (~20 Go).`,
+    };
+  }
+
+  const studioDefault = models?.default || null;
+  let message = `Joignable · ${pick?.reason || `auto ${pick?.modelId}`}${vramBit}`;
+  if (
+    large?.status === "ready" &&
+    pick?.modelId !== "songgeneration_large" &&
+    studioDefault !== "songgeneration_large"
+  ) {
+    message += " — clique Utiliser sur Large (Studio exige 22 Go libres)";
+  }
+
   return {
     base,
     health,
-    defaultModel: models?.default || null,
+    gpu,
+    defaultModel: studioDefault,
     recommended: models?.recommended || null,
-    pickedModel: pick?.modelId || models?.default || null,
+    pickedModel: pick?.modelId || studioDefault || null,
     pickReason: pick?.reason || null,
     vramRequired: pick?.vramRequired || null,
     readyModels: readyList,
     qualityPreset: pick?.params?.label || "auto",
     hasReadyModel: ready || models == null,
-    hasLarge: readyList.includes("songgeneration_large"),
+    hasLarge: readyList.includes("songgeneration_large") || large?.status === "ready",
     recommendDownload: needDownload,
+    largeModel: large,
+    models: catalog.models,
+    preferredModel: preferredId,
+    message,
   };
 }
 
@@ -641,14 +997,25 @@ export async function startSongGeneration(
 
   const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
 
-  // Modèle auto selon VRAM libre (Studio) + params d’inférence adaptés
+  // Modèle auto selon VRAM + préférence SONOZZ (Large soft sur 3090)
   let catalog = null;
+  let gpu = { freeGb: null, totalGb: null };
   try {
     catalog = await songGenFetch(base, "/api/models");
   } catch (e) {
     console.warn("[songgen] /api/models:", e.message);
   }
-  const pick = pickSongGenModel(catalog || {});
+  try {
+    const health = await songGenFetch(base, "/api/health");
+    gpu = parseGpuFromHealth(health);
+  } catch {
+    /* ignore */
+  }
+  const pick = pickSongGenModel(catalog || {}, {
+    preferredId: String(keys?.songGenPreferredModel || "").trim() || null,
+    freeGb: gpu.freeGb,
+    totalGb: gpu.totalGb,
+  });
   const modelId = pick.modelId;
   const infer = pick.params || MODEL_INFER_PARAMS.songgeneration_base;
 
@@ -760,7 +1127,15 @@ export async function pollSongGeneration(keys, generationId) {
     };
   }
   if (st === "failed" || st === "stopped") {
-    throw new Error(status?.message || `Génération SongGen ${st}`);
+    const raw = String(status?.message || `Génération SongGen ${st}`);
+    let hint = raw;
+    if (/resolver ['"]eval['"] is already registered/i.test(raw)) {
+      hint =
+        "SongGen n’a pas pu charger Large (bug hot-swap Studio). Dans Pinokio : Stop puis Start sur SongGeneration Studio, puis Retester et relance.";
+    } else if (/out of memory|CUDA|VRAM/i.test(raw)) {
+      hint = `VRAM insuffisante pour Large — ${raw}`;
+    }
+    throw new Error(hint);
   }
   return {
     done: false,

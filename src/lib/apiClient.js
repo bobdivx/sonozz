@@ -15,8 +15,30 @@ async function request(path, body = {}) {
   return data;
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const fail = () => {
+      const err = new Error("Génération audio annulée");
+      err.name = "AbortError";
+      reject(err);
+    };
+    if (signal?.aborted) {
+      fail();
+      return;
+    }
+    let iv;
+    const t = setTimeout(() => {
+      clearInterval(iv);
+      resolve();
+    }, ms);
+    iv = setInterval(() => {
+      if (signal?.aborted) {
+        clearTimeout(t);
+        clearInterval(iv);
+        fail();
+      }
+    }, 200);
+  });
 }
 
 function formatElapsed(sec) {
@@ -76,7 +98,7 @@ function formatTrackProgress(tick = {}) {
  * Start + poll court (évite Cloudflare 524 — gen audio 2–10 min).
  * @param {object} payload
  * @param {(p: { percent: number, message: string }) => void} [onProgress]
- * @param {{ signal?: AbortSignal }} [opts]
+ * @param {{ signal?: AbortSignal | { aborted?: boolean } }} [opts]
  */
 async function trackWithPoll(payload = {}, onProgress, opts = {}) {
   const signal = opts.signal;
@@ -95,6 +117,7 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     message: isPreview ? "Démarrage extrait audio…" : "Démarrage génération audio…",
   });
   const started = await request("/api/track", { ...payload, action: "start" });
+  throwIfAborted();
   if (!started?.pollNeeded) {
     const { pollNeeded: _p, musicKind: _m, generationId: _g, draft, ...rest } = started || {};
     if (draft && typeof draft === "object") return { ...draft, ...rest };
@@ -117,33 +140,45 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
   const maxPolls = started.musicKind === "songgen" ? (isPreview ? 200 : 400) : 180;
   const intervalMs = started.musicKind === "songgen" ? 3000 : 2500;
 
-  for (let i = 0; i < maxPolls; i++) {
-    throwIfAborted();
-    await sleep(intervalMs);
-    throwIfAborted();
-    const tick = await request("/api/track", {
-      action: "poll",
-      generationId: started.generationId,
-      musicKind: started.musicKind,
-      draft: started.draft,
-    });
-    if (tick?.done && tick.track) {
-      onProgress?.({
-        percent: 100,
-        message: isPreview || tick.track.isPreview ? "Extrait prêt" : "Audio prêt",
+  try {
+    for (let i = 0; i < maxPolls; i++) {
+      throwIfAborted();
+      await sleep(intervalMs, signal);
+      throwIfAborted();
+      const tick = await request("/api/track", {
+        action: "poll",
+        generationId: started.generationId,
+        musicKind: started.musicKind,
+        draft: started.draft,
       });
-      return tick.track;
+      if (tick?.done && tick.track) {
+        onProgress?.({
+          percent: 100,
+          message: isPreview || tick.track.isPreview ? "Extrait prêt" : "Audio prêt",
+        });
+        return tick.track;
+      }
+      onProgress?.(formatTrackProgress({ ...tick, musicKind: started.musicKind }));
     }
-    onProgress?.(formatTrackProgress({ ...tick, musicKind: started.musicKind }));
-  }
 
-      throw new Error(
-        started.musicKind === "songgen"
-          ? isPreview
-            ? "Timeout extrait SongGen — réessaie ou lance le complet."
-            : "Timeout SongGeneration Studio (~20 min) — modèle Large = plus long sur 3090."
-          : "Timeout MiniMax Replicate (~7 min).",
-      );
+    throw new Error(
+      started.musicKind === "songgen"
+        ? isPreview
+          ? "Timeout extrait SongGen — réessaie ou lance le complet."
+          : "Timeout SongGeneration Studio (~20 min) — modèle Large = plus long sur 3090."
+        : "Timeout MiniMax Replicate (~7 min).",
+    );
+  } catch (e) {
+    if (e?.name === "AbortError" && started?.generationId) {
+      // Best-effort : stoppe Replicate / marque l’arrêt côté serveur
+      void request("/api/track", {
+        action: "cancel",
+        generationId: started.generationId,
+        musicKind: started.musicKind,
+      }).catch(() => {});
+    }
+    throw e;
+  }
 }
 
 export const api = {
@@ -155,6 +190,20 @@ export const api = {
   albumPlan: (payload) => request("/api/album", { action: "plan", ...payload }),
   /** Ping SongGeneration Studio (URL des clés) — ne lance pas de génération. */
   probeSongGen: () => request("/api/track", { action: "probe-songgen" }),
+  /** Déclenche le download d’un modèle Studio (défaut : Large ~20 Go). */
+  downloadSongGenModel: (modelId = "songgeneration_large") =>
+    request("/api/track", { action: "download-songgen-model", modelId }),
+  /** Annule un download Studio en cours. */
+  cancelSongGenDownload: (modelId) =>
+    request("/api/track", { action: "cancel-songgen-download", modelId }),
+  /** Supprime un modèle Studio du disque. */
+  deleteSongGenModel: (modelId) =>
+    request("/api/track", { action: "delete-songgen-model", modelId }),
+  /** Charge un modèle en VRAM (décharge l’actuel). */
+  loadSongGenModel: (modelId) =>
+    request("/api/track", { action: "load-songgen-model", modelId }),
+  /** Décharge le modèle en VRAM. */
+  unloadSongGenModel: () => request("/api/track", { action: "unload-songgen-model" }),
   cover: (payload) => request("/api/cover", payload),
   spotify: (payload) => request("/api/spotify", payload),
   distrokid: (payload) => request("/api/distrokid", payload),

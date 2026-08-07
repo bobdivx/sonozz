@@ -17,6 +17,7 @@ import { loadKeys, saveKeysAsync, ensureKeysHydrated } from "../../lib/keys.js";
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
 import { api } from "../../lib/apiClient.js";
 import MusicArrangePanel from "../MusicArrangePanel.jsx";
+import SongGenModelsPanel from "../SongGenModelsPanel.jsx";
 import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import { normalizeMusicArrange, musicArrangeFromStyleLock, isDefaultMusicArrange } from "../../lib/musicArrange.js";
 import { confirmDeleteProject, isTrackAudioFinal } from "../../lib/studio.js";
@@ -38,6 +39,7 @@ export default function TracksStep({
   distrokid,
   onGenerate,
   onGeneratePreview,
+  onCancelGenerate,
   onAttachAudio,
   onAcceptTrackPreview,
   onRejectTrackPreview,
@@ -54,6 +56,12 @@ export default function TracksStep({
   const [keysHydrated, setKeysHydrated] = useState(false);
   const [probeStatus, setProbeStatus] = useState("idle"); // idle | checking | ok | error
   const [probeMessage, setProbeMessage] = useState("");
+  const [songGenModels, setSongGenModels] = useState([]);
+  const [pickedModelId, setPickedModelId] = useState(null);
+  const [preferredModelId, setPreferredModelId] = useState(null);
+  const [songGenGpu, setSongGenGpu] = useState(null);
+  const [modelBusyId, setModelBusyId] = useState(null);
+  const [modelActionError, setModelActionError] = useState("");
   const [audioUrlInput, setAudioUrlInput] = useState("");
   const [importError, setImportError] = useState("");
   const [onceReleaseId, setOnceReleaseId] = useState("");
@@ -78,6 +86,7 @@ export default function TracksStep({
   const onceFileRef = useRef(null);
   const probeSeq = useRef(0);
   const lastArrangeLockKey = useRef("");
+  const downloadPollRef = useRef(null);
 
   const hasSongGen = musicProvider === "songgen";
   const hasReplicate = musicProvider === "replicate" && hasReplicateToken;
@@ -152,25 +161,98 @@ export default function TracksStep({
     return { keys, provider };
   }
 
-  async function probeSongGen() {
+  function stopDownloadPoll() {
+    if (downloadPollRef.current) {
+      clearInterval(downloadPollRef.current);
+      downloadPollRef.current = null;
+    }
+  }
+
+  function applyProbeResult(res) {
+    if (res?.base) setSongGenUrl(String(res.base).replace(/\/+$/, ""));
+    if (Array.isArray(res?.models)) setSongGenModels(res.models);
+    if (res?.pickedModel) setPickedModelId(res.pickedModel);
+    else if (res?.defaultModel) setPickedModelId(res.defaultModel);
+    if (res?.preferredModel != null) setPreferredModelId(res.preferredModel || null);
+    if (res?.gpu) setSongGenGpu(res.gpu);
+    if (res?.ok) {
+      setProbeStatus("ok");
+      setProbeMessage(res.message || "Joignable");
+    } else {
+      setProbeStatus("error");
+      setProbeMessage(res?.message || "Injoignable");
+    }
+    return res;
+  }
+
+  function anyDownloading(models) {
+    return (models || []).some((m) => m?.status === "downloading");
+  }
+
+  function maybeStartDownloadPoll(models) {
+    stopDownloadPoll();
+    if (!anyDownloading(models)) return;
+    downloadPollRef.current = setInterval(() => {
+      void probeSongGen({ quiet: true });
+    }, 4000);
+  }
+
+  async function probeSongGen({ quiet = false } = {}) {
     const seq = ++probeSeq.current;
-    setProbeStatus("checking");
-    setProbeMessage("Vérification depuis le serveur Astro…");
+    if (!quiet) {
+      setProbeStatus("checking");
+      setProbeMessage("Vérification depuis le serveur Astro…");
+      setModelActionError("");
+    }
     try {
       const res = await api.probeSongGen();
       if (seq !== probeSeq.current) return;
-      if (res?.base) setSongGenUrl(String(res.base).replace(/\/+$/, ""));
-      if (res?.ok) {
-        setProbeStatus("ok");
-        setProbeMessage(res.message || "Joignable");
-      } else {
-        setProbeStatus("error");
-        setProbeMessage(res?.message || "Injoignable");
-      }
+      applyProbeResult(res);
+      const list = res?.models || [];
+      maybeStartDownloadPoll(list);
+      if (!anyDownloading(list)) setModelBusyId(null);
     } catch (e) {
       if (seq !== probeSeq.current) return;
       setProbeStatus("error");
       setProbeMessage(e.message || "Test impossible");
+      stopDownloadPoll();
+    }
+  }
+
+  async function runModelAction(modelId, action) {
+    if ((!modelId && action !== "unload") || modelBusyId || loading) return;
+    setModelBusyId(modelId || "__unload__");
+    setModelActionError("");
+    try {
+      let res;
+      if (action === "download") res = await api.downloadSongGenModel(modelId);
+      else if (action === "cancel") res = await api.cancelSongGenDownload(modelId);
+      else if (action === "delete") res = await api.deleteSongGenModel(modelId);
+      else if (action === "use") {
+        await ensureKeysHydrated();
+        const keys = loadKeys();
+        await saveKeysAsync({ ...keys, songGenPreferredModel: modelId });
+        setPreferredModelId(modelId);
+        res = await api.loadSongGenModel(modelId);
+        if (res?.hotSwapIssue && res?.message) {
+          setModelActionError(res.message);
+        }
+      } else throw new Error("Action inconnue");
+
+      if (!res?.ok) {
+        setModelActionError(res?.message || "Action impossible");
+        setModelBusyId(null);
+        return;
+      }
+      if (res.probe) applyProbeResult(res.probe);
+      else await probeSongGen({ quiet: true });
+      maybeStartDownloadPoll(res.probe?.models || songGenModels);
+      if (action !== "download" || res.alreadyReady) setModelBusyId(null);
+      else if (!anyDownloading(res.probe?.models || [])) setModelBusyId(null);
+    } catch (e) {
+      setModelActionError(e.message || "Action impossible");
+      setModelBusyId(null);
+      stopDownloadPoll();
     }
   }
 
@@ -185,10 +267,13 @@ export default function TracksStep({
       else {
         setProbeStatus("idle");
         setProbeMessage("");
+        setSongGenModels([]);
+        setPickedModelId(null);
       }
     })();
     return () => {
       cancelled = true;
+      stopDownloadPoll();
     };
   }, []);
 
@@ -394,10 +479,12 @@ export default function TracksStep({
   const isOnceOriginal = track?.provider === "once-original";
   const canGenerateAudio = hasSongGen || hasReplicate;
   const artistSlug = artist?.slug;
+  const songGenHasReady = songGenModels.some((m) => m.status === "ready");
   const genDisabled =
     loading ||
     !lyrics ||
     (hasSongGen && probeStatus === "error") ||
+    (hasSongGen && probeStatus === "ok" && songGenModels.length > 0 && !songGenHasReady) ||
     (hasSongGen && !voiceLabel);
   const onceDashboard =
     distrokid?.dashboardUrl ||
@@ -490,11 +577,26 @@ export default function TracksStep({
                 Ajuster l’URL
               </button>
             </div>
-            <p class="text-xs text-base-content/50">
-              Le ping part du serveur Astro (pas du navigateur). Sur une 3090 FE : télécharge{" "}
-              <strong>SongGeneration Large</strong> dans l’UI Studio (~20 Go) — c’est le seul modèle
-              local vraiment compétitif.
-            </p>
+            {probeStatus === "ok" && (
+              <SongGenModelsPanel
+                models={songGenModels}
+                pickedModelId={pickedModelId}
+                preferredModelId={preferredModelId}
+                gpu={songGenGpu}
+                busyId={modelBusyId}
+                disabled={loading || probeStatus === "checking"}
+                error={modelActionError}
+                onDownload={(id) => void runModelAction(id, "download")}
+                onCancelDownload={(id) => void runModelAction(id, "cancel")}
+                onDelete={(id) => void runModelAction(id, "delete")}
+                onUse={(id) => void runModelAction(id, "use")}
+              />
+            )}
+            {probeStatus !== "ok" && (
+              <p class="text-xs text-base-content/50">
+                Le ping part du serveur Astro (pas du navigateur).
+              </p>
+            )}
           </div>
         ) : hasReplicateToken ? (
           <p class="text-sm text-base-content/70">
@@ -662,6 +764,16 @@ export default function TracksStep({
               ? "Générer le morceau complet"
               : "Générer le brief (sans audio)"}
         </button>
+        {loading && onCancelGenerate ? (
+          <button
+            type="button"
+            class="btn btn-outline btn-error gap-2"
+            onClick={() => onCancelGenerate()}
+          >
+            <XCircle size={18} />
+            Annuler
+          </button>
+        ) : null}
       </div>
       {!loading && canGenerateAudio && (
         <p class="text-xs text-base-content/50">

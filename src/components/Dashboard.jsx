@@ -151,6 +151,8 @@ export default function Dashboard() {
   const albumLocalRunRef = useRef(false);
   const albumAbortRef = useRef(null);
   const albumWorkingRef = useRef(null);
+  /** Annulation génération étape (morceau / extrait). */
+  const stepAbortRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -340,6 +342,8 @@ export default function Dashboard() {
       window.location.href = "/parametres?section=ia";
       return;
     }
+    const abortState = { aborted: false };
+    stepAbortRef.current = abortState;
     setLoading(true);
     setStepProgress(null);
     setError("");
@@ -360,14 +364,17 @@ export default function Dashboard() {
     try {
       patchJob(stepJobId, { progress: 35, message: `Génération ${stepLabel}…` });
       const onProgress = (p) => {
-        if (!p) return;
+        if (!p || abortState.aborted) return;
         setStepProgress(p);
         patchJob(stepJobId, {
           progress: Math.max(8, Math.min(96, Number(p.percent) || 35)),
           message: p.message || `Génération ${stepLabel}…`,
         });
       };
-      let result = await fn(onProgress);
+      let result = await fn(onProgress, abortState);
+      if (abortState.aborted) {
+        throw Object.assign(new Error("Génération annulée"), { name: "AbortError" });
+      }
 
       // Persiste immédiatement l’audio Replicate sur S3 (sinon expire ~1 h)
       if (key === "track" && result?.audioUrl) {
@@ -432,14 +439,30 @@ export default function Dashboard() {
         message: isPreviewTrack ? "Extrait prêt — écoute le brouillon" : `${stepLabel} terminé`,
       });
     } catch (e) {
-      setError(e.message);
-      finishStepJob(stepJobId, {
-        ok: false,
-        message: e.message || `${stepLabel} en erreur`,
-      });
+      const wasAbort = e?.name === "AbortError" || abortState.aborted;
+      if (wasAbort) {
+        setError("");
+        finishStepJob(stepJobId, {
+          ok: false,
+          message: "Génération annulée",
+        });
+      } else {
+        setError(e.message);
+        finishStepJob(stepJobId, {
+          ok: false,
+          message: e.message || `${stepLabel} en erreur`,
+        });
+      }
     } finally {
+      stepAbortRef.current = null;
       setLoading(false);
       setStepProgress(null);
+    }
+  }
+
+  function cancelStepGeneration() {
+    if (stepAbortRef.current) {
+      stepAbortRef.current.aborted = true;
     }
   }
 
@@ -1502,6 +1525,15 @@ export default function Dashboard() {
               <p class="mt-1 text-xs text-base-content/55">{stepProgress.percent}%</p>
             )}
           </div>
+          {step === 4 ? (
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm shrink-0 text-error"
+              onClick={() => cancelStepGeneration()}
+            >
+              Annuler
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -1657,7 +1689,7 @@ export default function Dashboard() {
             }}
             onGeneratePreview={() =>
               runStep(
-                (onProgress) =>
+                (onProgress, signal) =>
                   api.track(
                     {
                       preview: true,
@@ -1668,6 +1700,7 @@ export default function Dashboard() {
                       },
                     },
                     onProgress,
+                    { signal },
                   ),
                 "track",
                 4,
@@ -1675,7 +1708,7 @@ export default function Dashboard() {
             }
             onGenerate={() =>
               runStep(
-                (onProgress) =>
+                (onProgress, signal) =>
                   api.track(
                     {
                       preview: false,
@@ -1686,15 +1719,17 @@ export default function Dashboard() {
                       },
                     },
                     onProgress,
+                    { signal },
                   ),
                 "track",
                 4,
               )
             }
+            onCancelGenerate={() => cancelStepGeneration()}
             onAcceptTrackPreview={() => {
               // Valider le style de l’extrait → lancer la gen complète (nouvelle génération)
               runStep(
-                (onProgress) =>
+                (onProgress, signal) =>
                   api.track(
                     {
                       preview: false,
@@ -1705,6 +1740,7 @@ export default function Dashboard() {
                       },
                     },
                     onProgress,
+                    { signal },
                   ),
                 "track",
                 4,

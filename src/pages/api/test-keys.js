@@ -167,9 +167,12 @@ export async function POST({ request }) {
       try {
         const { testSongGeneration } = await import("../../server/songGeneration.js");
         const info = await testSongGeneration(keys);
+        const modelBit = info.pickedModel || info.defaultModel || "";
         results.songgen = {
-          ok: true,
-          message: `Studio OK @ ${info.base}${info.defaultModel ? ` · ${info.defaultModel}` : ""}`,
+          ok: info.hasReadyModel !== false,
+          message: info.hasReadyModel === false
+            ? `Studio OK @ ${info.base} — aucun modèle prêt`
+            : `Studio OK @ ${info.base}${modelBit ? ` · ${modelBit}` : ""}`,
         };
       } catch (e) {
         results.songgen = { ok: false, message: e.message };

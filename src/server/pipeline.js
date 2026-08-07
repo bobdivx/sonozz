@@ -12,6 +12,7 @@ import {
   generateMusicWithReplicate,
   startMinimaxMusic,
   pollMinimaxMusic,
+  cancelMinimaxMusic,
 } from "./replicate.js";
 import {
   generateMusicWithSongGeneration,
@@ -1219,6 +1220,23 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
     warning: undefined,
   };
   return { done: true, track, generationId, musicKind: kind };
+}
+
+/** Annule une génération audio en cours (Replicate) — SongGen : poll arrêté côté client. */
+export async function cancelTrack({ keys, generationId, musicKind }) {
+  const kind = String(musicKind || "").trim();
+  const id = String(generationId || "").trim();
+  if (!id) return { ok: false, skipped: true };
+  if (kind === "replicate") {
+    const token = keys?.replicateApiToken?.trim();
+    if (!token) return { ok: false, skipped: true };
+    return cancelMinimaxMusic(token, id);
+  }
+  return {
+    ok: true,
+    skipped: true,
+    message: "Poll arrêté — SongGen peut finir en local",
+  };
 }
 
 /** Sync (pipeline A→Z). Pour l’UI étape Track, préférer startTrack + pollTrack. */

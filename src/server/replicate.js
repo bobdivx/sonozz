@@ -242,6 +242,16 @@ export async function pollMinimaxMusic(token, generationId) {
   return { done: false, status: data.status || "processing", generationId: id };
 }
 
+/** Annule une prediction Replicate en cours (best-effort). */
+export async function cancelMinimaxMusic(token, generationId) {
+  const id = String(generationId || "").trim();
+  if (!id) return { ok: false, skipped: true };
+  const { res, data } = await replicateJson(token, `/predictions/${id}/cancel`, {
+    method: "POST",
+  });
+  return { ok: res.ok || res.status === 404, status: data?.status || null };
+}
+
 /**
  * MiniMax Music 2.6 — chanson complète avec voix + paroles (2–4 min typique).
  */

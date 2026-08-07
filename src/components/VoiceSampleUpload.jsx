@@ -7,6 +7,7 @@ import {
   normalizeVoiceBlobToWav,
   validateVoiceFile,
 } from "../lib/voiceSample.js";
+import { playableAudioSrc } from "../lib/audioResolve.js";
 import { loadKeys } from "../lib/keys.js";
 
 /**
@@ -40,12 +41,6 @@ export default function VoiceSampleUpload({
       if (localPreview) URL.revokeObjectURL(localPreview);
     };
   }, []);
-
-  useEffect(() => {
-    if (value?.url && !localPreview) {
-      setLocalPreview(value.url);
-    }
-  }, [value?.url]);
 
   function stopRecorder() {
     if (timerRef.current) {
@@ -198,11 +193,10 @@ export default function VoiceSampleUpload({
   }
 
   const hasSample = Boolean(value?.url || value?.s3Key);
+  // Blob local juste après upload ; sinon proxy serveur (bucket Scaleway privé → 403 en URL directe)
   const previewSrc =
-    localPreview ||
-    (value?.s3Key
-      ? `/api/audio/stream?key=${encodeURIComponent(value.s3Key)}`
-      : value?.url) ||
+    (localPreview && localPreview.startsWith("blob:") ? localPreview : "") ||
+    playableAudioSrc(value?.url, value?.s3Key) ||
     "";
 
   return (

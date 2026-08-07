@@ -1,9 +1,56 @@
 import { json, error, readBody } from "../../server/http.js";
-import { runTrack, startTrack, pollTrack } from "../../server/pipeline.js";
+import { runTrack, startTrack, pollTrack, cancelTrack } from "../../server/pipeline.js";
 import {
+  cancelSongGenModelDownload,
+  deleteSongGenModel,
+  loadSongGenModel,
   resolveSongGenBaseUrl,
+  startSongGenModelDownload,
   testSongGeneration,
+  unloadSongGenModel,
 } from "../../server/songGeneration.js";
+
+function songGenProbePayload(info) {
+  const large = info.largeModel;
+  let message = info.message || "Joignable";
+  if (!info.message && large?.status === "downloading") {
+    const pct =
+      typeof large.progress === "number" ? ` · ${Math.round(large.progress)}%` : "";
+    message = `Joignable · téléchargement Large${pct}`;
+  }
+  return {
+    ok: true,
+    base: info.base,
+    defaultModel: info.defaultModel || null,
+    pickedModel: info.pickedModel || null,
+    pickReason: info.pickReason || null,
+    vramRequired: info.vramRequired || null,
+    readyModels: info.readyModels || [],
+    hasLarge: Boolean(info.hasLarge),
+    recommendDownload: info.recommendDownload || null,
+    largeModel: info.largeModel || null,
+    models: Array.isArray(info.models) ? info.models : [],
+    preferredModel: info.preferredModel || null,
+    gpu: info.gpu || null,
+    qualityPreset: info.qualityPreset || "auto",
+    hasReadyModel: info.hasReadyModel,
+    message,
+  };
+}
+
+async function withFreshProbe(keys, result) {
+  let probe = null;
+  try {
+    probe = songGenProbePayload(await testSongGeneration(keys));
+  } catch (e) {
+    probe = {
+      ok: false,
+      message: e.message || "Probe impossible",
+      models: [],
+    };
+  }
+  return { ok: true, ...result, probe };
+}
 
 export async function POST({ request }) {
   try {
@@ -14,32 +61,85 @@ export async function POST({ request }) {
       const base = resolveSongGenBaseUrl(body?.keys || {});
       try {
         const info = await testSongGeneration(body?.keys || {});
-        return json({
-          ok: true,
-          base: info.base,
-          defaultModel: info.defaultModel || null,
-          pickedModel: info.pickedModel || null,
-          pickReason: info.pickReason || null,
-          vramRequired: info.vramRequired || null,
-          readyModels: info.readyModels || [],
-          hasLarge: Boolean(info.hasLarge),
-          recommendDownload: info.recommendDownload || null,
-          qualityPreset: info.qualityPreset || "auto",
-          hasReadyModel: info.hasReadyModel,
-          message: (() => {
-            const model = info.pickedModel || info.defaultModel || "modèle";
-            const vram = info.vramRequired ? ` · ≥${info.vramRequired} Go` : "";
-            if (info.recommendDownload === "songgeneration_large" && !info.hasLarge) {
-              return `Joignable · auto ${model}${vram} — télécharge Large dans SongGen pour exploiter la 3090`;
-            }
-            return `Joignable · auto ${model}${vram}`;
-          })(),
-        });
+        return json(songGenProbePayload(info));
       } catch (e) {
         return json({
           ok: false,
           base,
+          models: [],
           message: e.message || "SongGeneration injoignable",
+        });
+      }
+    }
+
+    if (action === "download-songgen-model") {
+      const keys = body?.keys || {};
+      const modelId = String(body?.modelId || "songgeneration_large").trim();
+      try {
+        const started = await startSongGenModelDownload(keys, modelId);
+        return json(await withFreshProbe(keys, started));
+      } catch (e) {
+        return json({
+          ok: false,
+          message: e.message || "Téléchargement impossible",
+        });
+      }
+    }
+
+    if (action === "cancel-songgen-download") {
+      const keys = body?.keys || {};
+      const modelId = String(body?.modelId || "").trim();
+      if (!modelId) return error("modelId manquant", 400);
+      try {
+        const cancelled = await cancelSongGenModelDownload(keys, modelId);
+        return json(await withFreshProbe(keys, cancelled));
+      } catch (e) {
+        return json({
+          ok: false,
+          message: e.message || "Annulation impossible",
+        });
+      }
+    }
+
+    if (action === "delete-songgen-model") {
+      const keys = body?.keys || {};
+      const modelId = String(body?.modelId || "").trim();
+      if (!modelId) return error("modelId manquant", 400);
+      try {
+        const deleted = await deleteSongGenModel(keys, modelId);
+        return json(await withFreshProbe(keys, deleted));
+      } catch (e) {
+        return json({
+          ok: false,
+          message: e.message || "Suppression impossible",
+        });
+      }
+    }
+
+    if (action === "load-songgen-model") {
+      const keys = body?.keys || {};
+      const modelId = String(body?.modelId || "").trim();
+      if (!modelId) return error("modelId manquant", 400);
+      try {
+        const loaded = await loadSongGenModel(keys, modelId);
+        return json(await withFreshProbe(keys, loaded));
+      } catch (e) {
+        return json({
+          ok: false,
+          message: e.message || "Chargement VRAM impossible",
+        });
+      }
+    }
+
+    if (action === "unload-songgen-model") {
+      const keys = body?.keys || {};
+      try {
+        const unloaded = await unloadSongGenModel(keys);
+        return json(await withFreshProbe(keys, unloaded));
+      } catch (e) {
+        return json({
+          ok: false,
+          message: e.message || "Déchargement impossible",
         });
       }
     }
@@ -48,6 +148,12 @@ export async function POST({ request }) {
       if (!body?.generationId) return error("generationId manquant", 400);
       const data = await pollTrack(body);
       return json(data);
+    }
+
+    if (action === "cancel") {
+      if (!body?.generationId) return error("generationId manquant", 400);
+      const data = await cancelTrack(body);
+      return json({ ok: true, ...data });
     }
 
     if (action === "sync") {

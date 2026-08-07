@@ -331,6 +331,7 @@ export const EMPTY_KEYS = () => {
   base.ollamaModel = DEFAULT_OLLAMA_MODEL;
   base.musicProvider = "replicate";
   base.songGenBaseUrl = DEFAULT_SONGGEN_BASE;
+  base.songGenPreferredModel = "";
   base.videoProvider = "cloud";
   base.wan2gpBaseUrl = DEFAULT_WAN2GP_BASE;
   base.tiktokPrivacyLevel = "SELF_ONLY";
@@ -359,6 +360,15 @@ function migrateKeys(keys) {
   if (!next.songGenBaseUrl?.trim()) {
     next.songGenBaseUrl = DEFAULT_SONGGEN_BASE;
   }
+  const pref = String(next.songGenPreferredModel || "").trim();
+  next.songGenPreferredModel = [
+    "songgeneration_large",
+    "songgeneration_base_full",
+    "songgeneration_base_new",
+    "songgeneration_base",
+  ].includes(pref)
+    ? pref
+    : "";
   if (!next.videoProvider?.trim() || !["cloud", "wan2gp"].includes(next.videoProvider.trim())) {
     next.videoProvider = "cloud";
   }
