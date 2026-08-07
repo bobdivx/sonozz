@@ -1092,6 +1092,11 @@ export async function startTrack({ keys, lyrics, artist }) {
         provider: started.provider,
         bpm: bpmGuess,
         voiceGender: started.gender || vocal?.code,
+        songGenModel: started.model || null,
+        songGenQuality: started.quality || null,
+        note: started.model
+          ? `SongGen · ${started.model}${started.quality ? ` · ${started.quality}` : ""}`
+          : draft.note,
       },
     };
   }

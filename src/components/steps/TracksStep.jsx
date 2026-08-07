@@ -18,7 +18,9 @@ import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js"
 import { api } from "../../lib/apiClient.js";
 import MusicArrangePanel from "../MusicArrangePanel.jsx";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
-import { confirmDeleteProject } from "../../lib/studio.js";
+import { confirmDeleteProject, isTrackAudioFinal } from "../../lib/studio.js";
+
+const PREVIEW_SECONDS = 40;
 
 function songGenUrlFromKeys(keys) {
   return String(keys?.songGenBaseUrl || "")
@@ -37,6 +39,8 @@ export default function TracksStep({
   distrokid,
   onGenerate,
   onAttachAudio,
+  onAcceptTrackPreview,
+  onRejectTrackPreview,
   onOpenSettings,
   onMusicArrangeChange,
   onDeleteProject,
@@ -283,7 +287,9 @@ export default function TracksStep({
     }
   }
 
-  const audioReady = Boolean(track?.audioUrl);
+  const hasAudio = Boolean(track?.audioUrl);
+  const pendingReview = track?.status === "pending-review";
+  const audioReady = isTrackAudioFinal(track);
   const isOnceOriginal = track?.provider === "once-original";
   const canGenerateAudio = hasSongGen || hasReplicate;
   const artistSlug = artist?.slug;
@@ -308,7 +314,7 @@ export default function TracksStep({
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Créer les morceaux</h2>
         <p class="max-w-xl text-base-content/70">
           {hasSongGen
-            ? "SongGeneration Studio (LeVo local sur GPU) — voix + paroles, ~3–6 min."
+            ? "SongGeneration Studio local (LeVo) — sur RTX 3090, utilise le modèle Large (~8–15 min) pour se rapprocher d’une prod cloud."
             : "Replicate → MiniMax Music 2.6 (voix + paroles, ~2–4 min)."}
         </p>
       </header>
@@ -338,8 +344,8 @@ export default function TracksStep({
         </div>
         <p class="text-xs text-base-content/50">
           {hasSongGen
-            ? "SongGen (LeVo local) : plus rapide / offline, mais le mix est souvent moins riche que MiniMax. Pour une prod type streaming, passe sur MiniMax."
-            : "MiniMax Music 2.6 : meilleure qualité de prod (bande complète, voix). Coût Replicate par génération."}
+            ? "Local auto : SONOZZ lit la VRAM libre via SongGen et choisit le meilleur modèle prêt (Large sur 3090 si téléchargé et assez de mémoire)."
+            : "MiniMax Music 2.6 : meilleure qualité cloud. Coût Replicate par génération."}
         </p>
 
         {hasSongGen ? (
@@ -380,7 +386,9 @@ export default function TracksStep({
               </button>
             </div>
             <p class="text-xs text-base-content/50">
-              Le ping part du serveur Astro (pas du navigateur) — même chemin que la génération.
+              Le ping part du serveur Astro (pas du navigateur). Sur une 3090 FE : télécharge{" "}
+              <strong>SongGeneration Large</strong> dans l’UI Studio (~20 Go) — c’est le seul modèle
+              local vraiment compétitif.
             </p>
           </div>
         ) : hasReplicateToken ? (
@@ -512,17 +520,23 @@ export default function TracksStep({
       {track && (
         <div class="animate-rise space-y-4 border-t border-base-content/10 pt-5">
           <div class="flex flex-wrap items-center gap-3">
-            <Disc3 size={22} class={`text-primary ${audioReady ? "animate-pulse-soft" : ""}`} />
+            <Disc3 size={22} class={`text-primary ${hasAudio ? "animate-pulse-soft" : ""}`} />
             <div>
               <h3 class="font-display text-xl font-semibold">{track.title}</h3>
               <p class="text-sm text-base-content/60">
                 {track.artist} · {track.style} · {track.key} · {track.bpm} BPM · {track.duration} ·{" "}
                 {track.provider}
               </p>
-              <p class={`text-xs ${audioReady ? "text-success" : "text-warning"}`}>
-                {audioReady
-                  ? "Audio prêt ✓"
-                  : "Pas d’audio — importe un fichier ou configure SongGen / Replicate"}
+              <p
+                class={`text-xs ${
+                  pendingReview ? "text-warning" : audioReady ? "text-success" : "text-warning"
+                }`}
+              >
+                {pendingReview
+                  ? "Extrait à valider — écoute les 40 premières secondes"
+                  : audioReady
+                    ? "Audio prêt ✓"
+                    : "Pas d’audio — importe un fichier ou configure SongGen / Replicate"}
               </p>
             </div>
           </div>
@@ -564,7 +578,82 @@ export default function TracksStep({
             </button>
           )}
 
-          {audioReady ? (
+          {pendingReview && hasAudio ? (
+            <div class="space-y-4 border border-warning/40 bg-warning/10 p-4">
+              <div class="space-y-1">
+                <h4 class="font-display text-lg font-semibold text-warning">
+                  Écoute avant validation
+                </h4>
+                <p class="text-sm text-base-content/75">
+                  Tu entends le début du morceau <strong>définitif</strong> (même fichier). Si tu
+                  gardes, Cover / ONCE / clips utilisent exactement cet audio.
+                </p>
+              </div>
+              {(track.audioEphemeral || track.warning) && (
+                <div class="border border-warning/40 bg-base-100/40 p-3 text-sm text-warning">
+                  {track.warning ||
+                    "Ce lien audio est temporaire (Replicate ~1 h). Valide vite ou réimporte."}
+                </div>
+              )}
+              <audio
+                key={`preview-${track.audioS3Key || track.audioUrl}`}
+                controls
+                class="w-full"
+                src={playableAudioSrc(track.audioUrl, track.audioS3Key)}
+                preload="auto"
+                onTimeUpdate={(e) => {
+                  const el = e.currentTarget;
+                  if (el.currentTime >= PREVIEW_SECONDS) {
+                    el.pause();
+                    el.currentTime = PREVIEW_SECONDS;
+                  }
+                }}
+                onSeeked={(e) => {
+                  const el = e.currentTarget;
+                  if (el.currentTime > PREVIEW_SECONDS) {
+                    el.currentTime = PREVIEW_SECONDS;
+                  }
+                }}
+                onError={() => {
+                  setImportError(
+                    "Lecture impossible — clique « Re-sauver audio (S3) » puis réessaie.",
+                  );
+                }}
+              />
+              <p class="text-xs text-base-content/50">
+                Aperçu limité à {PREVIEW_SECONDS} s — le fichier complet est déjà généré.
+              </p>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="btn btn-primary gap-2"
+                  disabled={loading}
+                  onClick={() => onAcceptTrackPreview?.()}
+                >
+                  <CheckCircle2 size={16} />
+                  Garder ce morceau
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost gap-2 text-error"
+                  disabled={loading}
+                  onClick={() => {
+                    if (
+                      !confirm(
+                        "Rejeter cet extrait ? L’audio sera retiré du projet — tu pourras régénérer.",
+                      )
+                    ) {
+                      return;
+                    }
+                    onRejectTrackPreview?.();
+                  }}
+                >
+                  <XCircle size={16} />
+                  Rejeter et régénérer
+                </button>
+              </div>
+            </div>
+          ) : audioReady ? (
             <>
               {(track.audioEphemeral || track.warning) && (
                 <div class="border border-warning/40 bg-warning/10 p-3 text-sm text-warning">

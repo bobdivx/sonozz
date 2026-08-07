@@ -275,6 +275,7 @@ export async function listArtistReleases(slug, limit = 40) {
         json_extract(project_json, '$.lyrics.title') AS lyrics_title,
         json_extract(project_json, '$.lyrics.theme') AS lyrics_theme,
         json_extract(project_json, '$.track.audioUrl') AS audio_url,
+        json_extract(project_json, '$.track.status') AS track_status,
         json_extract(project_json, '$.cover.imageUrl') AS cover_url,
         json_extract(project_json, '$.distrokid.status') AS once_status,
         json_extract(project_json, '$.distrokid.provider') AS once_provider,
@@ -291,7 +292,8 @@ export async function listArtistReleases(slug, limit = 40) {
   });
 
   return res.rows.map((row) => {
-    const audioUrl = lightAssetUrl(row.audio_url);
+    const pendingReview = String(row.track_status || "") === "pending-review";
+    const audioUrl = pendingReview ? null : lightAssetUrl(row.audio_url);
     const coverUrl = lightAssetUrl(row.cover_url);
     const onceStatus = row.once_status || null;
     const hasLyrics = Boolean(row.lyrics_title || row.lyrics_theme);
@@ -303,7 +305,7 @@ export async function listArtistReleases(slug, limit = 40) {
         row.track_title || row.track_title_json || row.lyrics_title || null,
       status: row.status,
       slug: row.artist_slug || slug,
-      hasAudio: Boolean(row.audio_url),
+      hasAudio: Boolean(audioUrl),
       hasLyrics,
       hasCover: Boolean(row.cover_url),
       albumStatus: row.album_status || null,
@@ -342,12 +344,17 @@ export async function listLibraryTracks(limit = 200) {
         json_extract(project_json, '$.track.title') AS track_title_json,
         json_extract(project_json, '$.lyrics.title') AS lyrics_title,
         json_extract(project_json, '$.track.audioUrl') AS audio_url,
+        json_extract(project_json, '$.track.status') AS track_status,
         json_extract(project_json, '$.cover.imageUrl') AS cover_url,
         json_extract(project_json, '$.track.duration') AS duration,
         json_extract(project_json, '$.artist.imageUrl') AS artist_image
       FROM projects
       WHERE json_extract(project_json, '$.track.audioUrl') IS NOT NULL
         AND length(json_extract(project_json, '$.track.audioUrl')) > 8
+        AND (
+          json_extract(project_json, '$.track.status') IS NULL
+          OR json_extract(project_json, '$.track.status') != 'pending-review'
+        )
       ORDER BY updated_at DESC
       LIMIT ?
     `,
@@ -356,6 +363,7 @@ export async function listLibraryTracks(limit = 200) {
 
   return res.rows
     .map((row) => {
+      if (String(row.track_status || "") === "pending-review") return null;
       const audioUrl = lightAssetUrl(row.audio_url);
       if (!audioUrl) return null;
       const coverUrl = lightAssetUrl(row.cover_url);

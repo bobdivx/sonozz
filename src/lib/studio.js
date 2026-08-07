@@ -111,6 +111,12 @@ export function createAlbumTrackId() {
   return `at_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+/** Audio généré/importé et validé — utilisable pour Cover, ONCE, clips, catalogue. */
+export function isTrackAudioFinal(track) {
+  if (!track?.audioUrl) return false;
+  return String(track.status || "") !== "pending-review";
+}
+
 /** True si le projet / release a été soumis ou livré via ONCE. */
 export function isOncePublished(meta = {}) {
   if (!meta || typeof meta !== "object") return false;

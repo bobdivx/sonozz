@@ -10,11 +10,125 @@ import { musicArrangeToSongGen, normalizeMusicArrange } from "../lib/musicArrang
 
 const DEFAULT_BASE = "http://127.0.0.1:7860";
 const POLL_MS = 3000;
-const MAX_POLLS = 200; // ~10 min
+/** Large sur 3090 : facilement 10–20 min */
+const MAX_POLLS = 400;
+
+/** VRAM minimale indicative (Go) — aligné SongGeneration Studio. */
+const MODEL_VRAM = {
+  songgeneration_large: 22,
+  songgeneration_base_full: 12,
+  songgeneration_base_new: 10,
+  songgeneration_base: 10,
+};
+
+/** Plus le rank est haut, meilleure est la qualité. */
+const MODEL_RANK = {
+  songgeneration_large: 4,
+  songgeneration_base_full: 3,
+  songgeneration_base_new: 2,
+  songgeneration_base: 1,
+};
+
+/** Params d’inférence selon le modèle réellement choisi (matériel). */
+const MODEL_INFER_PARAMS = {
+  songgeneration_large: {
+    cfg_coef: 1.95,
+    temperature: 0.7,
+    top_k: 40,
+    top_p: 0.0,
+    extend_stride: 8,
+    label: "Large · qualité max",
+  },
+  songgeneration_base_full: {
+    cfg_coef: 1.75,
+    temperature: 0.78,
+    top_k: 45,
+    top_p: 0.0,
+    extend_stride: 6,
+    label: "Base Full · durée + mix",
+  },
+  songgeneration_base_new: {
+    cfg_coef: 1.6,
+    temperature: 0.82,
+    top_k: 50,
+    top_p: 0.0,
+    extend_stride: 5,
+    label: "Base New · rapide",
+  },
+  songgeneration_base: {
+    cfg_coef: 1.5,
+    temperature: 0.85,
+    top_k: 50,
+    top_p: 0.0,
+    extend_stride: 5,
+    label: "Base · rapide",
+  },
+};
 
 export function resolveSongGenBaseUrl(keys) {
   const raw = keys?.songGenBaseUrl?.trim() || DEFAULT_BASE;
   return raw.replace(/\/+$/, "");
+}
+
+function readyModelIds(catalog) {
+  const ready = Array.isArray(catalog?.ready_models)
+    ? catalog.ready_models
+    : Array.isArray(catalog?.models)
+      ? catalog.models.filter((m) => m?.status === "ready")
+      : [];
+  return ready.map((m) => String(m?.id || m || "").trim()).filter(Boolean);
+}
+
+/**
+ * Meilleur modèle prêt qui tient dans la VRAM actuelle.
+ * Fait confiance à Studio (`default` = get_best_ready_model), avec filet de sécurité.
+ *
+ * @param {{ models?: array, ready_models?: array, default?: string, recommended?: string }} catalog
+ * @returns {{ modelId: string, reason: string, params: object }}
+ */
+export function pickSongGenModel(catalog = {}) {
+  const readyIds = readyModelIds(catalog);
+  const readySet = new Set(readyIds);
+
+  // Source de vérité Studio : modèle prêt + VRAM libre
+  const studioBest = String(catalog?.default || "").trim();
+  if (studioBest && readySet.has(studioBest)) {
+    const params = MODEL_INFER_PARAMS[studioBest] || MODEL_INFER_PARAMS.songgeneration_base;
+    return {
+      modelId: studioBest,
+      reason: `auto · VRAM → ${studioBest}`,
+      params,
+      vramRequired: MODEL_VRAM[studioBest] || null,
+      recommendedDownload: !readySet.has(catalog?.recommended)
+        ? catalog?.recommended || null
+        : null,
+    };
+  }
+
+  // Fallback : meilleur rank parmi les ready (si Studio n’a pas renvoyé default)
+  let best = null;
+  let bestRank = -1;
+  for (const id of readyIds) {
+    const rank = MODEL_RANK[id] || 0;
+    if (rank > bestRank) {
+      bestRank = rank;
+      best = id;
+    }
+  }
+  const modelId = best || "songgeneration_base";
+  const params = MODEL_INFER_PARAMS[modelId] || MODEL_INFER_PARAMS.songgeneration_base;
+  return {
+    modelId,
+    reason: `fallback · meilleur ready ${modelId}`,
+    params,
+    vramRequired: MODEL_VRAM[modelId] || null,
+    recommendedDownload: catalog?.recommended || null,
+  };
+}
+
+/** @deprecated préférer pickSongGenModel(catalog) */
+export function resolveQualityPreset() {
+  return MODEL_INFER_PARAMS.songgeneration_large;
 }
 
 function errText(err) {
@@ -326,14 +440,28 @@ export async function testSongGeneration(keys) {
   const ready = Boolean(models?.has_ready_model);
   if (models && !ready) {
     throw new Error(
-      `Studio OK (${base}) mais aucun modèle prêt — laisse Pinokio finir le download (~15 Go).`,
+      `Studio OK (${base}) mais aucun modèle prêt — laisse Pinokio finir le download (~15–20 Go).`,
     );
   }
+  const pick = models ? pickSongGenModel(models) : null;
+  const readyList = readyModelIds(models || {});
+  const needDownload =
+    models?.recommended && !readyList.includes(models.recommended)
+      ? models.recommended
+      : null;
   return {
     base,
     health,
     defaultModel: models?.default || null,
+    recommended: models?.recommended || null,
+    pickedModel: pick?.modelId || models?.default || null,
+    pickReason: pick?.reason || null,
+    vramRequired: pick?.vramRequired || null,
+    readyModels: readyList,
+    qualityPreset: pick?.params?.label || "auto",
     hasReadyModel: ready || models == null,
+    hasLarge: readyList.includes("songgeneration_large"),
+    recommendDownload: needDownload,
   };
 }
 
@@ -462,6 +590,18 @@ export async function startSongGeneration(
     .slice(0, 480);
 
   const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
+
+  // Modèle auto selon VRAM libre (Studio) + params d’inférence adaptés
+  let catalog = null;
+  try {
+    catalog = await songGenFetch(base, "/api/models");
+  } catch (e) {
+    console.warn("[songgen] /api/models:", e.message);
+  }
+  const pick = pickSongGenModel(catalog || {});
+  const modelId = pick.modelId;
+  const infer = pick.params || MODEL_INFER_PARAMS.songgeneration_base;
+
   const body = {
     title: String(title || "SONOZZ Track").slice(0, 120),
     sections,
@@ -480,6 +620,12 @@ export async function startSongGeneration(
     ),
     output_mode: "mixed",
     memory_mode: "auto",
+    model: modelId,
+    cfg_coef: infer.cfg_coef,
+    temperature: infer.temperature,
+    top_k: infer.top_k,
+    top_p: infer.top_p,
+    extend_stride: infer.extend_stride,
   };
 
   console.info(
@@ -488,6 +634,11 @@ export async function startSongGeneration(
     body.title,
     sections.length,
     "sections",
+    `model=${body.model}`,
+    `pick=${pick.reason}`,
+    `vram≥${pick.vramRequired || "?"}Go`,
+    `cfg=${body.cfg_coef}`,
+    `temp=${body.temperature}`,
     `gender=${body.gender}`,
     `genre=${body.genre}`,
     `choir=${fromArrange.choir || "none"}`,
@@ -504,6 +655,9 @@ export async function startSongGeneration(
     provider: "songgeneration-studio",
     base,
     gender: body.gender,
+    model: modelId,
+    quality: infer.label,
+    pickReason: pick.reason,
     referenceAudioId: null,
     personalTimbre: cachedTimbre || null,
     guideMode: "timbre",
@@ -609,7 +763,9 @@ export async function generateMusicWithSongGeneration(
     }
   }
 
-  throw new Error("Timeout SongGeneration Studio (~10 min) — vérifie GPU / Pinokio sur Demeter.");
+  throw new Error(
+    "Timeout SongGeneration Studio (~20 min) — modèle Large = plus long. Vérifie GPU / Pinokio.",
+  );
 }
 
 export function isSongGenMusicProvider(keys) {

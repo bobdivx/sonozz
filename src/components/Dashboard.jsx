@@ -28,7 +28,16 @@ import SocialStep from "./steps/SocialStep.jsx";
 import HistoryPanel from "./HistoryPanel.jsx";
 import AppShell from "./AppShell.jsx";
 import ClipTrackPlayer from "./ClipTrackPlayer.jsx";
-import { STEPS, emptyProject, MUSIC_STYLES, MUSIC_LANGUAGES, formatGenres, createAlbumId, createAlbumTrackId } from "../lib/studio.js";
+import {
+  STEPS,
+  emptyProject,
+  MUSIC_STYLES,
+  MUSIC_LANGUAGES,
+  formatGenres,
+  createAlbumId,
+  createAlbumTrackId,
+  isTrackAudioFinal,
+} from "../lib/studio.js";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
@@ -256,7 +265,7 @@ export default function Dashboard() {
     1: Boolean(project.track || project.distrokid),
     2: Boolean(project.artist),
     3: Boolean(project.lyrics),
-    4: Boolean(project.track),
+    4: isTrackAudioFinal(project.track),
     5: Boolean(project.cover),
     6: Boolean(project.distrokid),
     7: Boolean(
@@ -386,6 +395,8 @@ export default function Dashboard() {
               "Audio non persisté (expire ~1 h) — configure S3 ou réimporte bientôt.",
           };
         }
+        // Gate Studio : même fichier, validation humaine avant audio-ready
+        result = { ...result, status: "pending-review" };
       }
 
       patchJob(stepJobId, { progress: 88, message: "Sauvegarde projet…" });
@@ -395,11 +406,17 @@ export default function Dashboard() {
       await persist(next, {
         stepKey: key,
         eventType: "step",
-        message: `Étape ${stepLabel} générée`,
+        message:
+          key === "track" && result?.status === "pending-review"
+            ? "Extrait prêt — écoute et valide"
+            : `Étape ${stepLabel} générée`,
       });
       finishStepJob(stepJobId, {
         ok: true,
-        message: `${stepLabel} terminé`,
+        message:
+          key === "track" && result?.status === "pending-review"
+            ? "Extrait prêt — écoute et valide"
+            : `${stepLabel} terminé`,
       });
     } catch (e) {
       setError(e.message);
@@ -541,8 +558,12 @@ export default function Dashboard() {
       window.location.href = "/parametres?section=ia";
       return;
     }
-    if (!project.track?.audioUrl) {
-      setError("Valide d’abord le single lead (audio prêt) avant de lancer l’album.");
+    if (!isTrackAudioFinal(project.track)) {
+      setError(
+        project.track?.status === "pending-review"
+          ? "Valide d’abord l’extrait du single lead (étape Morceaux) avant de lancer l’album."
+          : "Valide d’abord le single lead (audio prêt) avant de lancer l’album.",
+      );
       return;
     }
     if (!project.artist || !project.lyrics) {
@@ -1168,7 +1189,7 @@ export default function Dashboard() {
           </div>
 
           <div class="animate-rise min-w-0 space-y-3">
-            {project.track?.audioUrl ? (
+            {isTrackAudioFinal(project.track) ? (
               <ClipTrackPlayer
                 track={project.track}
                 artist={project.artist}
@@ -1179,7 +1200,7 @@ export default function Dashboard() {
             {showHomePipeline && (
               <p
                 class={`max-w-md text-base-content/70 ${
-                  project.track?.audioUrl ? "text-sm" : "text-base md:text-lg"
+                  isTrackAudioFinal(project.track) ? "text-sm" : "text-base md:text-lg"
                 }`}
               >
                 Pipeline A→Z : Deezer + Gemini + ONCE → Spotify + clip + réseaux.
@@ -1467,7 +1488,14 @@ export default function Dashboard() {
             <button
               key={s.id}
               type="button"
-              onClick={() => setStep(s.id)}
+              onClick={() => {
+                if (s.id > 4 && project.track?.status === "pending-review") {
+                  setStep(4);
+                  setError("Valide d’abord l’extrait du morceau avant de continuer.");
+                  return;
+                }
+                setStep(s.id);
+              }}
               class={`group flex min-w-[7.5rem] flex-col gap-1 border px-3 py-3 text-left transition-all duration-300 ${
                 active
                   ? "border-primary bg-primary/10"
@@ -1583,6 +1611,56 @@ export default function Dashboard() {
                 4,
               )
             }
+            onAcceptTrackPreview={() => {
+              setError("");
+              setProject((prev) => {
+                if (!prev.track?.audioUrl) return prev;
+                const next = {
+                  ...prev,
+                  track: {
+                    ...prev.track,
+                    status: "audio-ready",
+                    note: prev.track.note
+                      ? String(prev.track.note).includes("validé")
+                        ? prev.track.note
+                        : `${prev.track.note} · validé`
+                      : "Audio validé",
+                  },
+                };
+                persist(next, {
+                  stepKey: "track",
+                  eventType: "track-accept",
+                  message: "Morceau validé",
+                });
+                return next;
+              });
+            }}
+            onRejectTrackPreview={() => {
+              setError("");
+              setProject((prev) => {
+                if (!prev.track) return prev;
+                const next = {
+                  ...prev,
+                  track: {
+                    ...prev.track,
+                    audioUrl: null,
+                    audioS3Key: undefined,
+                    audioEphemeral: false,
+                    waveform: [],
+                    status: "prompt-ready",
+                    warning: undefined,
+                    note: "Extrait rejeté — relance une génération.",
+                    assetMissingReason: undefined,
+                  },
+                };
+                persist(next, {
+                  stepKey: "track",
+                  eventType: "track-reject",
+                  message: "Extrait rejeté",
+                });
+                return next;
+              });
+            }}
             onAttachAudio={(audioUrl, meta = {}) => {
               setError("");
               setProject((prev) => {
@@ -1636,13 +1714,22 @@ export default function Dashboard() {
             artist={project.artist}
             track={project.track}
             loading={loading}
-            onGenerate={(payload) =>
-              runStep(
+            onGenerate={(payload) => {
+              if (!isTrackAudioFinal(project.track)) {
+                setStep(4);
+                setError(
+                  project.track?.status === "pending-review"
+                    ? "Valide d’abord l’extrait du morceau (étape 4) avant la jaquette."
+                    : "Crée d'abord le morceau audio (étape 4) avant la jaquette.",
+                );
+                return;
+              }
+              return runStep(
                 () => api.cover({ ...payload, artist: project.artist, track: project.track }),
                 "cover",
                 5,
-              )
-            }
+              );
+            }}
           />
         )}
         {step === 6 && (
@@ -1657,8 +1744,17 @@ export default function Dashboard() {
               window.location.href = "/parametres?section=distribution";
             }}
             onGoToCover={() => setStep(5)}
-            onPrepare={() =>
-              runStep(
+            onPrepare={() => {
+              if (!isTrackAudioFinal(project.track)) {
+                setStep(4);
+                setError(
+                  project.track?.status === "pending-review"
+                    ? "Valide d’abord l’extrait du morceau (étape 4) avant ONCE."
+                    : "Crée d'abord le morceau audio (étape 4) avant ONCE.",
+                );
+                return;
+              }
+              return runStep(
                 () =>
                   api.distrokid({
                     artist: project.artist,
@@ -1681,10 +1777,19 @@ export default function Dashboard() {
                   }),
                 "distrokid",
                 6,
-              )
-            }
-            onReuse={() =>
-              runStep(
+              );
+            }}
+            onReuse={() => {
+              if (!isTrackAudioFinal(project.track)) {
+                setStep(4);
+                setError(
+                  project.track?.status === "pending-review"
+                    ? "Valide d’abord l’extrait du morceau (étape 4) avant ONCE."
+                    : "Crée d'abord le morceau audio (étape 4) avant ONCE.",
+                );
+                return;
+              }
+              return runStep(
                 () =>
                   api.distrokid({
                     artist: project.artist,
@@ -1708,8 +1813,8 @@ export default function Dashboard() {
                   }),
                 "distrokid",
                 6,
-              )
-            }
+              );
+            }}
           />
         )}
         {step === 7 && (
@@ -1748,9 +1853,13 @@ export default function Dashboard() {
               });
             }}
             onGeneratePack={() => {
-              if (!project.track?.audioUrl) {
+              if (!isTrackAudioFinal(project.track)) {
                 setStep(4);
-                setError("Crée d'abord le morceau audio (étape 4) avant le clip.");
+                setError(
+                  project.track?.status === "pending-review"
+                    ? "Valide d’abord l’extrait du morceau (étape 4) avant le clip."
+                    : "Crée d'abord le morceau audio (étape 4) avant le clip.",
+                );
                 return;
               }
               return runStep(
@@ -1841,9 +1950,13 @@ export default function Dashboard() {
               });
             }}
             onGenerate={() => {
-              if (!project.track?.audioUrl) {
+              if (!isTrackAudioFinal(project.track)) {
                 setStep(4);
-                setError("Crée d'abord le morceau audio (étape 4).");
+                setError(
+                  project.track?.status === "pending-review"
+                    ? "Valide d’abord l’extrait du morceau (étape 4)."
+                    : "Crée d'abord le morceau audio (étape 4).",
+                );
                 return;
               }
               return runStep(
@@ -1886,7 +1999,13 @@ export default function Dashboard() {
             type="button"
             class="btn btn-primary btn-sm gap-1"
             disabled={step >= STEPS.length}
-            onClick={() => setStep((s) => Math.min(STEPS.length, s + 1))}
+            onClick={() => {
+              if (step === 4 && project.track?.status === "pending-review") {
+                setError("Valide d’abord l’extrait du morceau avant de continuer.");
+                return;
+              }
+              setStep((s) => Math.min(STEPS.length, s + 1));
+            }}
           >
             Étape suivante <ChevronRight size={16} />
           </button>

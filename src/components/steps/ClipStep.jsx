@@ -81,7 +81,8 @@ function probeVideoDuration(blob) {
 }
 
 function hasAudio(track) {
-  return Boolean(track?.audioUrl);
+  if (!track?.audioUrl) return false;
+  return String(track.status || "") !== "pending-review";
 }
 
 function isEphemeralHttp(url = "") {

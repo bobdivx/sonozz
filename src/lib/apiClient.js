@@ -106,7 +106,7 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     musicKind: started.musicKind,
   });
 
-  const maxPolls = started.musicKind === "songgen" ? 220 : 180;
+  const maxPolls = started.musicKind === "songgen" ? 400 : 180;
   const intervalMs = started.musicKind === "songgen" ? 3000 : 2500;
 
   for (let i = 0; i < maxPolls; i++) {
@@ -126,11 +126,11 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     onProgress?.(formatTrackProgress({ ...tick, musicKind: started.musicKind }));
   }
 
-  throw new Error(
-    started.musicKind === "songgen"
-      ? "Timeout SongGeneration Studio (~10 min) — vérifie GPU / Pinokio."
-      : "Timeout MiniMax Replicate (~7 min).",
-  );
+      throw new Error(
+        started.musicKind === "songgen"
+          ? "Timeout SongGeneration Studio (~20 min) — modèle Large = plus long sur 3090."
+          : "Timeout MiniMax Replicate (~7 min).",
+      );
 }
 
 export const api = {

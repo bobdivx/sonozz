@@ -18,10 +18,22 @@ export async function POST({ request }) {
           ok: true,
           base: info.base,
           defaultModel: info.defaultModel || null,
+          pickedModel: info.pickedModel || null,
+          pickReason: info.pickReason || null,
+          vramRequired: info.vramRequired || null,
+          readyModels: info.readyModels || [],
+          hasLarge: Boolean(info.hasLarge),
+          recommendDownload: info.recommendDownload || null,
+          qualityPreset: info.qualityPreset || "auto",
           hasReadyModel: info.hasReadyModel,
-          message: info.hasReadyModel
-            ? `Joignable · ${info.defaultModel || "modèle prêt"}`
-            : `Joignable @ ${info.base} — modèle encore en chargement`,
+          message: (() => {
+            const model = info.pickedModel || info.defaultModel || "modèle";
+            const vram = info.vramRequired ? ` · ≥${info.vramRequired} Go` : "";
+            if (info.recommendDownload === "songgeneration_large" && !info.hasLarge) {
+              return `Joignable · auto ${model}${vram} — télécharge Large dans SongGen pour exploiter la 3090`;
+            }
+            return `Joignable · auto ${model}${vram}`;
+          })(),
         });
       } catch (e) {
         return json({

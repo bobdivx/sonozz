@@ -98,7 +98,7 @@ function summarize(project = {}, seed = {}) {
   else if (project.social) status = "shorts";
   else if (project.distrokid) status = "distribution";
   else if (project.cover) status = "cover";
-  else if (project.track?.audioUrl) status = "audio";
+  else if (project.track?.audioUrl && project.track?.status !== "pending-review") status = "audio";
   else if (project.track) status = "track";
   else if (project.lyrics) status = "lyrics";
   else if (project.artist) status = "artist";

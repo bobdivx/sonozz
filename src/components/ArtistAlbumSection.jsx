@@ -4,7 +4,7 @@ import AlbumAutonomePanel from "./AlbumAutonomePanel.jsx";
 import { api } from "../lib/apiClient.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
 import { keysReady, loadKeys } from "../lib/keys.js";
-import { createAlbumId, createAlbumTrackId, emptyProject } from "../lib/studio.js";
+import { createAlbumId, createAlbumTrackId, emptyProject, isTrackAudioFinal } from "../lib/studio.js";
 import { patchJob } from "../lib/jobStore.js";
 import { finishStepJob, trackStepJob } from "../lib/jobRunner.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
@@ -218,8 +218,12 @@ export default function ArtistAlbumSection({ slug, releases = [] }) {
       setError("Configure d’abord un LLM (Gemini ou Ollama) dans Paramètres.");
       return;
     }
-    if (!project?.track?.audioUrl) {
-      setError("Le lead doit avoir un audio prêt.");
+    if (!isTrackAudioFinal(project?.track)) {
+      setError(
+        project?.track?.status === "pending-review"
+          ? "Valide d’abord l’extrait du lead dans le Studio (étape Morceaux)."
+          : "Le lead doit avoir un audio prêt.",
+      );
       return;
     }
     if (!project.artist || !project.lyrics) {
@@ -677,7 +681,7 @@ export default function ArtistAlbumSection({ slug, releases = [] }) {
           albumSize={albumSize}
           onAlbumSizeChange={setAlbumSize}
           loading={loading}
-          canGenerate={canGenerateAudio && Boolean(project.track?.audioUrl && project.lyrics)}
+          canGenerate={canGenerateAudio && isTrackAudioFinal(project.track) && Boolean(project.lyrics)}
           progress={progress}
           leadTitle={leadTitle}
           onGenerate={runAlbumGeneration}
