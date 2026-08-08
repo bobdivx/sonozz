@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
+import { createPortal } from "preact/compat";
 import {
   AudioLines,
   Disc3,
@@ -38,9 +39,9 @@ function songGenUrlFromKeys(keys) {
 }
 
 function StepModal({ open, title, onClose, children, wide = false }) {
-  if (!open) return null;
-  return (
-    <dialog class="modal modal-open" open>
+  if (!open || typeof document === "undefined") return null;
+  return createPortal(
+    <dialog class="modal modal-open z-[100]" open>
       <div class={`modal-box ${wide ? "max-w-3xl" : "max-w-xl"}`}>
         <div class="mb-4 flex items-start justify-between gap-3">
           <h3 class="font-display text-lg font-semibold leading-snug">{title}</h3>
@@ -65,7 +66,8 @@ function StepModal({ open, title, onClose, children, wide = false }) {
       >
         <button type="submit">close</button>
       </form>
-    </dialog>
+    </dialog>,
+    document.body,
   );
 }
 
