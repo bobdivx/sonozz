@@ -22,6 +22,7 @@ export default function MusicArrangePanel({
   value,
   inferred = null,
   disabled = false,
+  embedded = false,
   onChange,
   onApplyInferred,
 }) {
@@ -60,32 +61,62 @@ export default function MusicArrangePanel({
   }
 
   return (
-    <div class="space-y-4 border border-base-content/10 bg-base-200/30 p-4">
-      <div class="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 class="text-sm font-medium text-base-content/80">Arrangement du morceau</h3>
-          <p class="mt-1 text-xs text-base-content/45">
-            Pré-rempli depuis la référence (artiste / titre). Ajuste seulement pour forcer.
-          </p>
+    <div
+      class={
+        embedded
+          ? "space-y-4"
+          : "space-y-4 border border-base-content/10 bg-base-200/30 p-4"
+      }
+    >
+      {!embedded ? (
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-medium text-base-content/80">Arrangement du morceau</h3>
+            <p class="mt-1 text-xs text-base-content/45">
+              Pré-rempli depuis la référence (artiste / titre). Ajuste seulement pour forcer.
+            </p>
+            {ref ? (
+              <p class="mt-1 text-[11px] text-base-content/45">
+                <span class="text-info">Bleu = référence</span>
+                {" · "}
+                <span class="text-primary">Jaune = forçage manuel</span>
+              </p>
+            ) : null}
+          </div>
+          {ref && onApplyInferred ? (
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs"
+              disabled={disabled}
+              onClick={() => onApplyInferred()}
+            >
+              Réappliquer la réf.
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div class="flex flex-wrap items-center justify-between gap-2">
           {ref ? (
-            <p class="mt-1 text-[11px] text-base-content/45">
+            <p class="text-[11px] text-base-content/45">
               <span class="text-info">Bleu = référence</span>
               {" · "}
               <span class="text-primary">Jaune = forçage manuel</span>
             </p>
+          ) : (
+            <span />
+          )}
+          {ref && onApplyInferred ? (
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs"
+              disabled={disabled}
+              onClick={() => onApplyInferred()}
+            >
+              Réappliquer la réf.
+            </button>
           ) : null}
         </div>
-        {ref && onApplyInferred ? (
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs"
-            disabled={disabled}
-            onClick={() => onApplyInferred()}
-          >
-            Réappliquer la réf.
-          </button>
-        ) : null}
-      </div>
+      )}
 
       <label class="form-control w-full">
         <span class="label-text mb-1 text-xs text-base-content/55">Instrument principal</span>

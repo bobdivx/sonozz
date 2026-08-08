@@ -1,6 +1,11 @@
 import { isS3Configured, downloadClipBuffer } from "./s3.js";
 import { listenVoiceTimbreFromBytes } from "./musicListen.js";
-import { musicArrangeToSongGen, normalizeMusicArrange } from "../lib/musicArrange.js";
+import {
+  musicArrangeToSongGen,
+  normalizeMusicArrange,
+  musicArrangeFromStyleLock,
+  isDefaultMusicArrange,
+} from "../lib/musicArrange.js";
 
 /**
  * Client SongGeneration Studio (Pinokio / Demeter).
@@ -48,17 +53,17 @@ const MODEL_INFER_PARAMS = {
     label: "Base Full · durée + mix",
   },
   songgeneration_base_new: {
-    cfg_coef: 1.6,
-    temperature: 0.82,
-    top_k: 50,
+    cfg_coef: 1.7,
+    temperature: 0.78,
+    top_k: 45,
     top_p: 0.0,
     extend_stride: 5,
     label: "Base New · rapide",
   },
   songgeneration_base: {
-    cfg_coef: 1.5,
-    temperature: 0.85,
-    top_k: 50,
+    cfg_coef: 1.65,
+    temperature: 0.8,
+    top_k: 45,
     top_p: 0.0,
     extend_stride: 5,
     label: "Base · rapide",
@@ -343,10 +348,12 @@ export function lyricsToSections(lyricsText = "") {
 
   if (!text) {
     return [
-      { type: "intro", lyrics: null },
+      { type: "intro-medium", lyrics: null },
       { type: "verse", lyrics: "la la la" },
       { type: "chorus", lyrics: "oh oh oh" },
-      { type: "outro", lyrics: null },
+      { type: "verse", lyrics: "la la la" },
+      { type: "chorus", lyrics: "oh oh oh" },
+      { type: "outro-medium", lyrics: null },
     ];
   }
 
@@ -354,10 +361,12 @@ export function lyricsToSections(lyricsText = "") {
   const tags = [...text.matchAll(tagRe)];
   if (!tags.length) {
     return [
-      { type: "intro", lyrics: null },
+      { type: "intro-medium", lyrics: null },
       { type: "verse", lyrics: text.slice(0, 800) },
       { type: "chorus", lyrics: text.slice(0, 400) },
-      { type: "outro", lyrics: null },
+      { type: "verse", lyrics: text.slice(0, 600) },
+      { type: "chorus", lyrics: text.slice(0, 400) },
+      { type: "outro-medium", lyrics: null },
     ];
   }
 
@@ -368,20 +377,32 @@ export function lyricsToSections(lyricsText = "") {
     const end = i + 1 < tags.length ? tags[i + 1].index : text.length;
     const body = text.slice(start, end).trim();
 
+    // LeVo : intro/outro/inst en -medium → arrangement plus riche qu’un tag nu
     let type = "verse";
-    if (/^intro/.test(rawType)) type = "intro";
-    else if (/^outro/.test(rawType)) type = "outro";
-    else if (/^chorus|refrain/.test(rawType)) type = "chorus";
+    if (/^intro/.test(rawType)) {
+      type = /short/.test(rawType) ? "intro-short" : "intro-medium";
+    } else if (/^outro/.test(rawType)) {
+      type = /short/.test(rawType) ? "outro-short" : "outro-medium";
+    } else if (/^chorus|refrain/.test(rawType)) type = "chorus";
     else if (/^bridge|pont/.test(rawType)) type = "bridge";
     else if (/^pre\s*chorus|prechorus/.test(rawType)) type = "prechorus";
-    else if (/^instrumental|inst|solo/.test(rawType)) type = "instrumental";
-    else if (/^verse|couplet/.test(rawType)) type = "verse";
+    else if (/^instrumental|inst|solo/.test(rawType)) {
+      type = /short/.test(rawType) ? "inst-short" : "inst-medium";
+    } else if (/^verse|couplet/.test(rawType)) type = "verse";
 
     const vocal = ["verse", "chorus", "bridge", "prechorus"].includes(type);
     sections.push({
       type,
       lyrics: vocal && body ? body : null,
     });
+  }
+
+  // Toujours une intro instrumentale si absente → lit le mix dès le début
+  if (sections.length && !/^intro/.test(sections[0].type)) {
+    sections.unshift({ type: "intro-medium", lyrics: null });
+  }
+  if (sections.length && !/^outro/.test(sections[sections.length - 1].type)) {
+    sections.push({ type: "outro-medium", lyrics: null });
   }
 
   return sections.length ? sections : [{ type: "verse", lyrics: text.slice(0, 800) }];
@@ -398,8 +419,9 @@ export function lyricsToPreviewSections(lyricsText = "") {
   let hasChorus = false;
 
   for (const s of full) {
-    if (s.type === "intro" && !out.some((x) => x.type === "intro")) {
-      out.push(s);
+    if (/^intro/.test(s.type) && !out.some((x) => /^intro/.test(x.type))) {
+      // Extrait : intro courte pour gagner du GPU
+      out.push({ type: "intro-short", lyrics: null });
       continue;
     }
     if (s.type === "verse" && !hasVerse) {
@@ -423,7 +445,7 @@ export function lyricsToPreviewSections(lyricsText = "") {
 
   if (!out.length) {
     return [
-      { type: "intro", lyrics: null },
+      { type: "intro-short", lyrics: null },
       { type: "verse", lyrics: "la la la" },
       { type: "chorus", lyrics: "oh oh oh" },
     ];
@@ -484,26 +506,146 @@ export function resolveVocalGender(artist) {
 /**
  * Genre pour SongGeneration Studio.
  * Doit matcher GENRE_TO_AUTO_PROMPT (clés lowercased) pour activer auto_prompt_audio
- * = extrait musical de la librairie → instruments. Sinon "Auto".
+ * = extrait musical de la librairie → instruments. Sinon "Auto" = son générique basique.
  * @see BazedFrog/SongGeneration-Studio generation.py
  */
 function mapGenreForStudio(genre = "") {
   const g = String(genre || "")
-    .split(/\s*[×xX|,/]\s*/)[0]
+    .split(/\s*[×xX|,;/]\s*/)[0]
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (!g) return "Pop";
+
+  // Ordre : plus spécifique d’abord (évite que « pop » gagne trop tôt)
   if (/gospel|inspirational|choir|spiritual|worship/.test(g)) return "R&B";
-  if (/hip[\s-]?hop|rap|trap|drill|boom\s*bap/.test(g)) return "Pop"; // Studio n’a pas Hip-Hop dans sa map → Pop + instru
-  if (/r&?b|soul|neo-?soul/.test(g)) return "R&B";
-  if (/metal/.test(g)) return "Metal";
-  if (/rock|punk|garage|indie rock/.test(g)) return "Rock";
-  if (/jazz/.test(g)) return "Jazz";
-  if (/folk|acoustic|chanson|country/.test(g)) return "Folk";
-  if (/electro|edm|dance|house|techno|hyperpop|synth|electronic/.test(g)) return "Electronic";
-  if (/reggae|dancehall|afro/.test(g)) return "Reggae";
-  if (/latin|reggaeton|salsa/.test(g)) return "Pop";
-  if (/pop/.test(g)) return "Pop";
+  if (/r&?b|soul|neo-?soul|motown|funk/.test(g)) return "R&B";
+  if (/metal|hardcore|screamo/.test(g)) return "Metal";
+  if (/rock|punk|garage|grunge|britpop|indie rock/.test(g)) return "Rock";
+  if (/jazz|bossa|swing|blues/.test(g)) return "Jazz";
+  if (/folk|acoustic|chanson|singer-?songwriter|americana|country|bluegrass/.test(g))
+    return "Folk";
+  if (/electro|edm|dance|house|techno|hyperpop|synth|electronic|trance|dubstep|drum.?and.?bass/.test(g))
+    return "Electronic";
+  if (/reggae|dancehall|ska|dub\b/.test(g)) return "Reggae";
+  if (/latin|reggaeton|salsa|bachata|cumbia|afrobeats|afrobeat|amapiano/.test(g)) return "Pop";
+  if (/hip[\s-]?hop|rap|trap|drill|boom\s*bap|grime/.test(g)) return "Pop"; // Studio n’a pas Hip-Hop
+  if (/chinese|c-pop|mandopop/.test(g)) return "Chinese Style";
+  if (/ballad|slow jam|love song/.test(g)) return "R&B";
+  if (/pop|variete|variety|k-?pop|j-?pop/.test(g)) return "Pop";
   return "Pop";
+}
+
+/**
+ * Tags courts pour descriptions LeVo (pas de pavés anglais — ça aplatit le mix).
+ * @param {object|null} lock
+ * @param {ReturnType<typeof musicArrangeToSongGen>} fromArrange
+ */
+function buildSongGenStyleTags(lock, fromArrange) {
+  const tags = [];
+  const push = (v, max = 48) => {
+    const s = String(v || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, max);
+    if (!s) return;
+    const low = s.toLowerCase();
+    if (tags.some((t) => t.toLowerCase() === low)) return;
+    tags.push(s);
+  };
+
+  // Couleur sonore de la référence EN PREMIER
+  if (Array.isArray(lock?.sonicKeywords)) {
+    for (const k of lock.sonicKeywords.slice(0, 8)) push(k, 36);
+  }
+  push(lock?.production, 40);
+  if (lock?.rhythmFeel) push(`groove ${lock.rhythmFeel}`, 40);
+  push(lock?.tempoFeel, 28);
+  if (lock?.energy === "high") push("high energy dense mix");
+  else if (lock?.energy === "low") push("intimate mood");
+  else push("polished full-band mix");
+
+  // « Sparse » dans la prod = vibe intime, pas un lit à 1 piste
+  const prod = String(lock?.production || "").toLowerCase();
+  if (/sparse|intimate|organic/.test(prod)) {
+    push("intimate atmosphere");
+    push("organic textures");
+    push("subtle electronic layers");
+    push("warm pads and bass");
+  }
+
+  // Extraire quelques tags du musicPrompt (éviter le pavé entier)
+  if (lock?.musicPrompt) {
+    const chunks = String(lock.musicPrompt)
+      .split(/[,;|]/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 3 && s.length <= 40)
+      .slice(0, 4);
+    for (const c of chunks) push(c, 40);
+  }
+
+  if (fromArrange?.gospel) {
+    push("gospel choir");
+    push("church organ");
+    push("call and response");
+  } else if (fromArrange?.wantsChoir) {
+    push("backing vocal harmonies");
+  }
+
+  // Fragments arrangement (chœur / lead / densité) — version courte
+  for (const f of fromArrange?.customFragments || []) {
+    const s = String(f || "");
+    // Skip les slogans anti-a-cappella trop longs
+    if (s.length > 70) continue;
+    if (/never a cappella|never vocals-only|commercial radio-ready/i.test(s)) continue;
+    push(s, 56);
+  }
+
+  push("layered instruments");
+  push("wide stereo");
+  return tags.slice(0, 14);
+}
+
+/** Instruments concrets (tags) — styleLock + arrangement, jamais 1 seul. */
+function buildSongGenInstruments(lock, fromArrange, { gospel = false } = {}) {
+  const bits = [];
+  const add = (t) => {
+    const s = String(t || "")
+      .replace(/^lead\s+/i, "")
+      .trim();
+    if (!s) return;
+    if (bits.some((b) => b.toLowerCase() === s.toLowerCase())) return;
+    bits.push(s);
+  };
+
+  if (Array.isArray(lock?.instruments)) {
+    for (const i of lock.instruments.slice(0, 6)) add(i);
+  }
+
+  const arranged = String(fromArrange?.instruments || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const i of arranged) add(i);
+
+  // Filet de sécurité bande complète
+  if (gospel) {
+    add("gospel choir");
+    add("church organ");
+    add("piano");
+    add("bass");
+    add("drums");
+  } else {
+    if (!bits.some((b) => /\bbass|808\b/i.test(b))) add("bass");
+    if (!bits.some((b) => /\bpiano|keys|organ|rhodes|synth\b/i.test(b))) add("piano");
+    if (!bits.some((b) => /\bguitar|strings|brass|sax\b/i.test(b))) add("electric guitar");
+    if (!bits.some((b) => /\bdrum|kit|perc|trap|808\b/i.test(b))) add("drum kit");
+    if (!bits.some((b) => /\bpad|synth\b/i.test(b))) add("synth pads");
+  }
+
+  return bits.slice(0, 8).join(", ").slice(0, 160);
 }
 
 /** Timbre court pour le champ Studio (évite les pavés Gemini qui dégradent). */
@@ -908,92 +1050,31 @@ export async function startSongGeneration(
     voiceSample?.songGenTimbre || voiceSample?.analyzedTimbre || lock?.timbre || "",
   );
 
-  const arrange = normalizeMusicArrange(artist?.musicArrange);
+  // Arrangement : si vide → déduire du styleLock (titre / artiste de référence)
+  let arrange = normalizeMusicArrange(artist?.musicArrange);
+  if (isDefaultMusicArrange(arrange) && lock) {
+    arrange = musicArrangeFromStyleLock(lock);
+  }
   const fromArrange = musicArrangeToSongGen(arrange, {
     styleLockInstruments: lock?.instruments,
   });
   const gospel = Boolean(fromArrange.gospel);
   const wantsChoir = Boolean(fromArrange.wantsChoir);
 
-  // Défaut bande complète — JAMAIS un seul instrument (style-lock pauvre → mix nul)
-  const defaultInstru = gospel
-    ? "gospel choir, church organ, piano, bass, drums"
-    : "bass, piano, electric guitar, drums, synths, pads";
-  let instruments = (fromArrange.instruments || "").trim();
-  if (!instruments) {
-    instruments = (
-      (Array.isArray(lock?.instruments)
-        ? lock.instruments.filter(Boolean).slice(0, 4).join(", ")
-        : "") || defaultInstru
-    );
-  }
-  // Si style-lock / arrange n’a renvoyé qu’1–2 tags, compléter
-  const instruCount = instruments.split(",").map((s) => s.trim()).filter(Boolean).length;
-  if (instruCount < 4) {
-    const merged = [
-      ...instruments.split(",").map((s) => s.trim()).filter(Boolean),
-      ...defaultInstru.split(",").map((s) => s.trim()),
-    ];
-    const seen = new Set();
-    instruments = merged
-      .filter((t) => {
-        const k = t.toLowerCase();
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      })
-      .slice(0, 8)
-      .join(", ");
-  }
-  instruments = instruments.slice(0, 160);
+  const instruments = buildSongGenInstruments(lock, fromArrange, { gospel });
 
-  // Gospel / chœur → ancrer R&B pour auto_prompt Studio (pas de genre Gospel natif)
+  // Genre → auto_prompt_audio Studio (extrait librairie) — crucial pour éviter le son « Auto » basique
   const genreHint = gospel
     ? "gospel soul R&B"
-    : genre || lock?.genreSummary || lock?.genres?.[0] || artist?.genre;
+    : (Array.isArray(lock?.genres) && lock.genres.find(Boolean)) ||
+      lock?.genreSummary ||
+      genre ||
+      artist?.genre ||
+      "";
   const studioGenre = mapGenreForStudio(genreHint);
 
-  // Fragments arrangement d’abord (chœur), puis garde-fous mix — filtre a cappella corrigé
-  const arrangeFrags = (fromArrange.customFragments || []).filter((f) => {
-    const s = String(f || "");
-    if (/\bnot\s+a\s*cappella\b|\bnot\s+vocals\s+only\b/i.test(s)) return true;
-    if (/\ba\s*cappella\b|\bvocals\s+only\b/i.test(s)) return false;
-    return true;
-  });
-
-  const mixGuard = gospel
-    ? [
-        "full mixed song with lead vocal, gospel choir and band",
-        "choir and organ clearly audible",
-        "balanced drums supporting the choir, never drums-only",
-        "rich multi-instrument arrangement",
-      ]
-    : wantsChoir
-      ? [
-          "full band mix with rich instrumental accompaniment",
-          "backing vocals clearly present",
-          "bass, keys or guitar, and drums all audible",
-          "never a single-instrument loop",
-        ]
-      : [
-          "full band radio-ready mix",
-          "lead vocal over complete arrangement",
-          "bass, harmony instruments, and drums all present",
-          "never a cappella, never vocals-only, never drums-only, never single-instrument",
-        ];
-
-  const custom = [
-    ...arrangeFrags,
-    ...mixGuard,
-    lock?.rhythmFeel ? `groove ${lock.rhythmFeel}` : "",
-    cachedTimbre ? `vocal timbre ${cachedTimbre}` : "",
-    String(prompt || "")
-      .replace(/\bexactly in the style of\b[^,]*/gi, "")
-      .slice(0, 140),
-  ]
-    .filter(Boolean)
-    .join(", ")
-    .slice(0, 480);
+  const styleTags = buildSongGenStyleTags(lock, fromArrange);
+  const custom = styleTags.join(", ").slice(0, 420);
 
   const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
 
@@ -1019,6 +1100,12 @@ export async function startSongGeneration(
   const modelId = pick.modelId;
   const infer = pick.params || MODEL_INFER_PARAMS.songgeneration_base;
 
+  const emotionRaw = String(
+    mood || lock?.mood || (gospel ? "uplifting" : wantsChoir ? "soulful" : "energetic"),
+  )
+    .split(/[,/|]/)[0]
+    .trim();
+
   const body = {
     title: String(
       preview ? `${title || "SONOZZ"} · extrait` : title || "SONOZZ Track",
@@ -1027,10 +1114,7 @@ export async function startSongGeneration(
     gender: vocal.code,
     timbre: cachedTimbre || (vocal.code === "female" ? "bright" : "warm"),
     genre: studioGenre,
-    emotion: String(mood || lock?.mood || (gospel ? "uplifting" : "energetic"))
-      .split(/[,/|]/)[0]
-      .trim()
-      .slice(0, 40),
+    emotion: emotionRaw.slice(0, 40),
     instruments,
     custom_style: custom,
     bpm: Math.min(

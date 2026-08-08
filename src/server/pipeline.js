@@ -24,7 +24,13 @@ import {
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
 import { slugify, getArtistBySlug } from "./artists.js";
 import { llmJson, requireTextLlm } from "./llm.js";
-import { musicArrangeToSongGen, normalizeMusicArrange } from "../lib/musicArrange.js";
+import {
+  musicArrangeToSongGen,
+  normalizeMusicArrange,
+  musicArrangeFromStyleLock,
+  isDefaultMusicArrange,
+} from "../lib/musicArrange.js";
+import { buildSunoPrompt } from "../lib/sunoPrompt.js";
 
 function waveform() {
   return Array.from({ length: 40 }, () => 18 + Math.floor(Math.random() * 82));
@@ -975,7 +981,11 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   const genderLock = genderVisualLock(artist?.gender, artist?.age);
   const styleLock = artist?.styleLock;
   const vocal = resolveVocalGender(artist);
-  const packed = musicArrangeToSongGen(normalizeMusicArrange(artist?.musicArrange), {
+  let arrange = normalizeMusicArrange(artist?.musicArrange);
+  if (isDefaultMusicArrange(arrange) && styleLock) {
+    arrange = musicArrangeFromStyleLock(styleLock);
+  }
+  const packed = musicArrangeToSongGen(arrange, {
     styleLockInstruments: styleLock?.instruments,
   });
   const arrangeBits = packed.customFragments || [];
@@ -1021,7 +1031,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     .filter(Boolean)
     .join(", ");
 
-  return { prompt, styleLock, genderLock, vocal, arrangeBpm: packed.bpm };
+  return { prompt, styleLock, genderLock, vocal, arrangeBpm: packed.bpm, arrange, packed };
 }
 
 function assembleTrackResult({
@@ -1034,14 +1044,23 @@ function assembleTrackResult({
   durationLabel = "3:24",
   hasVocals = false,
   warning,
+  vocal = null,
+  arrange = null,
 }) {
-  const sunoPrompt = `Style: ${artist?.genre}${styleLock?.matchedName ? ` (lane of ${styleLock.matchedName})` : ""}. Mood: ${artist?.mood}.
-Production: ${styleLock?.production || "contemporary"}
-Keywords: ${(styleLock?.sonicKeywords || []).join(", ")}
-Title: ${lyrics?.title}
-Lyrics:
-${lyrics?.text || ""}
-`.trim();
+  let arr = arrange || normalizeMusicArrange(artist?.musicArrange);
+  if (isDefaultMusicArrange(arr) && styleLock) {
+    arr = musicArrangeFromStyleLock(styleLock);
+  }
+  const voice = vocal || resolveVocalGender(artist);
+
+  const sunoPrompt = buildSunoPrompt({
+    lyrics,
+    artist,
+    styleLock,
+    bpmGuess,
+    musicArrange: arr,
+    vocalHint: voice?.voiceHint,
+  });
 
   const noteReady =
     provider === "songgeneration-studio"
@@ -1077,7 +1096,10 @@ ${lyrics?.text || ""}
  */
 export async function startTrack({ keys, lyrics, artist, preview = false }) {
   const isPreview = Boolean(preview);
-  const { prompt, styleLock, vocal, arrangeBpm } = buildTrackMusicPrompt({ lyrics, artist });
+  const { prompt, styleLock, vocal, arrangeBpm, arrange, packed } = buildTrackMusicPrompt({
+    lyrics,
+    artist,
+  });
   const lockBpm = Number(arrangeBpm ?? styleLock?.bpm);
   const bpmGuess =
     Number.isFinite(lockBpm) && lockBpm >= 60 && lockBpm <= 200
@@ -1090,6 +1112,9 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
     bpmGuess,
     audioUrl: null,
     provider: "brief",
+    vocal,
+    packed,
+    arrange,
   });
 
   if (!artist?.gender) {
@@ -1166,6 +1191,9 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
       artist,
       styleLock,
       bpmGuess,
+      vocal,
+      packed,
+      arrange,
       warning:
         "Aucun provider audio — choisis SongGeneration Studio (local) ou un token Replicate dans Paramètres, ou importe un mp3.",
     }),
@@ -1241,7 +1269,10 @@ export async function cancelTrack({ keys, generationId, musicKind }) {
 
 /** Sync (pipeline A→Z). Pour l’UI étape Track, préférer startTrack + pollTrack. */
 export async function runTrack({ keys, lyrics, artist }) {
-  const { prompt, styleLock, arrangeBpm } = buildTrackMusicPrompt({ lyrics, artist });
+  const { prompt, styleLock, vocal, arrangeBpm, arrange, packed } = buildTrackMusicPrompt({
+    lyrics,
+    artist,
+  });
   const lockBpm = Number(arrangeBpm ?? styleLock?.bpm);
   const bpmGuess =
     Number.isFinite(lockBpm) && lockBpm >= 60 && lockBpm <= 200
@@ -1259,7 +1290,7 @@ export async function runTrack({ keys, lyrics, artist }) {
       prompt,
       lyrics: lyrics?.text || "",
       title: lyrics?.title || artist?.name || "SONOZZ",
-      gender: artist?.gender,
+      gender: vocal?.code || artist?.gender,
       artist,
       genre: artist?.genre || styleLock?.genre,
       mood: artist?.mood || styleLock?.mood,
@@ -1294,6 +1325,9 @@ export async function runTrack({ keys, lyrics, artist }) {
     durationLabel,
     hasVocals,
     warning,
+    vocal,
+    packed,
+    arrange,
   });
 }
 

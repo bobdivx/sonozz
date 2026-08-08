@@ -126,7 +126,7 @@ export function musicArrangeFromStyleLock(styleLock) {
   let choir = "none";
   if (/gospel|church choir|satb|call and response|call-and-response/.test(bits)) {
     choir = "gospel";
-  } else if (/choir pad|ethereal choir|ambient choir/.test(bits)) {
+  } else if (/choir pad|ethereal choir|ambient choir|atmospheric (vocal|pad)/.test(bits)) {
     choir = "pads";
   } else if (/backing vocal|vocal harmon|harmonies|bgv/.test(bits)) {
     choir = "harmonies";
@@ -134,16 +134,25 @@ export function musicArrangeFromStyleLock(styleLock) {
     choir = "stacked";
   } else if (/\bchoir\b|\bchoeur\b/.test(bits)) {
     choir = "harmonies";
+  } else if (/ambient|atmospheric|ethereal|dream pop|shoegaze/.test(bits)) {
+    // Pads doux plutôt que « pas de chœur » pour l’indie ambient
+    choir = "pads";
   }
+
+  const isElectronicLane =
+    /electro|synth|indie electronic|electronic pop|ambient|hyperpop|edm|\bdance\b|dream pop/.test(
+      bits,
+    );
 
   let leadInstrument = "";
   const leadRules = [
     { re: /\borgan\b|church organ|hammond/, id: "organ" },
+    { re: /synth lead|lead synth|arvo|synth pad|analog synth/, id: "synth lead" },
     { re: /\bpiano\b|keys\b|rhodes|wurlitzer/, id: "piano" },
-    { re: /acoustic guitar|fingerpick|nylon/, id: "acoustic guitar" },
+    // Acoustique seulement si vraiment mis en avant (pas juste « organic textures »)
+    { re: /acoustic guitar|fingerpick|nylon|fingerstyle/, id: "acoustic guitar" },
     { re: /electric guitar|distorted guitar|guitar riff/, id: "electric guitar" },
-    { re: /\bguitar\b/, id: "electric guitar" },
-    { re: /synth lead|lead synth|arvo/, id: "synth lead" },
+    { re: /\bguitar\b/, id: isElectronicLane ? "synth lead" : "electric guitar" },
     { re: /808 bass|\b808\b|sub bass/, id: "808 bass" },
     { re: /\bstrings\b|string section|orchestral/, id: "strings" },
     { re: /brass section|horn section/, id: "brass section" },
@@ -156,6 +165,10 @@ export function musicArrangeFromStyleLock(styleLock) {
       break;
     }
   }
+  // Indie electronic + « organic » sans lead clair → synth + textures, pas guitare seule
+  if (!leadInstrument && isElectronicLane) {
+    leadInstrument = "synth lead";
+  }
 
   let drums = "";
   const drumRules = [
@@ -165,6 +178,7 @@ export function musicArrangeFromStyleLock(styleLock) {
     { re: /brush|jazz kit|brushed/, id: "brush jazz" },
     { re: /latin perc|conga|bongo|timbale|afrobeats perc/, id: "latin percussion" },
     { re: /live kit|live drum|acoustic drum|rock drum|indie drum/, id: "live kit" },
+    { re: /programmed drum|electronic drum|soft beat|subtle (electronic )?drum|drum machine/, id: "live kit" },
     { re: /\bdrums?\b|\bkit\b/, id: "live kit" },
   ];
   for (const { re, id } of drumRules) {
@@ -173,35 +187,56 @@ export function musicArrangeFromStyleLock(styleLock) {
       break;
     }
   }
+  // Electronic lane sans groove explicite → kit léger (évite lit vide « Auto »)
+  if (!drums && isElectronicLane) {
+    drums = "live kit";
+  }
+
+  // Densité : « intimate » ≠ mix vide. Sparse explicite OK, sauf lane electronic (pads + groove).
+  const explicitlySparse =
+    /\bsparse\b|\bminimal(ist)?\b|\bstripped\b|\bstrip(ped)?[\s-]?back\b/.test(bits) ||
+    /sparse and intimate|sparse production|minimal production/.test(bits);
+  const explicitlyDense =
+    /dense|maximal|wall of sound|layered|full band|lush|thick|maximalist/.test(bits);
 
   let density = "mid";
-  if (
-    lock.energy === "high" ||
-    /dense|maximal|wall of sound|layered|full band|lush|thick/.test(bits)
-  ) {
+  if (lock.energy === "high" || explicitlyDense) {
     density = "dense";
-  } else if (
-    lock.energy === "low" ||
-    /sparse|minimal|intimate|stripped|airy|space/.test(bits)
-  ) {
+  } else if (explicitlySparse && isElectronicLane) {
+    // « Sparse and intimate » + electronic = vibe intime, pas arrangement vide
+    density = "mid";
+  } else if (explicitlySparse || (lock.energy === "low" && !isElectronicLane)) {
     density = "sparse";
   }
 
   const features = [];
+  const pushFeat = (id) => {
+    if (!features.includes(id) && FEATURE_TAGS.some((f) => f.id === id)) features.push(id);
+  };
   for (const f of FEATURE_TAGS) {
     const id = f.id.toLowerCase();
     if (bits.includes(id)) {
-      features.push(f.id);
+      pushFeat(f.id);
       continue;
     }
-    // aliases
-    if (f.id === "gospel choir" && /gospel/.test(bits)) features.push(f.id);
-    else if (f.id === "call and response" && /call.?and.?response/.test(bits)) features.push(f.id);
-    else if (f.id === "brass stabs" && /brass|horn stab/.test(bits)) features.push(f.id);
-    else if (f.id === "string swell" && /string swell|string rise/.test(bits)) features.push(f.id);
-    else if (f.id === "organ pads" && /organ pad|pad organ/.test(bits)) features.push(f.id);
-    else if (f.id === "fingerpicked guitar" && /fingerpick/.test(bits)) features.push(f.id);
-    else if (f.id === "sidechain pump" && /sidechain/.test(bits)) features.push(f.id);
+    if (f.id === "gospel choir" && /gospel/.test(bits)) pushFeat(f.id);
+    else if (f.id === "call and response" && /call.?and.?response/.test(bits)) pushFeat(f.id);
+    else if (f.id === "brass stabs" && /brass|horn stab/.test(bits)) pushFeat(f.id);
+    else if (f.id === "string swell" && /string swell|string rise|strings/.test(bits))
+      pushFeat(f.id);
+    else if (f.id === "organ pads" && /organ pad|pad organ|ambient|atmospheric|synth pad/.test(bits))
+      pushFeat(f.id);
+    else if (
+      f.id === "fingerpicked guitar" &&
+      (/fingerpick|fingerstyle/.test(bits) ||
+        (leadInstrument === "acoustic guitar" && /organic|acoustic/.test(bits)))
+    ) {
+      pushFeat(f.id);
+    } else if (f.id === "sidechain pump" && /sidechain/.test(bits)) pushFeat(f.id);
+  }
+  if (isElectronicLane) {
+    pushFeat("organ pads");
+    if (/organic|acoustic|finger/.test(bits)) pushFeat("fingerpicked guitar");
   }
 
   const bpmNum = Number(lock.bpm);
@@ -331,8 +366,11 @@ export function musicArrangeToSongGen(arrange, { styleLockInstruments } = {}) {
 
   // Densité : gospel → densifier un peu pour forcer les couches vocales
   const density = gospel && a.density === "mid" ? "dense" : a.density;
-  if (density === "sparse") parts.push("sparse arrangement, space and air");
-  else if (density === "dense") {
+  if (density === "sparse") {
+    parts.push(
+      "intimate arrangement with space, still full band: bass, soft drums, pads and lead — never thin or single-instrument",
+    );
+  } else if (density === "dense") {
     parts.push(
       gospel
         ? "dense layered gospel production, thick choir stacks, organ and keys"

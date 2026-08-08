@@ -12,6 +12,14 @@ import {
   CheckCircle2,
   XCircle,
   Trash2,
+  Music2,
+  SlidersHorizontal,
+  User,
+  Radio,
+  Save,
+  FileAudio,
+  ScrollText,
+  X,
 } from "lucide-preact";
 import { loadKeys, saveKeysAsync, ensureKeysHydrated } from "../../lib/keys.js";
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
@@ -20,12 +28,45 @@ import MusicArrangePanel from "../MusicArrangePanel.jsx";
 import SongGenModelsPanel from "../SongGenModelsPanel.jsx";
 import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import { normalizeMusicArrange, musicArrangeFromStyleLock, isDefaultMusicArrange } from "../../lib/musicArrange.js";
+import { buildSunoPrompt } from "../../lib/sunoPrompt.js";
 import { confirmDeleteProject, isTrackAudioFinal } from "../../lib/studio.js";
 
 function songGenUrlFromKeys(keys) {
   return String(keys?.songGenBaseUrl || "")
     .trim()
     .replace(/\/+$/, "") || "http://127.0.0.1:7860";
+}
+
+function StepModal({ open, title, onClose, children, wide = false }) {
+  if (!open) return null;
+  return (
+    <dialog class="modal modal-open" open>
+      <div class={`modal-box ${wide ? "max-w-3xl" : "max-w-xl"}`}>
+        <div class="mb-4 flex items-start justify-between gap-3">
+          <h3 class="font-display text-lg font-semibold leading-snug">{title}</h3>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm btn-circle shrink-0"
+            aria-label="Fermer"
+            onClick={onClose}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        {children}
+      </div>
+      <form
+        method="dialog"
+        class="modal-backdrop"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+      >
+        <button type="submit">close</button>
+      </form>
+    </dialog>
+  );
 }
 
 export default function TracksStep({
@@ -83,10 +124,15 @@ export default function TracksStep({
     return null;
   });
   const [styleTrackBusy, setStyleTrackBusy] = useState(false);
+  const [modal, setModal] = useState(null); // ref | arrange | profile | provider | once | suno
   const onceFileRef = useRef(null);
   const probeSeq = useRef(0);
   const lastArrangeLockKey = useRef("");
   const downloadPollRef = useRef(null);
+
+  function closeModal() {
+    setModal(null);
+  }
 
   const hasSongGen = musicProvider === "songgen";
   const hasReplicate = musicProvider === "replicate" && hasReplicateToken;
@@ -318,9 +364,21 @@ export default function TracksStep({
     }
   }
 
+  const liveSunoPrompt =
+    lyrics && (artist || track)
+      ? buildSunoPrompt({
+          lyrics,
+          artist,
+          styleLock: artist?.styleLock,
+          bpmGuess: track?.bpm,
+          musicArrange,
+        })
+      : track?.sunoPrompt || "";
+
   async function copyPrompt() {
-    if (!track?.sunoPrompt) return;
-    await navigator.clipboard.writeText(track.sunoPrompt);
+    const text = liveSunoPrompt;
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
   }
 
   async function attachUrl() {
@@ -472,6 +530,44 @@ export default function TracksStep({
     }
   }
 
+  async function resaveAudio() {
+    if (!track?.audioUrl) return;
+    setImportError("");
+    setOnceHint("");
+    setOnceBusy(true);
+    try {
+      const saved = await persistAudioRemote(track.audioUrl, projectId || "anon", {
+        force: true,
+      });
+      if (saved?.audioUrl || saved?.s3Key) {
+        let s3Key = saved.s3Key || track.audioS3Key;
+        if (!s3Key) {
+          try {
+            const path = decodeURIComponent(
+              new URL(saved.audioUrl || track.audioUrl).pathname.replace(/^\//, ""),
+            );
+            if (/^(audio|clips)\//i.test(path)) s3Key = path;
+          } catch {
+            /* ignore */
+          }
+        }
+        onAttachAudio?.(saved.audioUrl || track.audioUrl, {
+          provider: track.provider || "songgeneration-studio",
+          s3Key,
+          persisted: true,
+          note: saved.reused
+            ? "Audio déjà sur S3 — lecture via clé."
+            : `Audio re-persisté (${saved.mimeType || "audio"}).`,
+        });
+        setOnceHint("Audio OK — le lecteur devrait afficher la durée.");
+      }
+    } catch (e) {
+      setImportError(e.message || "Re-persistance impossible");
+    } finally {
+      setOnceBusy(false);
+    }
+  }
+
   const hasAudio = Boolean(track?.audioUrl);
   const previewReady =
     track?.status === "preview-ready" || Boolean(track?.isPreview && track?.audioUrl);
@@ -492,236 +588,98 @@ export default function TracksStep({
       ? `https://beta.once.app/releases/${onceReleaseId.trim()}`
       : "https://beta.once.app/");
 
+  const providerLabel = hasSongGen ? "SongGeneration" : "MiniMax";
+
   return (
     <section class="animate-rise space-y-6">
       <header class="space-y-2">
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Créer les morceaux</h2>
-        <p class="max-w-xl text-base-content/70">
-          {hasSongGen
-            ? "SongGeneration Studio local (LeVo) — sur RTX 3090, modèle Large auto si VRAM OK."
-            : "Replicate → MiniMax Music 2.6 (voix + paroles, ~2–4 min)."}
-        </p>
-        <p class="max-w-xl text-sm text-base-content/55">
-          1) Génère un <strong>extrait court</strong> pour vérifier le style · 2) Si OK, lance le{" "}
-          <strong>morceau complet</strong> (nouvelle génération, mêmes réglages — pas le même
-          fichier).
-        </p>
       </header>
 
-      <div class="space-y-3 border border-base-content/10 bg-base-200/40 p-4">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="text-sm text-base-content/60">Provider audio :</span>
-          <div class="join">
-            <button
-              type="button"
-              class={`btn join-item btn-sm ${hasSongGen ? "btn-primary" : "btn-ghost"}`}
-              disabled={providerBusy || loading || !keysHydrated}
-              onClick={() => switchMusicProvider("songgen")}
-            >
-              SongGeneration
-            </button>
-            <button
-              type="button"
-              class={`btn join-item btn-sm ${!hasSongGen ? "btn-primary" : "btn-ghost"}`}
-              disabled={providerBusy || loading || !keysHydrated}
-              onClick={() => switchMusicProvider("replicate")}
-            >
-              MiniMax
-            </button>
-          </div>
-          {(providerBusy || !keysHydrated) && <span class="loading loading-spinner loading-xs" />}
-        </div>
-        {!keysHydrated && (
-          <p class="text-xs text-base-content/50">Chargement des clés depuis Turso…</p>
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="btn btn-outline btn-sm gap-1.5"
+          onClick={() => setModal("ref")}
+        >
+          <Music2 size={14} />
+          Titre de référence
+        </button>
+        {(hasSongGen || hasReplicate) && (
+          <button
+            type="button"
+            class="btn btn-outline btn-sm gap-1.5"
+            onClick={() => setModal("arrange")}
+          >
+            <SlidersHorizontal size={14} />
+            Arrangement
+          </button>
         )}
-        <p class="text-xs text-base-content/50">
-          {hasSongGen
-            ? "Local auto : SONOZZ lit la VRAM libre via SongGen et choisit le meilleur modèle prêt (Large sur 3090 si téléchargé et assez de mémoire)."
-            : "MiniMax Music 2.6 : meilleure qualité cloud. Coût Replicate par génération."}
-        </p>
-
-        {hasSongGen ? (
-          <div class="space-y-2 text-sm">
-            <p class="text-base-content/70">
-              URL configurée :{" "}
-              <code class="break-all rounded bg-base-300/60 px-1.5 py-0.5 text-xs">{songGenUrl}</code>
-            </p>
-            <div class="flex flex-wrap items-center gap-2">
-              {probeStatus === "checking" && (
-                <span class="inline-flex items-center gap-1.5 text-base-content/60">
-                  <span class="loading loading-spinner loading-xs" />
-                  Test en cours…
-                </span>
-              )}
-              {probeStatus === "ok" && (
-                <span class="inline-flex items-center gap-1.5 text-success">
-                  <CheckCircle2 size={14} />
-                  {probeMessage}
-                </span>
-              )}
-              {probeStatus === "error" && (
-                <span class="inline-flex max-w-full items-start gap-1.5 text-error">
-                  <XCircle size={14} class="mt-0.5 shrink-0" />
-                  <span class="break-words">{probeMessage}</span>
-                </span>
-              )}
-              <button
-                type="button"
-                class="btn btn-ghost btn-xs gap-1"
-                disabled={probeStatus === "checking" || loading}
-                onClick={() => void probeSongGen()}
-              >
-                <RefreshCw size={12} /> Retester
-              </button>
-              <button type="button" class="btn btn-ghost btn-xs" onClick={onOpenSettings}>
-                Ajuster l’URL
-              </button>
-            </div>
-            {probeStatus === "ok" && (
-              <SongGenModelsPanel
-                models={songGenModels}
-                pickedModelId={pickedModelId}
-                preferredModelId={preferredModelId}
-                gpu={songGenGpu}
-                busyId={modelBusyId}
-                disabled={loading || probeStatus === "checking"}
-                error={modelActionError}
-                onDownload={(id) => void runModelAction(id, "download")}
-                onCancelDownload={(id) => void runModelAction(id, "cancel")}
-                onDelete={(id) => void runModelAction(id, "delete")}
-                onUse={(id) => void runModelAction(id, "use")}
-              />
+        {artist && (
+          <button
+            type="button"
+            class="btn btn-outline btn-sm gap-1.5"
+            onClick={() => setModal("profile")}
+          >
+            <User size={14} />
+            Profil utilisé
+            {!voiceLabel ? <span class="badge badge-warning badge-xs">voix</span> : null}
+          </button>
+        )}
+        <button
+          type="button"
+          class={`btn btn-sm gap-1.5 ${
+            !canGenerateAudio && keysHydrated ? "btn-warning" : "btn-outline"
+          }`}
+          onClick={() => setModal("provider")}
+        >
+          <Radio size={14} />
+          Provider audio
+          <span class="opacity-70">· {providerLabel}</span>
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline btn-sm gap-1.5"
+          onClick={() => setModal("suno")}
+        >
+          <ScrollText size={14} />
+          Prompt Suno
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline btn-sm gap-1.5"
+          onClick={() => setModal("once")}
+        >
+          <FileAudio size={14} />
+          Audio original ONCE
+          {isOnceOriginal ? <span class="badge badge-success badge-xs">✓</span> : null}
+        </button>
+        {track?.audioUrl && (
+          <button
+            type="button"
+            class="btn btn-outline btn-sm gap-1.5"
+            disabled={loading || onceBusy}
+            onClick={() => void resaveAudio()}
+          >
+            {onceBusy ? (
+              <span class="loading loading-spinner loading-xs" />
+            ) : (
+              <Save size={14} />
             )}
-            {probeStatus !== "ok" && (
-              <p class="text-xs text-base-content/50">
-                Le ping part du serveur Astro (pas du navigateur).
-              </p>
-            )}
-          </div>
-        ) : hasReplicateToken ? (
-          <p class="text-sm text-base-content/70">
-            Token Replicate détecté. MiniMax est facturé à l’usage
-            <a
-              class="link link-primary ml-1"
-              href="https://replicate.com/account/billing#billing"
-              target="_blank"
-              rel="noreferrer"
-            >
-              (billing)
-            </a>
-            .
-          </p>
-        ) : keysHydrated ? (
-          <div class="space-y-2">
-            <p class="text-sm text-warning">
-              Token Replicate manquant — ajoute-le dans Paramètres, ou passe sur SongGeneration.
-            </p>
-            <button type="button" class="btn btn-warning btn-sm gap-1" onClick={onOpenSettings}>
-              <KeyRound size={14} /> Paramètres audio
-            </button>
-          </div>
-        ) : null}
+            Re-sauver
+          </button>
+        )}
       </div>
 
       {!canGenerateAudio && !hasSongGen && keysHydrated && (
         <div class="border border-warning/40 bg-warning/10 p-4">
           <p class="font-medium text-warning">Aucun provider audio prêt</p>
           <p class="mt-1 text-sm text-base-content/70">
-            Choisis SongGeneration ou un token Replicate, sinon importe un mp3 (Suno).
+            Ouvre Provider audio pour choisir SongGeneration ou un token Replicate, sinon importe un
+            mp3 (Suno).
           </p>
         </div>
       )}
-
-      {artist && (
-        <div class="border border-base-content/10 bg-base-200/30 px-4 py-3 text-sm">
-          <p class="text-base-content/70">
-            Profil utilisé : <span class="font-medium text-base-content">{artist.name || "—"}</span>
-            {" · "}
-            Style :{" "}
-            <span class="font-medium text-base-content">
-              {artist.genre || artist.genres?.join(" × ") || "—"}
-            </span>
-            {" · "}
-            Voix SongGen :{" "}
-            {voiceLabel ? (
-              <span class="font-medium text-primary">{voiceLabel}</span>
-            ) : (
-              <span class="font-medium text-warning">non défini</span>
-            )}
-            {artist.voiceSample?.s3Key || artist.voiceSample?.url ? (
-              <span class="text-success"> · extrait vocal perso</span>
-            ) : null}
-          </p>
-          {!voiceLabel && (
-            <p class="mt-1 text-xs text-warning">
-              Retourne à l’étape Artiste, choisis Homme/Femme, régénère le profil, puis relance le
-              morceau.
-            </p>
-          )}
-          {(artist.voiceSample?.s3Key || artist.voiceSample?.url) && (
-            <p class="mt-1 text-xs text-base-content/50">
-              Extrait vocal → indice de timbre uniquement (mix instruments forcé).
-            </p>
-          )}
-        </div>
-      )}
-
-      {(hasSongGen || hasReplicate) && (
-        <MusicArrangePanel
-          value={normalizeMusicArrange(musicArrange)}
-          inferred={inferredArrange}
-          disabled={loading}
-          onChange={(next) => onMusicArrangeChange?.(next)}
-          onApplyInferred={() => {
-            if (!inferredArrange) return;
-            onMusicArrangeChange?.(
-              normalizeMusicArrange({ ...inferredArrange, source: "ref" }),
-            );
-          }}
-        />
-      )}
-
-      <div class="space-y-2 border border-base-content/10 bg-base-200/30 p-4">
-        <StyleTrackPicker
-          pick={styleTrackPick}
-          disabled={loading || styleTrackBusy}
-          label="Titre de référence pour ce morceau"
-          hint="Optionnel — recalibre le styleLock sur CE titre (preview DNA) avant de générer."
-          onPickChange={(p) => setStyleTrackPick(p)}
-        />
-        {styleTrackPick?.id && onApplyStyleTrack && (
-          <button
-            type="button"
-            class="btn btn-outline btn-sm"
-            disabled={loading || styleTrackBusy}
-            onClick={async () => {
-              setStyleTrackBusy(true);
-              setImportError("");
-              try {
-                await onApplyStyleTrack(styleTrackPick);
-              } catch (e) {
-                setImportError(e.message || "Impossible d’appliquer ce titre");
-              } finally {
-                setStyleTrackBusy(false);
-              }
-            }}
-          >
-            {styleTrackBusy ? (
-              <span class="loading loading-spinner loading-xs" />
-            ) : null}
-            Appliquer ce titre au style
-          </button>
-        )}
-        {artist?.styleLock?.seedTrack?.title && (
-          <p class="text-xs text-success">
-            Style calé sur « {artist.styleLock.seedTrack.title} »
-            {artist.styleLock.seedTrack.artistName
-              ? ` — ${artist.styleLock.seedTrack.artistName}`
-              : ""}
-            {artist.styleLock.audioListened ? " · preview écouté" : ""}
-          </p>
-        )}
-      </div>
 
       <div class="flex flex-wrap gap-2">
         <button
@@ -775,15 +733,7 @@ export default function TracksStep({
           </button>
         ) : null}
       </div>
-      {!loading && canGenerateAudio && (
-        <p class="text-xs text-base-content/50">
-          L’extrait est un <strong>brouillon</strong> : le complet sera régénéré avec les mêmes
-          réglages (style / arrangement / voix), pas une copie de l’extrait.
-          {hasSongGen
-            ? " SongGen : extrait = peu de sections (plus rapide)."
-            : " MiniMax : paroles tronquées (gain partiel)."}
-        </p>
-      )}
+
       {loading && typeof progress?.percent === "number" && (
         <div class="space-y-1.5" aria-live="polite">
           <div class="h-2 overflow-hidden rounded-full bg-base-300">
@@ -798,9 +748,11 @@ export default function TracksStep({
       {!lyrics && <p class="text-sm text-warning">Générez d'abord les paroles (étape 3).</p>}
       {hasSongGen && probeStatus === "error" && (
         <p class="text-sm text-error">
-          Studio injoignable depuis Astro — lance Pinokio / vérifie l’URL avant de générer.
+          Studio injoignable depuis Astro — lance Pinokio / vérifie l’URL (Provider audio).
         </p>
       )}
+      {onceHint && <p class="text-xs text-success">{onceHint}</p>}
+      {importError && <p class="text-xs text-error">{importError}</p>}
 
       {track && (
         <div class="animate-rise space-y-4 border-t border-base-content/10 pt-5">
@@ -849,8 +801,7 @@ export default function TracksStep({
                     provider: distrokid?.provider,
                     releaseId: distrokid?.releaseId,
                     distributed:
-                      distrokid?.status === "submitted" ||
-                      distrokid?.provider === "once",
+                      distrokid?.status === "submitted" || distrokid?.provider === "once",
                   })
                 ) {
                   return;
@@ -871,14 +822,12 @@ export default function TracksStep({
                 </h4>
                 <p class="text-sm text-base-content/75">
                   Vérifie le style / la voix / le groove. Si ça te convient, lance le{" "}
-                  <strong>morceau complet</strong> (nouvelle génération, mêmes réglages —{" "}
-                  <em>pas</em> le même enregistrement).
+                  <strong>morceau complet</strong>.
                 </p>
               </div>
               {(track.audioEphemeral || track.warning) && (
                 <div class="border border-warning/40 bg-base-100/40 p-3 text-sm text-warning">
-                  {track.warning ||
-                    "Lien audio temporaire — valide vite ou réimporte."}
+                  {track.warning || "Lien audio temporaire — valide vite ou réimporte."}
                 </div>
               )}
               <audio
@@ -946,65 +895,10 @@ export default function TracksStep({
                 preload="auto"
                 onError={() => {
                   setImportError(
-                    "Lecture impossible — clique « Re-sauver audio (S3) » puis réessaie (souvent URL SongGen expirée ou FLAC).",
+                    "Lecture impossible — clique « Re-sauver » puis réessaie (souvent URL SongGen expirée ou FLAC).",
                   );
                 }}
               />
-              <p class="text-xs text-base-content/50">
-                Lecture via proxy serveur (S3 privé / SongGen). Si 0:00 ou silence : « Re-sauver
-                audio ».
-              </p>
-              {track.audioUrl && (
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-xs gap-1"
-                  disabled={loading || onceBusy}
-                  onClick={async () => {
-                    setImportError("");
-                    setOnceHint("");
-                    setOnceBusy(true);
-                    try {
-                      const saved = await persistAudioRemote(
-                        track.audioUrl,
-                        projectId || "anon",
-                        { force: true },
-                      );
-                      if (saved?.audioUrl || saved?.s3Key) {
-                        let s3Key = saved.s3Key || track.audioS3Key;
-                        if (!s3Key) {
-                          try {
-                            const path = decodeURIComponent(
-                              new URL(saved.audioUrl || track.audioUrl).pathname.replace(/^\//, ""),
-                            );
-                            if (/^(audio|clips)\//i.test(path)) s3Key = path;
-                          } catch {
-                            /* ignore */
-                          }
-                        }
-                        onAttachAudio?.(saved.audioUrl || track.audioUrl, {
-                          provider: track.provider || "songgeneration-studio",
-                          s3Key,
-                          persisted: true,
-                          note: saved.reused
-                            ? "Audio déjà sur S3 — lecture via clé."
-                            : `Audio re-persisté (${saved.mimeType || "audio"}).`,
-                        });
-                        setOnceHint("Audio OK — le lecteur devrait afficher la durée.");
-                      }
-                    } catch (e) {
-                      setImportError(e.message || "Re-persistance impossible");
-                    } finally {
-                      setOnceBusy(false);
-                    }
-                  }}
-                >
-                  {onceBusy ? (
-                    <span class="loading loading-spinner loading-xs" />
-                  ) : null}
-                  Re-sauver audio (S3)
-                </button>
-              )}
-              {onceHint && <p class="text-xs text-success">{onceHint}</p>}
             </>
           ) : (
             <div class="space-y-3 border border-base-content/10 bg-base-200/50 p-4">
@@ -1014,10 +908,25 @@ export default function TracksStep({
                   : "Importer l’audio (Suno / fichier local)"}
               </p>
               <ol class="list-decimal space-y-1 pl-5 text-xs text-base-content/60">
-                <li>Copie le prompt Suno ci-dessous</li>
+                <li>
+                  Ouvre{" "}
+                  <button
+                    type="button"
+                    class="link link-primary"
+                    onClick={() => setModal("suno")}
+                  >
+                    Prompt Suno
+                  </button>{" "}
+                  et copie-le
+                </li>
                 <li>
                   Génère sur{" "}
-                  <a class="link link-primary" href="https://suno.com" target="_blank" rel="noreferrer">
+                  <a
+                    class="link link-primary"
+                    href="https://suno.com"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
                     suno.com
                   </a>
                 </li>
@@ -1041,7 +950,6 @@ export default function TracksStep({
                   <Link2 size={14} /> Attacher URL
                 </button>
               </div>
-              {importError && <p class="text-xs text-error">{importError}</p>}
             </div>
           )}
 
@@ -1051,87 +959,307 @@ export default function TracksStep({
               {track.warning}
             </div>
           )}
-
-          <div class="space-y-3 border border-base-content/10 bg-base-200/40 p-4">
-            <div class="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <p class="text-sm font-medium">Audio original ONCE (publié)</p>
-                <p class="mt-1 text-xs text-base-content/60">
-                  Une régénération MiniMax n’est jamais le même fichier que celui livré sur ONCE.
-                  Pour coller au master publié, restaure le WAV de la release.
-                </p>
-              </div>
-              {isOnceOriginal ? (
-                <span class="badge badge-success badge-sm">Master ONCE ✓</span>
-              ) : null}
-            </div>
-            {!hasOnce ? (
-              <button type="button" class="btn btn-ghost btn-sm gap-1" onClick={onOpenSettings}>
-                <KeyRound size={14} /> Ajouter le token ONCE
-              </button>
-            ) : (
-              <div class="flex flex-wrap items-center gap-2">
-                <input
-                  class="input input-bordered input-sm min-w-[240px] flex-1 bg-base-100 font-mono text-xs"
-                  placeholder="UUID release ONCE"
-                  value={onceReleaseId}
-                  onInput={(e) => setOnceReleaseId(e.currentTarget.value)}
-                />
-                <button
-                  type="button"
-                  class="btn btn-outline btn-sm gap-1"
-                  disabled={onceBusy || !onceReleaseId.trim()}
-                  onClick={tryOnceApiRestore}
-                >
-                  {onceBusy ? (
-                    <span class="loading loading-spinner loading-xs" />
-                  ) : (
-                    <RotateCcw size={14} />
-                  )}
-                  Récupérer depuis ONCE
-                </button>
-                <label class="btn btn-secondary btn-sm gap-1 cursor-pointer">
-                  <Upload size={14} />
-                  Importer le WAV release
-                  <input
-                    ref={onceFileRef}
-                    type="file"
-                    accept="audio/*,.wav,.mp3,.m4a"
-                    class="hidden"
-                    onChange={onOnceFileChange}
-                  />
-                </label>
-                <a
-                  class="btn btn-ghost btn-sm gap-1"
-                  href={onceDashboard}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Ouvrir ONCE <ExternalLink size={12} />
-                </a>
-              </div>
-            )}
-            {onceHint && <p class="text-xs text-warning">{onceHint}</p>}
-            {importError && <p class="text-xs text-error">{importError}</p>}
-          </div>
-
-          {track.sunoPrompt && (
-            <div class="space-y-2">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-xs uppercase tracking-wider text-base-content/45">Prompt Suno</span>
-                <button type="button" class="btn btn-ghost btn-xs gap-1" onClick={copyPrompt}>
-                  <Copy size={12} /> Copier
-                </button>
-              </div>
-              <textarea
-                class="textarea textarea-bordered min-h-28 w-full bg-base-200 font-mono text-xs"
-                value={track.sunoPrompt}
-                readOnly
-              />
-            </div>
-          )}
         </div>
       )}
+
+      <StepModal
+        open={modal === "ref"}
+        title="Titre de référence pour ce morceau"
+        onClose={closeModal}
+        wide
+      >
+        <div class="space-y-3">
+          <StyleTrackPicker
+            pick={styleTrackPick}
+            disabled={loading || styleTrackBusy}
+            label="Titre de référence"
+            hint="Optionnel — recalibre le styleLock sur CE titre (preview DNA) avant de générer."
+            onPickChange={(p) => setStyleTrackPick(p)}
+          />
+          {styleTrackPick?.id && onApplyStyleTrack && (
+            <button
+              type="button"
+              class="btn btn-primary btn-sm"
+              disabled={loading || styleTrackBusy}
+              onClick={async () => {
+                setStyleTrackBusy(true);
+                setImportError("");
+                try {
+                  await onApplyStyleTrack(styleTrackPick);
+                } catch (e) {
+                  setImportError(e.message || "Impossible d’appliquer ce titre");
+                } finally {
+                  setStyleTrackBusy(false);
+                }
+              }}
+            >
+              {styleTrackBusy ? <span class="loading loading-spinner loading-xs" /> : null}
+              Appliquer ce titre au style
+            </button>
+          )}
+          {artist?.styleLock?.seedTrack?.title && (
+            <p class="text-xs text-success">
+              Style calé sur « {artist.styleLock.seedTrack.title} »
+              {artist.styleLock.seedTrack.artistName
+                ? ` — ${artist.styleLock.seedTrack.artistName}`
+                : ""}
+              {artist.styleLock.audioListened ? " · preview écouté" : ""}
+            </p>
+          )}
+        </div>
+      </StepModal>
+
+      <StepModal
+        open={modal === "arrange"}
+        title="Arrangement du morceau"
+        onClose={closeModal}
+        wide
+      >
+        <MusicArrangePanel
+          embedded
+          value={normalizeMusicArrange(musicArrange)}
+          inferred={inferredArrange}
+          disabled={loading}
+          onChange={(next) => onMusicArrangeChange?.(next)}
+          onApplyInferred={() => {
+            if (!inferredArrange) return;
+            onMusicArrangeChange?.(
+              normalizeMusicArrange({ ...inferredArrange, source: "ref" }),
+            );
+          }}
+        />
+      </StepModal>
+
+      <StepModal open={modal === "profile"} title="Profil utilisé" onClose={closeModal}>
+        {artist ? (
+          <div class="space-y-3 text-sm">
+            <p>
+              <span class="text-base-content/60">Artiste :</span>{" "}
+              <span class="font-medium">{artist.name || "—"}</span>
+            </p>
+            <p>
+              <span class="text-base-content/60">Style :</span>{" "}
+              <span class="font-medium">
+                {artist.genre || artist.genres?.join(" × ") || "—"}
+              </span>
+            </p>
+            <p>
+              <span class="text-base-content/60">Voix SongGen :</span>{" "}
+              {voiceLabel ? (
+                <span class="font-medium text-primary">{voiceLabel}</span>
+              ) : (
+                <span class="font-medium text-warning">non défini</span>
+              )}
+            </p>
+            {artist.voiceSample?.s3Key || artist.voiceSample?.url ? (
+              <p class="text-success">Extrait vocal perso · indice de timbre uniquement</p>
+            ) : null}
+            {!voiceLabel && (
+              <p class="text-xs text-warning">
+                Retourne à l’étape Artiste, choisis Homme/Femme, régénère le profil, puis relance le
+                morceau.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p class="text-sm text-base-content/60">Aucun profil artiste.</p>
+        )}
+      </StepModal>
+
+      <StepModal
+        open={modal === "provider"}
+        title="Provider audio"
+        onClose={closeModal}
+        wide
+      >
+        <div class="space-y-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="join">
+              <button
+                type="button"
+                class={`btn join-item btn-sm ${hasSongGen ? "btn-primary" : "btn-ghost"}`}
+                disabled={providerBusy || loading || !keysHydrated}
+                onClick={() => switchMusicProvider("songgen")}
+              >
+                SongGeneration
+              </button>
+              <button
+                type="button"
+                class={`btn join-item btn-sm ${!hasSongGen ? "btn-primary" : "btn-ghost"}`}
+                disabled={providerBusy || loading || !keysHydrated}
+                onClick={() => switchMusicProvider("replicate")}
+              >
+                MiniMax
+              </button>
+            </div>
+            {(providerBusy || !keysHydrated) && (
+              <span class="loading loading-spinner loading-xs" />
+            )}
+          </div>
+          {!keysHydrated && (
+            <p class="text-xs text-base-content/50">Chargement des clés depuis Turso…</p>
+          )}
+
+          {hasSongGen ? (
+            <div class="space-y-2 text-sm">
+              <p class="text-base-content/70">
+                URL :{" "}
+                <code class="break-all rounded bg-base-300/60 px-1.5 py-0.5 text-xs">
+                  {songGenUrl}
+                </code>
+              </p>
+              <div class="flex flex-wrap items-center gap-2">
+                {probeStatus === "checking" && (
+                  <span class="inline-flex items-center gap-1.5 text-base-content/60">
+                    <span class="loading loading-spinner loading-xs" />
+                    Test en cours…
+                  </span>
+                )}
+                {probeStatus === "ok" && (
+                  <span class="inline-flex items-center gap-1.5 text-success">
+                    <CheckCircle2 size={14} />
+                    {probeMessage}
+                  </span>
+                )}
+                {probeStatus === "error" && (
+                  <span class="inline-flex max-w-full items-start gap-1.5 text-error">
+                    <XCircle size={14} class="mt-0.5 shrink-0" />
+                    <span class="break-words">{probeMessage}</span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs gap-1"
+                  disabled={probeStatus === "checking" || loading}
+                  onClick={() => void probeSongGen()}
+                >
+                  <RefreshCw size={12} /> Retester
+                </button>
+                <button type="button" class="btn btn-ghost btn-xs" onClick={onOpenSettings}>
+                  Ajuster l’URL
+                </button>
+              </div>
+              {probeStatus === "ok" && (
+                <SongGenModelsPanel
+                  models={songGenModels}
+                  pickedModelId={pickedModelId}
+                  preferredModelId={preferredModelId}
+                  gpu={songGenGpu}
+                  busyId={modelBusyId}
+                  disabled={loading || probeStatus === "checking"}
+                  error={modelActionError}
+                  onDownload={(id) => void runModelAction(id, "download")}
+                  onCancelDownload={(id) => void runModelAction(id, "cancel")}
+                  onDelete={(id) => void runModelAction(id, "delete")}
+                  onUse={(id) => void runModelAction(id, "use")}
+                />
+              )}
+            </div>
+          ) : hasReplicateToken ? (
+            <p class="text-sm text-base-content/70">
+              Token Replicate détecté. MiniMax est facturé à l’usage
+              <a
+                class="link link-primary ml-1"
+                href="https://replicate.com/account/billing#billing"
+                target="_blank"
+                rel="noreferrer"
+              >
+                (billing)
+              </a>
+              .
+            </p>
+          ) : keysHydrated ? (
+            <div class="space-y-2">
+              <p class="text-sm text-warning">
+                Token Replicate manquant — ajoute-le dans Paramètres, ou passe sur SongGeneration.
+              </p>
+              <button type="button" class="btn btn-warning btn-sm gap-1" onClick={onOpenSettings}>
+                <KeyRound size={14} /> Paramètres audio
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </StepModal>
+
+      <StepModal
+        open={modal === "once"}
+        title="Audio original ONCE (publié)"
+        onClose={closeModal}
+        wide
+      >
+        <div class="space-y-3">
+          <p class="text-xs text-base-content/60">
+            Une régénération MiniMax n’est jamais le même fichier que celui livré sur ONCE. Pour
+            coller au master publié, restaure le WAV de la release.
+          </p>
+          {isOnceOriginal ? (
+            <span class="badge badge-success badge-sm">Master ONCE ✓</span>
+          ) : null}
+          {!hasOnce ? (
+            <button type="button" class="btn btn-ghost btn-sm gap-1" onClick={onOpenSettings}>
+              <KeyRound size={14} /> Ajouter le token ONCE
+            </button>
+          ) : (
+            <div class="flex flex-wrap items-center gap-2">
+              <input
+                class="input input-bordered input-sm min-w-[240px] flex-1 bg-base-100 font-mono text-xs"
+                placeholder="UUID release ONCE"
+                value={onceReleaseId}
+                onInput={(e) => setOnceReleaseId(e.currentTarget.value)}
+              />
+              <button
+                type="button"
+                class="btn btn-outline btn-sm gap-1"
+                disabled={onceBusy || !onceReleaseId.trim()}
+                onClick={tryOnceApiRestore}
+              >
+                {onceBusy ? (
+                  <span class="loading loading-spinner loading-xs" />
+                ) : (
+                  <RotateCcw size={14} />
+                )}
+                Récupérer depuis ONCE
+              </button>
+              <label class="btn btn-secondary btn-sm gap-1 cursor-pointer">
+                <Upload size={14} />
+                Importer le WAV release
+                <input
+                  ref={onceFileRef}
+                  type="file"
+                  accept="audio/*,.wav,.mp3,.m4a"
+                  class="hidden"
+                  onChange={onOnceFileChange}
+                />
+              </label>
+              <a
+                class="btn btn-ghost btn-sm gap-1"
+                href={onceDashboard}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Ouvrir ONCE <ExternalLink size={12} />
+              </a>
+            </div>
+          )}
+          {onceHint && <p class="text-xs text-warning">{onceHint}</p>}
+          {importError && <p class="text-xs text-error">{importError}</p>}
+        </div>
+      </StepModal>
+
+      <StepModal open={modal === "suno"} title="Prompt Suno" onClose={closeModal} wide>
+        <div class="space-y-2">
+          <div class="flex justify-end">
+            <button type="button" class="btn btn-ghost btn-xs gap-1" onClick={copyPrompt}>
+              <Copy size={12} /> Copier
+            </button>
+          </div>
+          <textarea
+            class="textarea textarea-bordered min-h-40 w-full bg-base-200 font-mono text-xs"
+            value={liveSunoPrompt || track?.sunoPrompt || ""}
+            readOnly
+          />
+        </div>
+      </StepModal>
     </section>
   );
 }
