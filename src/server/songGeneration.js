@@ -348,6 +348,7 @@ export function lyricsToSections(lyricsText = "") {
 
   if (!text) {
     return [
+      { type: "intro-short", lyrics: null },
       { type: "verse", lyrics: "la la la" },
       { type: "chorus", lyrics: "oh oh oh" },
       { type: "verse", lyrics: "la la la" },
@@ -360,6 +361,7 @@ export function lyricsToSections(lyricsText = "") {
   const tags = [...text.matchAll(tagRe)];
   if (!tags.length) {
     return [
+      { type: "intro-short", lyrics: null },
       { type: "verse", lyrics: text.slice(0, 800) },
       { type: "chorus", lyrics: text.slice(0, 400) },
       { type: "verse", lyrics: text.slice(0, 600) },
@@ -375,7 +377,8 @@ export function lyricsToSections(lyricsText = "") {
     const end = i + 1 < tags.length ? tags[i + 1].index : text.length;
     const body = text.slice(start, end).trim();
 
-    // intro-medium ≈ ~1 min de drone chez LeVo — préférer short sauf demande explicite
+    // intro-medium ≈ ~1 min de drone chez LeVo — short par défaut.
+    // inst-medium = lit instrumental riche (sans le problème d’intro longue).
     let type = "verse";
     if (/^intro/.test(rawType)) {
       type = /medium|long/.test(rawType) ? "intro-medium" : "intro-short";
@@ -385,7 +388,7 @@ export function lyricsToSections(lyricsText = "") {
     else if (/^bridge|pont/.test(rawType)) type = "bridge";
     else if (/^pre\s*chorus|prechorus/.test(rawType)) type = "prechorus";
     else if (/^instrumental|inst|solo/.test(rawType)) {
-      type = /medium|long/.test(rawType) ? "inst-medium" : "inst-short";
+      type = /short/.test(rawType) ? "inst-short" : "inst-medium";
     } else if (/^verse|couplet/.test(rawType)) type = "verse";
 
     const vocal = ["verse", "chorus", "bridge", "prechorus"].includes(type);
@@ -395,7 +398,10 @@ export function lyricsToSections(lyricsText = "") {
     });
   }
 
-  // Pas d’intro forcée : intro-medium = drone ~1 min avant le chant.
+  // Intro courte forcée si absente → pose le lit instrumental sans le drone ~1 min.
+  if (sections.length && !/^intro/.test(sections[0].type)) {
+    sections.unshift({ type: "intro-short", lyrics: null });
+  }
   // Outro courte seulement si absente (fondu propre, pas un long pad).
   if (sections.length && !/^outro/.test(sections[sections.length - 1].type)) {
     sections.push({ type: "outro-short", lyrics: null });
@@ -405,7 +411,7 @@ export function lyricsToSections(lyricsText = "") {
 }
 
 /**
- * Extrait court SongGen : intro + 1er verse + 1er chorus (pas de bridge/outro/2e couplet).
+ * Extrait court SongGen : intro courte + 1er verse + 1er chorus (pas de bridge/outro/2e couplet).
  * Vrai gain GPU vs morceau complet.
  */
 export function lyricsToPreviewSections(lyricsText = "") {
@@ -415,8 +421,10 @@ export function lyricsToPreviewSections(lyricsText = "") {
   let hasChorus = false;
 
   for (const s of full) {
-    // Pas d’intro sur l’extrait — démarre directement au couplet
-    if (/^intro/.test(s.type)) continue;
+    if (/^intro/.test(s.type) && !out.some((x) => /^intro/.test(x.type))) {
+      out.push({ type: "intro-short", lyrics: null });
+      continue;
+    }
     if (/^outro/.test(s.type)) continue;
     if (s.type === "verse" && !hasVerse) {
       out.push({
@@ -439,6 +447,7 @@ export function lyricsToPreviewSections(lyricsText = "") {
 
   if (!out.length) {
     return [
+      { type: "intro-short", lyrics: null },
       { type: "verse", lyrics: "la la la" },
       { type: "chorus", lyrics: "oh oh oh" },
     ];
