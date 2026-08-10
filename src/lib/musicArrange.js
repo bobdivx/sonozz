@@ -193,6 +193,7 @@ export function musicArrangeFromStyleLock(styleLock) {
   }
 
   // Densité : « intimate » ≠ mix vide. Sparse explicite OK, sauf lane electronic (pads + groove).
+  // En pratique LeVo + sparse = 1 instrument → on refuse sparse sauf demande ultra-claire.
   const explicitlySparse =
     /\bsparse\b|\bminimal(ist)?\b|\bstripped\b|\bstrip(ped)?[\s-]?back\b/.test(bits) ||
     /sparse and intimate|sparse production|minimal production/.test(bits);
@@ -200,13 +201,12 @@ export function musicArrangeFromStyleLock(styleLock) {
     /dense|maximal|wall of sound|layered|full band|lush|thick|maximalist/.test(bits);
 
   let density = "mid";
-  if (lock.energy === "high" || explicitlyDense) {
+  if (lock.energy === "high" || explicitlyDense || isElectronicLane) {
     density = "dense";
-  } else if (explicitlySparse && isElectronicLane) {
-    // « Sparse and intimate » + electronic = vibe intime, pas arrangement vide
+  } else if (explicitlySparse && !isElectronicLane && lock.energy === "low") {
+    density = "mid"; // plus de sparse → lit mono chez SongGen
+  } else if (lock.energy === "low") {
     density = "mid";
-  } else if (explicitlySparse || (lock.energy === "low" && !isElectronicLane)) {
-    density = "sparse";
   }
 
   const features = [];
@@ -365,7 +365,7 @@ export function musicArrangeToSongGen(arrange, { styleLockInstruments } = {}) {
   }
 
   // Densité : gospel → densifier un peu pour forcer les couches vocales
-  const density = gospel && a.density === "mid" ? "dense" : a.density;
+  const density = a.density === "sparse" ? "mid" : gospel && a.density === "mid" ? "dense" : a.density;
   if (density === "sparse") {
     parts.push(
       "intimate arrangement with space, still full band: bass, soft drums, pads and lead — never thin or single-instrument",

@@ -37,7 +37,7 @@ const MODEL_RANK = {
 /** Params d’inférence selon le modèle réellement choisi (matériel). */
 const MODEL_INFER_PARAMS = {
   songgeneration_large: {
-    cfg_coef: 1.95,
+    cfg_coef: 2.2,
     temperature: 0.7,
     top_k: 40,
     top_p: 0.0,
@@ -45,7 +45,7 @@ const MODEL_INFER_PARAMS = {
     label: "Large · qualité max",
   },
   songgeneration_base_full: {
-    cfg_coef: 1.85,
+    cfg_coef: 2.05,
     temperature: 0.78,
     top_k: 45,
     top_p: 0.0,
@@ -53,7 +53,7 @@ const MODEL_INFER_PARAMS = {
     label: "Base Full · durée + mix",
   },
   songgeneration_base_new: {
-    cfg_coef: 1.8,
+    cfg_coef: 2.0,
     temperature: 0.78,
     top_k: 45,
     top_p: 0.0,
@@ -61,7 +61,7 @@ const MODEL_INFER_PARAMS = {
     label: "Base New · rapide",
   },
   songgeneration_base: {
-    cfg_coef: 1.75,
+    cfg_coef: 1.95,
     temperature: 0.8,
     top_k: 45,
     top_p: 0.0,
@@ -485,7 +485,12 @@ function mapGender(gender) {
 }
 
 const FEMALE_VOICE_RE =
-  /\bfemale\b|\bfemme\b|\bwoman\b|\bwomen\b|\bgirl\b|\bsoprano\b|\bmezzo\b|\balto\b|\bfeminine\b|\blady\b/i;
+  /\bfemale\b|\bfemme\b|\bwoman\b|\bwomen\b|\bgirl\b|\bsoprano\b|\bmezzo\b|\balto\b|\bfeminine\b|\blady\b|\bbreathy\b|\bairy\b|\bsweet\b|\bdelicate\b|\bsoft high\b|\bhigh pitch\b|\blight vocal\b/i;
+/** Timbre « féminisant » même sans le mot female (souvent venant du styleLock). */
+const FEMININE_TIMBRE_RE =
+  /\b(bright|soft|airy|sweet|breathy|delicate|whisper|light|sparkly|girlish|angelic)\b/i;
+const MASCULINE_TIMBRE_RE =
+  /\b(deep|warm|low|baritone|tenor|rich|raspy|gritty|powerful|masculine)\b/i;
 const MALE_VOICE_RE =
   /\bmale\b|\bhomme\b|\bman\b|\bmen\b|\bboy\b|\bbaritone\b|\btenor\b|\bbass vocal\b|\bmasculine\b|\bguy\b/i;
 
@@ -587,26 +592,42 @@ function mapGenreForStudio(genre = "") {
 function buildSongGenStyleTags(lock, fromArrange, genderCode = "male") {
   const tags = [];
   const push = (v, max = 36) => {
-    let s = stripOppositeGender(v, genderCode);
-    s = String(s || "")
+    let s0 = stripOppositeGender(v, genderCode);
+    s0 = String(s0 || "")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, max);
-    if (!s || s.length < 2) return;
-    // Phrases longues → trop faibles pour LeVo (tags > phrases)
-    if (/\b(with|and the|never|like a|full mixed)\b/i.test(s) && s.split(/\s+/).length > 5) {
+    if (!s0 || s0.length < 2) return;
+    // Couper tout ce qui pousse un lit à 1 piste
+    if (/\b(sparse|minimal|stripped|strip-?back|solo piano|a cappella|vocals only)\b/i.test(s0)) {
       return;
     }
-    const low = s.toLowerCase();
+    if (/\b(with|and the|never|like a|full mixed)\b/i.test(s0) && s0.split(/\s+/).length > 5) {
+      return;
+    }
+    if (genderCode === "male" && FEMININE_TIMBRE_RE.test(s0) && !MASCULINE_TIMBRE_RE.test(s0)) {
+      return;
+    }
+    const low = s0.toLowerCase();
     if (tags.some((t) => t.toLowerCase() === low)) return;
-    tags.push(s);
+    tags.push(s0);
   };
 
-  // Verrou sexe explicite (renforce le champ gender Studio)
-  push(genderCode === "female" ? "female singer" : "male singer", 20);
+  // Verrou sexe EN TÊTE — l’auto_prompt Studio clone souvent une chanteuse
+  if (genderCode === "female") {
+    push("female", 12);
+    push("female singer", 20);
+    push("woman vocals", 20);
+  } else {
+    push("male", 12);
+    push("male singer", 20);
+    push("man vocals", 20);
+    push("baritone", 12);
+    push("deep male voice", 24);
+  }
 
   if (Array.isArray(lock?.sonicKeywords)) {
-    for (const k of lock.sonicKeywords.slice(0, 10)) push(k, 32);
+    for (const k of lock.sonicKeywords.slice(0, 8)) push(k, 32);
   }
   if (Array.isArray(lock?.genres)) {
     for (const g of lock.genres.slice(0, 3)) push(g, 28);
@@ -615,8 +636,8 @@ function buildSongGenStyleTags(lock, fromArrange, genderCode = "male") {
   if (lock?.production) {
     const prodBits = String(lock.production)
       .split(/[,;/|]/)
-      .map((s) => s.trim())
-      .filter((s) => s.length >= 3 && s.length <= 36)
+      .map((x) => x.trim())
+      .filter((x) => x.length >= 3 && x.length <= 36)
       .slice(0, 3);
     for (const p of prodBits) push(p, 36);
   }
@@ -628,27 +649,14 @@ function buildSongGenStyleTags(lock, fromArrange, genderCode = "male") {
   if (lock?.tempoFeel) push(String(lock.tempoFeel).split(/[,;/]/)[0], 24);
 
   if (lock?.energy === "high") push("high energy");
-  else if (lock?.energy === "low") push("intimate");
+  else if (lock?.energy === "low") push("moody");
   else push("polished mix");
 
-  const prod = String(lock?.production || "").toLowerCase();
-  if (/sparse|intimate|organic/.test(prod)) {
-    push("organic textures");
-    push("warm pads");
-    push("subtle layers");
-  } else if (/dense|lush|wall|layered|maximal/.test(prod)) {
-    push("dense layers");
-    push("rich arrangement");
-  }
-
-  if (lock?.musicPrompt) {
-    const chunks = String(lock.musicPrompt)
-      .split(/[,;|]/)
-      .map((s) => s.trim())
-      .filter((s) => s.length >= 3 && s.length <= 32)
-      .slice(0, 6);
-    for (const c of chunks) push(c, 32);
-  }
+  // Toujours densifier — « intimate/sparse » = mix nul chez LeVo
+  push("full band");
+  push("dense layers");
+  push("rich arrangement");
+  push("multi instrument");
 
   if (fromArrange?.gospel) {
     push("gospel choir");
@@ -667,47 +675,64 @@ function buildSongGenStyleTags(lock, fromArrange, genderCode = "male") {
 
   push("layered instruments");
   push("wide stereo");
-  return tags.slice(0, 16);
+  return tags.slice(0, 18);
+}
+
+/** Bande complète forcée selon le genre Studio — jamais 1 seul instrument. */
+function bandForStudioGenre(studioGenre = "Pop", { gospel = false } = {}) {
+  if (gospel) return ["gospel choir", "church organ", "piano", "bass", "drums", "electric guitar"];
+  const g = String(studioGenre || "Pop").toLowerCase();
+  if (g.includes("electronic") || g === "dance") {
+    return ["synth bass", "drum machine", "synth pads", "electric piano", "arpeggiator", "soft synth lead"];
+  }
+  if (g.includes("rock") || g.includes("metal")) {
+    return ["electric guitar", "bass guitar", "drum kit", "rhythm guitar", "keys"];
+  }
+  if (g.includes("r&b") || g.includes("jazz") || g.includes("soul")) {
+    return ["electric piano", "bass", "drum kit", "synth pads", "keys", "soft guitar"];
+  }
+  if (g.includes("folk")) {
+    return ["acoustic guitar", "bass", "soft drums", "piano", "strings"];
+  }
+  if (g.includes("reggae")) {
+    return ["guitar", "bass", "drums", "organ", "percussion"];
+  }
+  // Pop / défaut
+  return ["electric guitar", "bass", "drum kit", "piano", "synth pads", "keys"];
 }
 
 /** Instruments concrets (tags) — styleLock + arrangement, jamais 1 seul. */
-function buildSongGenInstruments(lock, fromArrange, { gospel = false } = {}) {
+function buildSongGenInstruments(lock, fromArrange, { gospel = false, studioGenre = "Pop" } = {}) {
   const bits = [];
   const add = (t) => {
-    const s = String(t || "")
+    const x = String(t || "")
       .replace(/^lead\s+/i, "")
       .trim();
-    if (!s) return;
-    if (bits.some((b) => b.toLowerCase() === s.toLowerCase())) return;
-    bits.push(s);
+    if (!x) return;
+    if (/\b(sparse|minimal|a cappella)\b/i.test(x)) return;
+    if (bits.some((b) => b.toLowerCase() === x.toLowerCase())) return;
+    bits.push(x);
   };
 
+  // Base forcée d’abord (évite le lit mono-instrument de la réf.)
+  for (const i of bandForStudioGenre(studioGenre, { gospel })) add(i);
+
   if (Array.isArray(lock?.instruments)) {
-    for (const i of lock.instruments.slice(0, 6)) add(i);
+    for (const i of lock.instruments.slice(0, 4)) add(i);
   }
 
   const arranged = String(fromArrange?.instruments || "")
     .split(",")
-    .map((s) => s.trim())
+    .map((x) => x.trim())
     .filter(Boolean);
   for (const i of arranged) add(i);
 
-  // Filet de sécurité bande complète
-  if (gospel) {
-    add("gospel choir");
-    add("church organ");
-    add("piano");
-    add("bass");
-    add("drums");
-  } else {
-    if (!bits.some((b) => /\bbass|808\b/i.test(b))) add("bass");
-    if (!bits.some((b) => /\bpiano|keys|organ|rhodes|synth\b/i.test(b))) add("piano");
-    if (!bits.some((b) => /\bguitar|strings|brass|sax\b/i.test(b))) add("electric guitar");
-    if (!bits.some((b) => /\bdrum|kit|perc|trap|808\b/i.test(b))) add("drum kit");
-    if (!bits.some((b) => /\bpad|synth\b/i.test(b))) add("synth pads");
+  // Minimum 5 instruments, toujours
+  if (bits.length < 5) {
+    for (const i of bandForStudioGenre(studioGenre, { gospel })) add(i);
   }
 
-  return bits.slice(0, 8).join(", ").slice(0, 160);
+  return bits.slice(0, 8).join(", ").slice(0, 180);
 }
 
 /** Timbre court pour le champ Studio (évite les pavés Gemini qui dégradent). */
@@ -721,19 +746,24 @@ function shortTimbre(raw = "") {
 }
 
 
-/** Timbre aligné sur le sexe artiste — ignore la réf. du sexe opposé. */
-function timbreForGender(genderCode, voiceSample, lock) {
+/** Timbre aligné sur le sexe — hard-lock (le styleLock / auto_prompt fuit souvent vers une voix femme). */
+function timbreForGender(genderCode, voiceSample, _lock) {
+  // Défauts forts : ne pas faire confiance au styleLock (réf. souvent femme).
+  if (genderCode === "female") return "bright soft female";
+
   const personal = shortTimbre(
     voiceSample?.songGenTimbre || voiceSample?.analyzedTimbre || "",
   );
-  if (personal && !conflictsGenderText(personal, genderCode)) {
-    return stripOppositeGender(personal, genderCode) || personal;
+  if (
+    personal &&
+    !conflictsGenderText(personal, "male") &&
+    !FEMININE_TIMBRE_RE.test(personal) &&
+    (MASCULINE_TIMBRE_RE.test(personal) || MALE_VOICE_RE.test(personal))
+  ) {
+    return stripOppositeGender(personal, "male") || "deep warm baritone";
   }
-  const fromLock = shortTimbre(lock?.timbre || "");
-  if (fromLock && !conflictsGenderText(fromLock, genderCode)) {
-    return stripOppositeGender(fromLock, genderCode) || fromLock;
-  }
-  return genderCode === "female" ? "bright soft" : "warm deep";
+  // Ignorer lock.timbre : source #1 de voix féminine sur artiste homme.
+  return "deep warm baritone";
 }
 
 function findModelEntry(catalog, modelId) {
@@ -1137,8 +1167,6 @@ export async function startSongGeneration(
   const gospel = Boolean(fromArrange.gospel);
   const wantsChoir = Boolean(fromArrange.wantsChoir);
 
-  const instruments = buildSongGenInstruments(lock, fromArrange, { gospel });
-
   // Genre → auto_prompt_audio Studio (extrait librairie) — crucial pour éviter le son « Auto » basique
   const genreHint = gospel
     ? "gospel soul R&B"
@@ -1149,8 +1177,14 @@ export async function startSongGeneration(
       "";
   const studioGenre = mapGenreForStudio(genreHint);
 
+  const instruments = buildSongGenInstruments(lock, fromArrange, { gospel, studioGenre });
+
   const styleTags = buildSongGenStyleTags(lock, fromArrange, vocal.code);
-  const custom = styleTags.join(", ").slice(0, 420);
+  // Instruments aussi dans custom_style (LeVo les lit mieux en tags répétés)
+  const custom = [...styleTags, ...instruments.split(",").map((x) => x.trim()).filter(Boolean)]
+    .filter((t, i, arr) => arr.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i)
+    .join(", ")
+    .slice(0, 480);
 
   const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
 
@@ -1176,11 +1210,14 @@ export async function startSongGeneration(
   const modelId = pick.modelId;
   const infer = pick.params || MODEL_INFER_PARAMS.songgeneration_base;
 
-  const emotionRaw = String(
+  let emotionRaw = String(
     mood || lock?.mood || (gospel ? "uplifting" : wantsChoir ? "soulful" : "energetic"),
   )
     .split(/[,/|]/)[0]
     .trim();
+  if (vocal.code === "male" && FEMININE_TIMBRE_RE.test(emotionRaw)) {
+    emotionRaw = "energetic";
+  }
 
   const body = {
     title: String(
