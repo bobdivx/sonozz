@@ -1001,21 +1001,37 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
         "polished multi-instrument arrangement like a Billboard hit",
         "rich bass, harmony instruments, drums and pads — never thin or single-instrument",
       ];
+
+  // Scrub fuites de sexe opposé depuis la référence (ex. artiste favori femme → prompt femme)
+  const scrubVoiceLeak = (text) => {
+    const raw = String(text || "");
+    if (vocal.code === "male") {
+      return raw
+        .replace(/\b(female|woman|women|girl|soprano|mezzo|alto|feminine)\b/gi, "male")
+        .replace(/\bfemale vocals?\b/gi, "male vocals");
+    }
+    return raw
+      .replace(/\b(male|man|men|boy|baritone|tenor|masculine)\b/gi, "female")
+      .replace(/\bmale vocals?\b/gi, "female vocals");
+  };
+
+  const safeMusicPrompt = scrubVoiceLeak(styleLock?.musicPrompt || "");
+
   const prompt = (
-    styleLock?.musicPrompt
+    safeMusicPrompt
       ? [
+          vocal.voiceHint,
           ...arrangeBits,
           ...qualityBits,
-          vocal.voiceHint,
-          styleLock.musicPrompt,
+          safeMusicPrompt,
           `${artist?.mood || styleLock.mood || "emotional"} mood`,
           `vocals and lyrics in ${langName}`,
           "original composition",
         ]
       : [
+          vocal.voiceHint,
           ...arrangeBits,
           ...qualityBits,
-          vocal.voiceHint,
           packed.gospel ? "contemporary gospel soul R&B" : `${artist?.genre || "pop"}`,
           artist?.styleArtists?.length
             ? `in the sonic lane of ${artist.styleArtists.join(" and ")} (original, not a cover)`

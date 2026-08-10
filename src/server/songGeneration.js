@@ -45,7 +45,7 @@ const MODEL_INFER_PARAMS = {
     label: "Large · qualité max",
   },
   songgeneration_base_full: {
-    cfg_coef: 1.75,
+    cfg_coef: 1.85,
     temperature: 0.78,
     top_k: 45,
     top_p: 0.0,
@@ -53,7 +53,7 @@ const MODEL_INFER_PARAMS = {
     label: "Base Full · durée + mix",
   },
   songgeneration_base_new: {
-    cfg_coef: 1.7,
+    cfg_coef: 1.8,
     temperature: 0.78,
     top_k: 45,
     top_p: 0.0,
@@ -61,7 +61,7 @@ const MODEL_INFER_PARAMS = {
     label: "Base New · rapide",
   },
   songgeneration_base: {
-    cfg_coef: 1.65,
+    cfg_coef: 1.75,
     temperature: 0.8,
     top_k: 45,
     top_p: 0.0,
@@ -484,16 +484,49 @@ function mapGender(gender) {
   return "male";
 }
 
+const FEMALE_VOICE_RE =
+  /\bfemale\b|\bfemme\b|\bwoman\b|\bwomen\b|\bgirl\b|\bsoprano\b|\bmezzo\b|\balto\b|\bfeminine\b|\blady\b/i;
+const MALE_VOICE_RE =
+  /\bmale\b|\bhomme\b|\bman\b|\bmen\b|\bboy\b|\bbaritone\b|\btenor\b|\bbass vocal\b|\bmasculine\b|\bguy\b/i;
+
+/** Retire les indices de voix du sexe opposé (styleLock / réf. artiste). */
+function stripOppositeGender(text, genderCode) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+  if (genderCode === "female" && MALE_VOICE_RE.test(raw) && !FEMALE_VOICE_RE.test(raw)) {
+    return "";
+  }
+  if (genderCode === "male" && FEMALE_VOICE_RE.test(raw) && !MALE_VOICE_RE.test(raw)) {
+    return "";
+  }
+  if (genderCode === "female") {
+    return raw
+      .replace(/\b(male|man|men|boy|baritone|tenor|masculine|guy)\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  return raw
+    .replace(/\b(female|woman|women|girl|soprano|mezzo|alto|feminine|lady)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function conflictsGenderText(text, genderCode) {
+  const raw = String(text || "");
+  if (!raw) return false;
+  if (genderCode === "male") return FEMALE_VOICE_RE.test(raw) && !MALE_VOICE_RE.test(raw);
+  if (genderCode === "female") return MALE_VOICE_RE.test(raw) && !FEMALE_VOICE_RE.test(raw);
+  return false;
+}
+
 /** Empêche un styleLock / voice LLM d’écraser le sexe choisi (ex. artiste favori femme → voix femme). */
 export function resolveVocalGender(artist) {
-  const code = mapGender(artist?.gender || artist?.visualIdentity?.genderLock);
+  const code = mapGender(
+    artist?.gender || artist?.visualIdentity?.genderLock || artist?.visualIdentity?.gender,
+  );
   const rawVoice = String(artist?.voice || artist?.styleLock?.vocalStyle || "").trim();
-  const conflictsFemale =
-    code === "male" && /\bfemale\b|\bfemme\b|\bwoman\b|\bsoprano\b|\bgirl\b/i.test(rawVoice);
-  const conflictsMale =
-    code === "female" &&
-    /\bmale\b|\bhomme\b|\bman\b|\bbaritone\b|\btenor\b|\bbass\b/i.test(rawVoice) &&
-    !/\bfemale\b|\bfemme\b|\bwoman\b/i.test(rawVoice);
+  const safeVoice = stripOppositeGender(rawVoice, code);
+  const conflicts = conflictsGenderText(rawVoice, code);
 
   const voiceHint =
     code === "female" ? "female vocals, woman singer" : "male vocals, man singer";
@@ -501,7 +534,7 @@ export function resolveVocalGender(artist) {
   return {
     code,
     voiceHint,
-    voiceForPrompt: conflictsFemale || conflictsMale || !rawVoice ? voiceHint : rawVoice,
+    voiceForPrompt: conflicts || !safeVoice ? voiceHint : safeVoice,
   };
 }
 
@@ -529,14 +562,19 @@ function mapGenreForStudio(genre = "") {
   if (/jazz|bossa|swing|blues/.test(g)) return "Jazz";
   if (/folk|acoustic|chanson|singer-?songwriter|americana|country|bluegrass/.test(g))
     return "Folk";
-  if (/electro|edm|dance|house|techno|hyperpop|synth|electronic|trance|dubstep|drum.?and.?bass/.test(g))
+  if (
+    /electro|edm|dance|house|techno|hyperpop|synth|electronic|trance|dubstep|drum.?and.?bass|ambient|indie electronic/.test(
+      g,
+    )
+  ) {
     return "Electronic";
+  }
   if (/reggae|dancehall|ska|dub\b/.test(g)) return "Reggae";
   if (/latin|reggaeton|salsa|bachata|cumbia|afrobeats|afrobeat|amapiano/.test(g)) return "Pop";
-  if (/hip[\s-]?hop|rap|trap|drill|boom\s*bap|grime/.test(g)) return "Pop"; // Studio n’a pas Hip-Hop
+  if (/hip[\s-]?hop|rap|trap|drill|boom\s*bap|grime/.test(g)) return "Pop";
   if (/chinese|c-pop|mandopop/.test(g)) return "Chinese Style";
   if (/ballad|slow jam|love song/.test(g)) return "R&B";
-  if (/pop|variete|variety|k-?pop|j-?pop/.test(g)) return "Pop";
+  if (/pop|variete|variety|k-?pop|j-?pop|dream pop|indie pop/.test(g)) return "Pop";
   return "Pop";
 }
 
@@ -544,48 +582,72 @@ function mapGenreForStudio(genre = "") {
  * Tags courts pour descriptions LeVo (pas de pavés anglais — ça aplatit le mix).
  * @param {object|null} lock
  * @param {ReturnType<typeof musicArrangeToSongGen>} fromArrange
+ * @param {"male"|"female"} genderCode
  */
-function buildSongGenStyleTags(lock, fromArrange) {
+function buildSongGenStyleTags(lock, fromArrange, genderCode = "male") {
   const tags = [];
-  const push = (v, max = 48) => {
-    const s = String(v || "")
+  const push = (v, max = 36) => {
+    let s = stripOppositeGender(v, genderCode);
+    s = String(s || "")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, max);
-    if (!s) return;
+    if (!s || s.length < 2) return;
+    // Phrases longues → trop faibles pour LeVo (tags > phrases)
+    if (/\b(with|and the|never|like a|full mixed)\b/i.test(s) && s.split(/\s+/).length > 5) {
+      return;
+    }
     const low = s.toLowerCase();
     if (tags.some((t) => t.toLowerCase() === low)) return;
     tags.push(s);
   };
 
-  // Couleur sonore de la référence EN PREMIER
-  if (Array.isArray(lock?.sonicKeywords)) {
-    for (const k of lock.sonicKeywords.slice(0, 8)) push(k, 36);
-  }
-  push(lock?.production, 40);
-  if (lock?.rhythmFeel) push(`groove ${lock.rhythmFeel}`, 40);
-  push(lock?.tempoFeel, 28);
-  if (lock?.energy === "high") push("high energy dense mix");
-  else if (lock?.energy === "low") push("intimate mood");
-  else push("polished full-band mix");
+  // Verrou sexe explicite (renforce le champ gender Studio)
+  push(genderCode === "female" ? "female singer" : "male singer", 20);
 
-  // « Sparse » dans la prod = vibe intime, pas un lit à 1 piste
+  if (Array.isArray(lock?.sonicKeywords)) {
+    for (const k of lock.sonicKeywords.slice(0, 10)) push(k, 32);
+  }
+  if (Array.isArray(lock?.genres)) {
+    for (const g of lock.genres.slice(0, 3)) push(g, 28);
+  }
+
+  if (lock?.production) {
+    const prodBits = String(lock.production)
+      .split(/[,;/|]/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 3 && s.length <= 36)
+      .slice(0, 3);
+    for (const p of prodBits) push(p, 36);
+  }
+
+  if (lock?.rhythmFeel) {
+    const groove = String(lock.rhythmFeel).split(/[,;/]/)[0].trim();
+    if (groove) push(groove, 28);
+  }
+  if (lock?.tempoFeel) push(String(lock.tempoFeel).split(/[,;/]/)[0], 24);
+
+  if (lock?.energy === "high") push("high energy");
+  else if (lock?.energy === "low") push("intimate");
+  else push("polished mix");
+
   const prod = String(lock?.production || "").toLowerCase();
   if (/sparse|intimate|organic/.test(prod)) {
-    push("intimate atmosphere");
     push("organic textures");
-    push("subtle electronic layers");
-    push("warm pads and bass");
+    push("warm pads");
+    push("subtle layers");
+  } else if (/dense|lush|wall|layered|maximal/.test(prod)) {
+    push("dense layers");
+    push("rich arrangement");
   }
 
-  // Extraire quelques tags du musicPrompt (éviter le pavé entier)
   if (lock?.musicPrompt) {
     const chunks = String(lock.musicPrompt)
       .split(/[,;|]/)
       .map((s) => s.trim())
-      .filter((s) => s.length >= 3 && s.length <= 40)
-      .slice(0, 4);
-    for (const c of chunks) push(c, 40);
+      .filter((s) => s.length >= 3 && s.length <= 32)
+      .slice(0, 6);
+    for (const c of chunks) push(c, 32);
   }
 
   if (fromArrange?.gospel) {
@@ -593,21 +655,19 @@ function buildSongGenStyleTags(lock, fromArrange) {
     push("church organ");
     push("call and response");
   } else if (fromArrange?.wantsChoir) {
-    push("backing vocal harmonies");
+    push("backing vocals");
+    push("vocal harmonies");
   }
 
-  // Fragments arrangement (chœur / lead / densité) — version courte
-  for (const f of fromArrange?.customFragments || []) {
-    const s = String(f || "");
-    // Skip les slogans anti-a-cappella trop longs
-    if (s.length > 70) continue;
-    if (/never a cappella|never vocals-only|commercial radio-ready/i.test(s)) continue;
-    push(s, 56);
+  if (fromArrange?.summary) {
+    for (const bit of String(fromArrange.summary).split(/\s*·\s*/)) {
+      push(bit.replace(/^Lead:\s*/i, ""), 28);
+    }
   }
 
   push("layered instruments");
   push("wide stereo");
-  return tags.slice(0, 14);
+  return tags.slice(0, 16);
 }
 
 /** Instruments concrets (tags) — styleLock + arrangement, jamais 1 seul. */
@@ -658,6 +718,22 @@ function shortTimbre(raw = "") {
   if (!t) return "";
   // Garder 2–5 mots max
   return t.split(/[;,]/)[0].trim().split(/\s+/).slice(0, 5).join(" ").slice(0, 48);
+}
+
+
+/** Timbre aligné sur le sexe artiste — ignore la réf. du sexe opposé. */
+function timbreForGender(genderCode, voiceSample, lock) {
+  const personal = shortTimbre(
+    voiceSample?.songGenTimbre || voiceSample?.analyzedTimbre || "",
+  );
+  if (personal && !conflictsGenderText(personal, genderCode)) {
+    return stripOppositeGender(personal, genderCode) || personal;
+  }
+  const fromLock = shortTimbre(lock?.timbre || "");
+  if (fromLock && !conflictsGenderText(fromLock, genderCode)) {
+    return stripOppositeGender(fromLock, genderCode) || fromLock;
+  }
+  return genderCode === "female" ? "bright soft" : "warm deep";
 }
 
 function findModelEntry(catalog, modelId) {
@@ -1048,9 +1124,7 @@ export async function startSongGeneration(
   }
 
   // Timbre : court, optionnel. Pas d’analyse Gemini à chaque gen (voix souvent pire).
-  const cachedTimbre = shortTimbre(
-    voiceSample?.songGenTimbre || voiceSample?.analyzedTimbre || lock?.timbre || "",
-  );
+  const cachedTimbre = timbreForGender(vocal.code, voiceSample, lock);
 
   // Arrangement : si vide → déduire du styleLock (titre / artiste de référence)
   let arrange = normalizeMusicArrange(artist?.musicArrange);
@@ -1075,7 +1149,7 @@ export async function startSongGeneration(
       "";
   const studioGenre = mapGenreForStudio(genreHint);
 
-  const styleTags = buildSongGenStyleTags(lock, fromArrange);
+  const styleTags = buildSongGenStyleTags(lock, fromArrange, vocal.code);
   const custom = styleTags.join(", ").slice(0, 420);
 
   const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
@@ -1114,7 +1188,7 @@ export async function startSongGeneration(
     ).slice(0, 120),
     sections,
     gender: vocal.code,
-    timbre: cachedTimbre || (vocal.code === "female" ? "bright" : "warm"),
+    timbre: cachedTimbre,
     genre: studioGenre,
     emotion: emotionRaw.slice(0, 40),
     instruments,
