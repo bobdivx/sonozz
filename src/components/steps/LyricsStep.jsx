@@ -1,8 +1,18 @@
 import { useEffect, useState } from "preact/hooks";
 import { PenLine, Languages, Music2 } from "lucide-preact";
 import { MUSIC_LANGUAGES, languageLabel } from "../../lib/studio.js";
+import VersionPicker from "../VersionPicker.jsx";
 
-export default function LyricsStep({ lyrics, artist, loading, onGenerate }) {
+export default function LyricsStep({
+  lyrics,
+  versions = [],
+  activeId = null,
+  artist,
+  loading,
+  onGenerate,
+  onSelectVersion,
+  onDeleteVersion,
+}) {
   const [theme, setTheme] = useState(lyrics?.theme || "");
   const [language, setLanguage] = useState(lyrics?.language || artist?.language || "fr");
 
@@ -15,6 +25,11 @@ export default function LyricsStep({ lyrics, artist, loading, onGenerate }) {
     if (lyrics?.theme) setTheme(lyrics.theme);
   }, [lyrics?.theme]);
 
+  const hasVersions = versions.length > 0;
+  const generateLabel = hasVersions
+    ? `Nouvelle version · ${languageLabel(language)}`
+    : `Générer en ${languageLabel(language)}`;
+
   return (
     <section class="animate-rise space-y-6">
       <header class="space-y-2">
@@ -23,6 +38,7 @@ export default function LyricsStep({ lyrics, artist, loading, onGenerate }) {
           Couplets, refrain et pont calibrés pour{" "}
           {artist?.name || "l'artiste"}
           {artist?.genre ? ` · ${artist.genre}` : ""}.
+          {hasVersions ? " Chaque génération ajoute une version sans écraser les autres." : ""}
         </p>
       </header>
 
@@ -77,12 +93,53 @@ export default function LyricsStep({ lyrics, artist, loading, onGenerate }) {
           onClick={() => onGenerate({ theme, artist, language })}
         >
           {loading ? <span class="loading loading-spinner loading-sm" /> : <PenLine size={18} />}
-          {loading ? "Écriture…" : `Générer en ${languageLabel(language)}`}
+          {loading ? "Écriture…" : generateLabel}
         </button>
         {!artist && <p class="text-sm text-warning">Créez d'abord un artiste (étape 2).</p>}
       </div>
 
-      {lyrics?.text && (
+      {hasVersions && (
+        <div class="grid gap-6 md:grid-cols-[minmax(0,220px)_1fr]">
+          <aside class="space-y-2">
+            <p class="text-xs uppercase tracking-wider text-base-content/45">
+              Versions ({versions.length})
+            </p>
+            <VersionPicker
+              versions={versions}
+              activeId={activeId}
+              onSelect={onSelectVersion}
+              onDelete={onDeleteVersion}
+              labelFor={(v, i) =>
+                v.title || `Paroles ${i + 1}${v.language ? ` · ${languageLabel(v.language)}` : ""}`
+              }
+            />
+          </aside>
+
+          {lyrics?.text ? (
+            <div class="animate-rise space-y-3">
+              <div class="flex flex-wrap items-baseline gap-3">
+                <h3 class="font-display text-xl font-semibold">{lyrics.title}</h3>
+                <span class="inline-flex items-center gap-1 text-xs uppercase tracking-wider text-primary">
+                  <Languages size={12} />
+                  {languageLabel(lyrics.language)}
+                </span>
+                <span class="text-xs uppercase tracking-wider text-base-content/45">
+                  {(lyrics.structure || []).join(" → ")}
+                </span>
+              </div>
+              <textarea
+                class="textarea textarea-bordered min-h-72 w-full bg-base-200 font-mono text-sm leading-relaxed"
+                value={lyrics.text}
+                readOnly
+              />
+            </div>
+          ) : (
+            <p class="text-sm text-base-content/50">Sélectionne une version pour l’afficher.</p>
+          )}
+        </div>
+      )}
+
+      {!hasVersions && lyrics?.text && (
         <div class="animate-rise space-y-3">
           <div class="flex flex-wrap items-baseline gap-3">
             <h3 class="font-display text-xl font-semibold">{lyrics.title}</h3>

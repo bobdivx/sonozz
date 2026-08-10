@@ -210,14 +210,23 @@ function stripHeavyProjectPayload(project = {}) {
     });
   }
 
-  const audio = next.track?.audioUrl;
-  if (typeof audio === "string" && audio.startsWith("data:") && audio.length > 500_000) {
-    next.track = {
-      ...next.track,
-      audioUrl: null,
-      localAsset: true,
-      assetMissingReason: "audio-data-stripped",
-    };
+  const stripHeavyAudio = (trackObj) => {
+    if (!trackObj || typeof trackObj !== "object") return trackObj;
+    const audio = trackObj.audioUrl;
+    if (typeof audio === "string" && audio.startsWith("data:") && audio.length > 500_000) {
+      return {
+        ...trackObj,
+        audioUrl: null,
+        localAsset: true,
+        assetMissingReason: "audio-data-stripped",
+      };
+    }
+    return trackObj;
+  };
+
+  if (next.track) next.track = stripHeavyAudio(next.track);
+  if (Array.isArray(next.trackVersions)) {
+    next.trackVersions = next.trackVersions.map(stripHeavyAudio);
   }
 
   return next;

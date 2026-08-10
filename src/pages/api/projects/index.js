@@ -11,6 +11,7 @@ import {
   materializeAudioForStorage,
 } from "../../../server/audioPersist.js";
 import { isS3Configured } from "../../../server/s3.js";
+import { normalizeProjectVersions } from "../../../lib/versionsModel.js";
 
 export const prerender = false;
 
@@ -110,7 +111,11 @@ async function sanitizeProject(project = {}, { projectId } = {}) {
     }
   }
 
-  if (clone.cover) {
+  if (Array.isArray(clone.coverVersions) && clone.coverVersions.length) {
+    clone.coverVersions = await Promise.all(
+      clone.coverVersions.map((c) => sanitizeImageField(c, "imageUrl")),
+    );
+  } else if (clone.cover) {
     clone.cover = await sanitizeImageField(clone.cover, "imageUrl");
   }
 
@@ -186,7 +191,11 @@ async function sanitizeProject(project = {}, { projectId } = {}) {
     return trackObj;
   }
 
-  if (clone.track) {
+  if (Array.isArray(clone.trackVersions) && clone.trackVersions.length) {
+    clone.trackVersions = await Promise.all(
+      clone.trackVersions.map((t) => sanitizeTrackAudio(t)),
+    );
+  } else if (clone.track) {
     clone.track = await sanitizeTrackAudio(clone.track);
   }
 
@@ -236,7 +245,7 @@ async function sanitizeProject(project = {}, { projectId } = {}) {
     clone.clips = clone.clips.map(sanitizeClipMeta);
   }
 
-  return clone;
+  return normalizeProjectVersions(clone);
 }
 
 export async function GET() {

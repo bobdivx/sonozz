@@ -54,6 +54,13 @@ import {
   stripClipsForDb,
   upsertProjectClip,
 } from "../lib/clipsModel.js";
+import {
+  appendVersion,
+  deleteVersion,
+  normalizeProjectVersions,
+  selectVersion,
+  updateVersion,
+} from "../lib/versionsModel.js";
 import { patchJob } from "../lib/jobStore.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
 import {
@@ -105,6 +112,11 @@ function formatElapsed(ms) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return m > 0 ? `${m}:${String(r).padStart(2, "0")}` : `${r}s`;
+}
+
+/** Clips + versions créatives (paroles / audio / jaquettes). */
+function normalizeProjectState(project = {}) {
+  return normalizeProjectVersions(normalizeProjectClips(project));
 }
 
 export default function Dashboard() {
@@ -195,7 +207,7 @@ export default function Dashboard() {
       try {
         const { project: saved } = await api.getProject(pid);
         setProjectId(saved.id);
-        const loaded = normalizeProjectClips({ ...emptyProject(), ...(saved.project || {}) });
+        const loaded = normalizeProjectState({ ...emptyProject(), ...(saved.project || {}) });
         setProject(loaded);
         if (saved.seed) setSeed((s) => ({ ...s, ...saved.seed }));
         if (stepParam >= 1 && stepParam <= STEPS.length) setStep(stepParam);
@@ -249,7 +261,7 @@ export default function Dashboard() {
               return prev;
             }
           }
-          return normalizeProjectClips({ ...prev, album: remoteAlbum });
+          return normalizeProjectState({ ...prev, album: remoteAlbum });
         });
       } catch {
         /* réseau ok à ignorer */
@@ -287,7 +299,7 @@ export default function Dashboard() {
     setSaving(true);
     setSaveMsg("");
     try {
-      const normalized = normalizeProjectClips(nextProject);
+      const normalized = normalizeProjectState(nextProject);
       const projectForDb = stripClipsForDb(normalized);
       const data = await api.saveProject({
         id: projectId,
@@ -317,7 +329,7 @@ export default function Dashboard() {
           setSaveMsg(`Sauvé · /artiste/${data.artist.slug}`);
         } else {
           setProject((prev) =>
-            normalizeProjectClips({
+            normalizeProjectState({
               ...prev,
               ...normalized,
             }),
@@ -422,7 +434,16 @@ export default function Dashboard() {
       }
 
       patchJob(stepJobId, { progress: 88, message: "Sauvegarde projet…" });
-      const next = { ...project, [key]: result };
+      const VERSIONED_KEYS = new Set(["lyrics", "track", "cover"]);
+      let next;
+      try {
+        next = VERSIONED_KEYS.has(key)
+          ? appendVersion(project, key, result)
+          : { ...project, [key]: result };
+      } catch (capErr) {
+        throw capErr;
+      }
+      next = normalizeProjectState(next);
       setProject(next);
       if (goTo) setStep(goTo);
       const isPreviewTrack =
@@ -1092,7 +1113,8 @@ export default function Dashboard() {
         };
         if (navMap[evt.step]) setStep(navMap[evt.step]);
       });
-      const next = {
+      const next = normalizeProjectState({
+        ...emptyProject(),
         trends: data.trends,
         artist: data.artist,
         lyrics: data.lyrics,
@@ -1103,8 +1125,8 @@ export default function Dashboard() {
         clip: null,
         clips: [],
         activeClipId: null,
-      };
-      setProject(normalizeProjectClips(next));
+      });
+      setProject(next);
       setLog(data.log || []);
       setAutoProgress((p) => ({ ...p, step: "done", message: "Pipeline terminé", percent: 100 }));
       await persist(next, {
@@ -1142,13 +1164,13 @@ export default function Dashboard() {
       const { project: saved } = await api.getProject(id);
       setProjectId(saved.id);
       setProject(
-        normalizeProjectClips({ ...emptyProject(), ...(saved.project || {}) }),
+        normalizeProjectState({ ...emptyProject(), ...(saved.project || {}) }),
       );
       if (saved.seed) setSeed((s) => ({ ...s, ...saved.seed }));
       setHistoryOpen(false);
       setSaveMsg(`Chargé : ${saved.title}`);
       // Place l'utilisateur sur la dernière étape utile
-      const loaded = normalizeProjectClips(saved.project || {});
+      const loaded = normalizeProjectState(saved.project || {});
       if (saved.project?.social?.publishedAt || saved.project?.social?.publish) setStep(8);
       else if (
         (Array.isArray(loaded.clips) && loaded.clips.some(isClipReady)) ||
@@ -1605,6 +1627,8 @@ export default function Dashboard() {
         {step === 3 && (
           <LyricsStep
             lyrics={project.lyrics}
+            versions={project.lyricsVersions || []}
+            activeId={project.activeLyricsId}
             artist={project.artist}
             loading={loading}
             onGenerate={(payload) =>
@@ -1619,11 +1643,31 @@ export default function Dashboard() {
                 3,
               )
             }
+            onSelectVersion={(id) => {
+              const next = selectVersion(project, "lyrics", id);
+              setProject(next);
+              persist(next, {
+                stepKey: "lyrics",
+                eventType: "version-select",
+                message: "Version de paroles sélectionnée",
+              });
+            }}
+            onDeleteVersion={(id) => {
+              const { project: next } = deleteVersion(project, "lyrics", id);
+              setProject(next);
+              persist(next, {
+                stepKey: "lyrics",
+                eventType: "version-delete",
+                message: "Version de paroles supprimée",
+              });
+            }}
           />
         )}
         {step === 4 && (
           <TracksStep
             track={project.track}
+            versions={project.trackVersions || []}
+            activeId={project.activeTrackId}
             lyrics={project.lyrics}
             artist={project.artist}
             musicArrange={project.musicArrange}
@@ -1636,6 +1680,24 @@ export default function Dashboard() {
             }}
             onMusicArrangeChange={(next) => {
               setProject((prev) => ({ ...prev, musicArrange: next }));
+            }}
+            onSelectVersion={(id) => {
+              const next = selectVersion(project, "track", id);
+              setProject(next);
+              persist(next, {
+                stepKey: "track",
+                eventType: "version-select",
+                message: "Version audio sélectionnée",
+              });
+            }}
+            onDeleteVersion={(id) => {
+              const { project: next } = deleteVersion(project, "track", id);
+              setProject(next);
+              persist(next, {
+                stepKey: "track",
+                eventType: "version-delete",
+                message: "Version audio supprimée",
+              });
             }}
             onApplyStyleTrack={async (pick) => {
               if (!pick?.source || !pick?.id) return;
@@ -1749,22 +1811,20 @@ export default function Dashboard() {
             onRejectTrackPreview={() => {
               setError("");
               setProject((prev) => {
-                if (!prev.track) return prev;
-                const next = {
-                  ...prev,
-                  track: {
-                    ...prev.track,
-                    audioUrl: null,
-                    audioS3Key: undefined,
-                    audioEphemeral: false,
-                    waveform: [],
-                    status: "prompt-ready",
-                    isPreview: false,
-                    warning: undefined,
-                    note: "Extrait rejeté — relance un extrait ou le complet.",
-                    assetMissingReason: undefined,
-                  },
-                };
+                const base = normalizeProjectState(prev);
+                if (!base.track || !base.activeTrackId) return prev;
+                const next = updateVersion(base, "track", base.activeTrackId, {
+                  ...base.track,
+                  audioUrl: null,
+                  audioS3Key: undefined,
+                  audioEphemeral: false,
+                  waveform: [],
+                  status: "prompt-ready",
+                  isPreview: false,
+                  warning: undefined,
+                  note: "Extrait rejeté — relance un extrait ou le complet.",
+                  assetMissingReason: undefined,
+                });
                 persist(next, {
                   stepKey: "track",
                   eventType: "track-reject-preview",
@@ -1776,7 +1836,7 @@ export default function Dashboard() {
             onAttachAudio={(audioUrl, meta = {}) => {
               setError("");
               setProject((prev) => {
-                if (!prev.track) return prev;
+                const base = normalizeProjectState(prev);
                 const note =
                   meta.note ||
                   (meta.provider === "once-original"
@@ -1784,28 +1844,51 @@ export default function Dashboard() {
                     : meta.provider === "import-file"
                       ? `Audio importé (${meta.fileName || "fichier"})${meta.persisted ? " · S3" : ""}.`
                       : `Audio attaché via URL${meta.persisted ? " · S3" : ""}.`);
-                const next = {
-                  ...prev,
-                  track: {
-                    ...prev.track,
-                    audioUrl,
-                    audioS3Key: meta.s3Key || prev.track.audioS3Key,
-                    provider: meta.provider || "import",
-                    status: "audio-ready",
-                    duration: prev.track.duration || "~",
-                    audioEphemeral: !meta.persisted && !meta.s3Key,
-                    note,
-                    warning: meta.warning,
-                    assetMissingReason: undefined,
-                  },
-                  distrokid: meta.releaseId
-                    ? {
-                        ...(prev.distrokid || {}),
-                        releaseId: meta.releaseId,
-                        dashboardUrl: `https://beta.once.app/releases/${meta.releaseId}`,
-                      }
-                    : prev.distrokid,
+                const fields = {
+                  audioUrl,
+                  audioS3Key: meta.s3Key || base.track?.audioS3Key,
+                  provider: meta.provider || "import",
+                  status: "audio-ready",
+                  duration: base.track?.duration || "~",
+                  audioEphemeral: !meta.persisted && !meta.s3Key,
+                  note,
+                  warning: meta.warning,
+                  assetMissingReason: undefined,
+                  isPreview: false,
                 };
+                const sameAudio = base.track?.audioUrl === audioUrl;
+                const isFreshImport =
+                  !sameAudio &&
+                  ["import-url", "import-file", "once-original"].includes(meta.provider);
+                let next;
+                if (!base.track) {
+                  next = appendVersion(base, "track", {
+                    title: base.lyrics?.title || "Untitled",
+                    artist: base.artist?.name,
+                    ...fields,
+                  });
+                } else if (isFreshImport && base.track.audioUrl) {
+                  const rest = { ...base.track };
+                  delete rest.id;
+                  delete rest.createdAt;
+                  next = appendVersion(base, "track", { ...rest, ...fields });
+                } else {
+                  next = updateVersion(base, "track", base.activeTrackId, {
+                    ...base.track,
+                    ...fields,
+                    audioS3Key: meta.s3Key || base.track.audioS3Key,
+                  });
+                }
+                if (meta.releaseId) {
+                  next = {
+                    ...next,
+                    distrokid: {
+                      ...(next.distrokid || {}),
+                      releaseId: meta.releaseId,
+                      dashboardUrl: `https://beta.once.app/releases/${meta.releaseId}`,
+                    },
+                  };
+                }
                 persist(next, {
                   stepKey: "track",
                   eventType:
@@ -1813,7 +1896,9 @@ export default function Dashboard() {
                   message:
                     meta.provider === "once-original"
                       ? "Audio original ONCE restauré"
-                      : "Audio importé",
+                      : isFreshImport && base.track?.audioUrl
+                        ? "Nouvelle version audio importée"
+                        : "Audio importé",
                 });
                 return next;
               });
@@ -1823,9 +1908,29 @@ export default function Dashboard() {
         {step === 5 && (
           <CoverStep
             cover={project.cover}
+            versions={project.coverVersions || []}
+            activeId={project.activeCoverId}
             artist={project.artist}
             track={project.track}
             loading={loading}
+            onSelectVersion={(id) => {
+              const next = selectVersion(project, "cover", id);
+              setProject(next);
+              persist(next, {
+                stepKey: "cover",
+                eventType: "version-select",
+                message: "Version de jaquette sélectionnée",
+              });
+            }}
+            onDeleteVersion={(id) => {
+              const { project: next } = deleteVersion(project, "cover", id);
+              setProject(next);
+              persist(next, {
+                stepKey: "cover",
+                eventType: "version-delete",
+                message: "Version de jaquette supprimée",
+              });
+            }}
             onGenerate={(payload) => {
               if (!isTrackAudioFinal(project.track)) {
                 setStep(4);

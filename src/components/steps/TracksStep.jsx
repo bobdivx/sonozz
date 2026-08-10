@@ -31,6 +31,7 @@ import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import { normalizeMusicArrange, musicArrangeFromStyleLock, isDefaultMusicArrange } from "../../lib/musicArrange.js";
 import { buildSunoPrompt } from "../../lib/sunoPrompt.js";
 import { confirmDeleteProject, isTrackAudioFinal } from "../../lib/studio.js";
+import VersionPicker from "../VersionPicker.jsx";
 
 function songGenUrlFromKeys(keys) {
   return String(keys?.songGenBaseUrl || "")
@@ -73,6 +74,8 @@ function StepModal({ open, title, onClose, children, wide = false }) {
 
 export default function TracksStep({
   track,
+  versions = [],
+  activeId = null,
   lyrics,
   artist,
   loading,
@@ -90,6 +93,8 @@ export default function TracksStep({
   onMusicArrangeChange,
   onApplyStyleTrack,
   onDeleteProject,
+  onSelectVersion,
+  onDeleteVersion,
 }) {
   const [musicProvider, setMusicProvider] = useState("replicate");
   const [songGenUrl, setSongGenUrl] = useState("http://127.0.0.1:7860");
@@ -596,7 +601,36 @@ export default function TracksStep({
     <section class="animate-rise space-y-6">
       <header class="space-y-2">
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">Créer les morceaux</h2>
+        {versions.length > 0 && (
+          <p class="max-w-xl text-sm text-base-content/60">
+            Chaque génération ou import ajoute une version — l’active est utilisée pour jaquette, ONCE et clips.
+          </p>
+        )}
       </header>
+
+      {versions.length > 0 && (
+        <div class="space-y-2">
+          <p class="text-xs uppercase tracking-wider text-base-content/45">
+            Versions ({versions.length})
+          </p>
+          <VersionPicker
+            versions={versions}
+            activeId={activeId}
+            onSelect={onSelectVersion}
+            onDelete={onDeleteVersion}
+            labelFor={(v, i) => {
+              const kind =
+                v.isPreview || v.status === "preview-ready"
+                  ? "Extrait"
+                  : v.audioUrl
+                    ? "Complet"
+                    : "Brief";
+              const title = v.title || lyrics?.title || `Morceau ${i + 1}`;
+              return `${title} · ${kind}${v.provider ? ` · ${v.provider}` : ""}`;
+            }}
+          />
+        </div>
+      )}
 
       <div class="flex flex-wrap gap-2">
         <button
@@ -721,7 +755,9 @@ export default function TracksStep({
           {loading
             ? "Génération en cours…"
             : canGenerateAudio
-              ? "Générer le morceau complet"
+              ? versions.length
+                ? "Nouvelle version complète"
+                : "Générer le morceau complet"
               : "Générer le brief (sans audio)"}
         </button>
         {loading && onCancelGenerate ? (
