@@ -8,10 +8,12 @@ import {
   extractOnceIdentifiers,
   publishingReadiness,
   normalizeOnceDelivery,
+  normalizeOncePerformance,
   pickLegalPersonName,
   canReuseOnceRelease,
   resolveProducerName,
 } from "../src/server/once.js";
+import { needsOnceEnrich } from "../src/server/artists.js";
 import { verifyOnceWebhookSignature } from "../src/server/onceWebhooks.js";
 import { scheduleItemKey } from "../src/server/careerSchedule.js";
 import { createHmac } from "node:crypto";
@@ -254,6 +256,51 @@ describe("ONCE identifiers & publishing", () => {
     });
     assert.equal(d.spotifyStatus, "Live");
     assert.ok(d.spotifyUrl.includes("spotify"));
+  });
+
+  it("normalizeOnceDelivery lit un payload imbriqué data", () => {
+    const d = normalizeOnceDelivery({
+      data: {
+        aggregateStatus: "Live",
+        stores: [{ name: "Spotify", status: "Live", url: "https://open.spotify.com/track/x" }],
+      },
+    });
+    assert.equal(d.aggregateStatus, "Live");
+    assert.equal(d.spotifyStatus, "Live");
+    assert.ok(d.spotifyUrl.includes("spotify"));
+  });
+
+  it("normalizeOncePerformance lit kpis + tracks.streamsCount", () => {
+    const p = normalizeOncePerformance({
+      fromDate: "2026-07-01",
+      toDate: "2026-07-31",
+      kpis: { totalStreams: 12, avgDailyStreams: 0.4 },
+      tracks: [{ trackName: "Rayon de Soleil", streamsCount: 12 }],
+      distributors: [{ name: "Spotify", total: 12 }],
+    });
+    assert.equal(p.totalStreams, 12);
+    assert.equal(p.tracks[0].title, "Rayon de Soleil");
+    assert.equal(p.tracks[0].totalStreams, 12);
+  });
+});
+
+describe("ONCE stats enrichissement", () => {
+  it("needsOnceEnrich si release soumise sans delivery", () => {
+    assert.equal(
+      needsOnceEnrich({ delivery: {} }, [{ releaseId: "6796f66d-e7a6-4bfb-a7da-07bd2af6803a" }]),
+      true,
+    );
+    assert.equal(
+      needsOnceEnrich(
+        {
+          delivery: {
+            "6796f66d-e7a6-4bfb-a7da-07bd2af6803a": { aggregateStatus: "Live" },
+          },
+        },
+        [{ releaseId: "6796f66d-e7a6-4bfb-a7da-07bd2af6803a" }],
+      ),
+      false,
+    );
   });
 });
 

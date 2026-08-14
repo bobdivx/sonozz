@@ -59,6 +59,48 @@ export async function spotifySearchContext(token, query) {
   return res.json();
 }
 
+/**
+ * Cherche un titre déjà en ligne (track + artiste exact si possible).
+ * Utile quand ONCE n’a pas encore renvoyé urlInStore alors que Spotify l’a ingéré.
+ */
+export async function findSpotifyCatalogMatch(keys, { artistName = "", trackTitle = "" } = {}) {
+  const title = String(trackTitle || "").trim();
+  const artist = String(artistName || "").trim();
+  if (!title) return null;
+  const access = await getSpotifyAccess(keys);
+  if (!access?.token) return null;
+
+  const query = artist ? `track:"${title}" artist:"${artist}"` : `track:"${title}"`;
+  const res = await fetch(
+    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=8`,
+    { headers: { Authorization: `Bearer ${access.token}` } },
+  );
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => ({}));
+  const items = Array.isArray(data?.tracks?.items) ? data.tracks.items : [];
+  if (!items.length) return null;
+
+  const titleLc = title.toLowerCase();
+  const artistLc = artist.toLowerCase();
+  const match = items.find((t) => {
+    const nameOk = String(t.name || "").toLowerCase() === titleLc;
+    const artistOk =
+      !artistLc ||
+      (Array.isArray(t.artists) &&
+        t.artists.some((a) => String(a.name || "").toLowerCase() === artistLc));
+    return nameOk && artistOk;
+  });
+
+  const url = match?.external_urls?.spotify || match?.album?.external_urls?.spotify || null;
+  if (!url) return null;
+  return {
+    url,
+    name: match.name || title,
+    artists: (match.artists || []).map((a) => a.name).filter(Boolean),
+    albumUrl: match.album?.external_urls?.spotify || null,
+  };
+}
+
 export async function createReleasePlaylist(token, { artist, track }) {
   const me = await fetch("https://api.spotify.com/v1/me", {
     headers: { Authorization: `Bearer ${token}` },

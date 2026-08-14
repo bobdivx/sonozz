@@ -1,4 +1,4 @@
-import { ensureSchema, getDb, uid, saveProject, getProject } from "./db.js";
+import { ensureSchema, getDb, uid, saveProject, getProject, getUserKeys } from "./db.js";
 import { runCareerAgent } from "./careerAgent.js";
 
 export function slugify(input = "") {
@@ -314,7 +314,9 @@ export async function listArtistReleases(slug, limit = 40) {
       albumTitle: row.album_title || null,
       albumTargetCount: row.album_target ? Number(row.album_target) : null,
       distributed: Boolean(
-        onceStatus === "submitted" || row.once_provider === "once",
+        onceStatus === "submitted" ||
+          onceStatus === "live" ||
+          row.once_provider === "once",
       ),
       onceStatus,
       releaseId: row.release_id || null,
@@ -396,13 +398,53 @@ export async function listLibraryTracks(limit = 200) {
     .filter(Boolean);
 }
 
-async function enrichStatsFromOnce(stats, releases, onceToken) {
+export function needsOnceEnrich(stats = {}, releases = []) {
+  const withIds = (releases || []).filter((r) => r.releaseId);
+  if (!withIds.length) return false;
+  const delivery = stats?.delivery || {};
+  return withIds.some((r) => {
+    const d = delivery[r.releaseId];
+    return !d || d.error;
+  });
+}
+
+async function persistReleaseDelivery(projectId, releaseId, delivery) {
+  if (!projectId || !releaseId || !delivery || delivery.error) return;
+  try {
+    const row = await getProject(projectId);
+    if (!row?.project) return;
+    const prev = row.project.distrokid || {};
+    if (prev.releaseId && String(prev.releaseId) !== String(releaseId)) return;
+    const live = /live|distributed|delivered|success/i.test(
+      `${delivery.spotifyStatus || ""} ${delivery.aggregateStatus || ""}`,
+    );
+    await saveProject({
+      id: projectId,
+      seed: row.seed || {},
+      project: {
+        ...row.project,
+        distrokid: {
+          ...prev,
+          releaseId,
+          delivery,
+          spotifyUrl: delivery.spotifyUrl || prev.spotifyUrl || null,
+          status: live ? "live" : prev.status,
+        },
+      },
+    });
+  } catch {
+    /* non bloquant */
+  }
+}
+
+async function enrichStatsFromOnce(stats, releases, onceToken, { keys } = {}) {
   const {
     onceReleaseStatus,
     onceReleaseMeta,
     oncePerformanceSummary,
     onceReleasePerformance,
     normalizeOnceDelivery,
+    normalizeOncePerformance,
     extractOnceIdentifiers,
     publishingReadiness,
   } = await import("./once.js");
@@ -419,6 +461,34 @@ async function enrichStatsFromOnce(stats, releases, onceToken) {
           onceReleaseMeta(onceToken, r.releaseId).catch(() => null),
         ]);
         const normalized = normalizeOnceDelivery(rawStatus);
+        if (!normalized.spotifyUrl && keys) {
+          try {
+            const { findSpotifyCatalogMatch } = await import("./spotify.js");
+            const found = await findSpotifyCatalogMatch(keys, {
+              artistName: r.artistName || "",
+              trackTitle: r.trackTitle || r.title || "",
+            });
+            if (found?.url) {
+              normalized.spotifyUrl = found.url;
+              if (!normalized.spotifyStatus) normalized.spotifyStatus = "Live";
+              const already = (normalized.stores || []).some((s) => /spotify/i.test(s.name));
+              if (!already) {
+                normalized.stores = [
+                  ...(normalized.stores || []),
+                  { name: "Spotify", status: "Live", url: found.url, storeId: "spotify-search" },
+                ];
+              } else {
+                normalized.stores = (normalized.stores || []).map((s) =>
+                  /spotify/i.test(s.name)
+                    ? { ...s, url: s.url || found.url, status: s.status || "Live" }
+                    : s,
+                );
+              }
+            }
+          } catch {
+            /* Spotify optionnel */
+          }
+        }
         const identifiers = rawMeta
           ? extractOnceIdentifiers(rawMeta)
           : { upc: null, isrc: null, tracks: [], upcPending: true, isrcPending: true };
@@ -433,6 +503,7 @@ async function enrichStatsFromOnce(stats, releases, onceToken) {
           dashboardUrl: `https://beta.once.app/releases/${r.releaseId}`,
           publishingUrl: `https://beta.once.app/releases/${r.releaseId}`,
         };
+        await persistReleaseDelivery(r.id, r.releaseId, delivery[r.releaseId]);
       } catch (e) {
         delivery[r.releaseId] = { error: e.message || "Statut ONCE indisponible" };
       }
@@ -441,19 +512,13 @@ async function enrichStatsFromOnce(stats, releases, onceToken) {
 
   let streams = null;
   try {
-    const summary = await oncePerformanceSummary(onceToken);
-    const kpis = summary?.kpis || {};
+    const rawSummary = await oncePerformanceSummary(onceToken);
+    const summary = normalizeOncePerformance(rawSummary);
     streams = {
-      fromDate: summary?.fromDate || null,
-      toDate: summary?.toDate || null,
-      totalStreams: kpis.totalStreams ?? 0,
-      avgDailyStreams: kpis.avgDailyStreams ?? null,
-      periodChangePct: kpis.periodChangePct ?? null,
-      topStore: kpis.topStore || null,
-      topStores: summary?.topStores || [],
-      topReleases: summary?.topReleases || [],
-      catalogReleases: summary?.releases || null,
-      source: "once-mcp",
+      ...summary,
+      topReleases: rawSummary?.topReleases || [],
+      catalogReleases: rawSummary?.releases || null,
+      source: summary.source || "once-mcp",
     };
   } catch (e) {
     streams = {
@@ -466,32 +531,22 @@ async function enrichStatsFromOnce(stats, releases, onceToken) {
   await Promise.all(
     withIds.slice(0, 8).map(async (r) => {
       try {
-        const perf = await onceReleasePerformance(onceToken, r.releaseId, {
-          includeTracks: true,
-        });
-        const kpis = perf?.kpis || {};
-        releaseStreams[r.releaseId] = {
-          fromDate: perf?.fromDate || null,
-          toDate: perf?.toDate || null,
-          totalStreams: kpis.totalStreams ?? 0,
-          avgDailyStreams: kpis.avgDailyStreams ?? null,
-          periodChangePct: kpis.periodChangePct ?? null,
-          topStore: kpis.topStore || null,
-          topStores: perf?.topStores || [],
-          distributors: perf?.distributors || [],
-          tracks: Array.isArray(perf?.tracks) ? perf.tracks : [],
-          source: perf?.source || "once-mcp",
-        };
+        releaseStreams[r.releaseId] = normalizeOncePerformance(
+          await onceReleasePerformance(onceToken, r.releaseId, {
+            includeTracks: true,
+          }),
+        );
       } catch (e) {
         releaseStreams[r.releaseId] = { error: e.message || "Streams KO" };
       }
     }),
   );
 
-  const liveOnSpotify = Object.values(delivery).filter((d) =>
-    /live|distributed|delivered/i.test(
-      `${d.spotifyStatus || ""} ${d.aggregateStatus || ""}`,
-    ),
+  const liveOnSpotify = Object.values(delivery).filter(
+    (d) =>
+      /live|distributed|delivered|success/i.test(
+        `${d.spotifyStatus || ""} ${d.aggregateStatus || ""}`,
+      ) || Boolean(d.spotifyUrl),
   ).length;
 
   const unisonReady = Object.values(delivery).filter((d) => d.publishing?.canSubmitUnison).length;
@@ -522,16 +577,18 @@ async function enrichStatsFromOnce(stats, releases, onceToken) {
   return stats;
 }
 
-export async function computeArtistStats(slug, { onceToken } = {}) {
+export async function computeArtistStats(slug, { onceToken, keys } = {}) {
   const artist = await getArtistBySlug(slug);
   const prev = artist?.stats || {};
   const releases = await listArtistReleases(slug, 100);
+  const storedKeys = keys && typeof keys === "object" ? keys : (await getUserKeys()) || {};
+  const token = String(onceToken || storedKeys.onceApiToken || "").trim();
   const stats = {
     tracks: releases.length,
     withAudio: releases.filter((r) => r.hasAudio).length,
     withCover: releases.filter((r) => r.hasCover).length,
-    distributed: releases.filter((r) => r.distributed || r.onceStatus === "submitted").length,
-    submitted: releases.filter((r) => r.onceStatus === "submitted").length,
+    distributed: releases.filter((r) => r.distributed || r.onceStatus === "submitted" || r.onceStatus === "live").length,
+    submitted: releases.filter((r) => r.onceStatus === "submitted" || r.onceStatus === "live").length,
     draftOnly: releases.filter((r) => r.onceStatus === "draft-only").length,
     lastReleaseAt: releases[0]?.updatedAt || null,
     releases: releases.slice(0, 12).map((r) => ({
@@ -548,19 +605,19 @@ export async function computeArtistStats(slug, { onceToken } = {}) {
     },
     streamsNote:
       prev.streamsNote ||
-      "Rafraîchis avec ton token ONCE pour sync statut stores + streams. Sinon : Spotify for Artists / ONCE (24–72 h+ après livraison).",
+      "Statut stores et streams ONCE se synchronisent automatiquement (token dans Paramètres). Sinon : Spotify for Artists / ONCE (24–72 h+ après livraison).",
     updatedAt: new Date().toISOString(),
   };
 
   // Sans token : ne pas écraser le dernier sync ONCE (streams / delivery)
-  if (!onceToken?.trim()) {
+  if (!token) {
     if (prev.streams) stats.streams = prev.streams;
     if (prev.delivery) stats.delivery = prev.delivery;
     if (prev.releaseStreams) stats.releaseStreams = prev.releaseStreams;
     if (prev.liveOnSpotify != null) stats.liveOnSpotify = prev.liveOnSpotify;
   } else {
     try {
-      await enrichStatsFromOnce(stats, releases, onceToken.trim());
+      await enrichStatsFromOnce(stats, releases, token, { keys: storedKeys });
     } catch (e) {
       stats.streamsNote = `Enrichissement ONCE échoué : ${e.message}`;
       stats.streams = { error: e.message, source: "once-mcp" };
@@ -584,17 +641,20 @@ export async function getArtistHub(slug) {
   if (!artist) return null;
   const releases = await listArtistReleases(slug);
 
-  // Stats fraîches (< 10 min) : pas de recalcul (évite écritures Turso inutiles)
   const cachedAt = artist.stats?.updatedAt ? Date.parse(artist.stats.updatedAt) : 0;
   const fresh = cachedAt && Date.now() - cachedAt < 10 * 60 * 1000;
-  const stats = fresh
-    ? {
-        ...artist.stats,
-        tracks: releases.length,
-        withAudio: releases.filter((r) => r.hasAudio).length,
-        withCover: releases.filter((r) => r.hasCover).length,
-      }
-    : await computeArtistStats(slug);
+  const storedKeys = (await getUserKeys()) || {};
+  const onceToken = String(storedKeys.onceApiToken || "").trim();
+  const missingOnce = Boolean(onceToken) && needsOnceEnrich(artist.stats, releases);
+  const stats =
+    fresh && !missingOnce
+      ? {
+          ...artist.stats,
+          tracks: releases.length,
+          withAudio: releases.filter((r) => r.hasAudio).length,
+          withCover: releases.filter((r) => r.hasCover).length,
+        }
+      : await computeArtistStats(slug, { keys: storedKeys, onceToken });
 
   return {
     ...artist,
@@ -623,6 +683,7 @@ export async function adviseArtistCareer(slug, { keys, force = false } = {}) {
   if (!stats.updatedAt) {
     stats = await computeArtistStats(slug, {
       onceToken: keys?.onceApiToken?.trim() || "",
+      keys,
     });
   }
 

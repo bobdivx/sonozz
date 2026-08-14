@@ -103,8 +103,51 @@ export async function onceCredits(token) {
   return onceFetch(token, "/me/credits");
 }
 
+function statusHasStores(raw) {
+  if (!raw || typeof raw !== "object") return false;
+  const stores = raw.storeStatuses || raw.stores || raw.store_statuses || raw.distribution;
+  return Array.isArray(stores) && stores.length > 0;
+}
+
 export async function onceReleaseStatus(token, releaseId) {
-  return onceFetch(token, `/releases/${encodeURIComponent(releaseId)}/status`);
+  let rest = null;
+  let restError = null;
+  try {
+    rest = await onceFetch(token, `/releases/${encodeURIComponent(releaseId)}/status`);
+  } catch (e) {
+    restError = e;
+  }
+
+  if (statusHasStores(rest) && (rest.aggregateStatus || rest.status || rest.aggregate_status)) {
+    return rest;
+  }
+
+  try {
+    const mcp = await onceMcpCall(token, "get_release_status", { releaseId });
+    if (mcp && typeof mcp === "object") {
+      return {
+        ...(rest && typeof rest === "object" ? rest : {}),
+        ...mcp,
+        storeStatuses:
+          mcp.storeStatuses ||
+          mcp.stores ||
+          rest?.storeStatuses ||
+          rest?.stores ||
+          [],
+        aggregateStatus:
+          mcp.aggregateStatus ||
+          mcp.status ||
+          rest?.aggregateStatus ||
+          rest?.status ||
+          null,
+      };
+    }
+  } catch {
+    /* REST suffit si dispo */
+  }
+
+  if (restError && !rest) throw restError;
+  return rest;
 }
 
 /** Métadonnées release (UPC, ISRC, tracks…). */
@@ -280,10 +323,26 @@ export async function onceReleasePerformance(token, releaseId, opts = {}) {
   });
 }
 
+function unwrapOnceStatus(raw = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  if (raw.storeStatuses || raw.stores || raw.store_statuses || raw.distribution || raw.aggregateStatus) {
+    return raw;
+  }
+  if (raw.data && typeof raw.data === "object") return unwrapOnceStatus(raw.data);
+  if (raw.release && typeof raw.release === "object") return unwrapOnceStatus(raw.release);
+  if (raw.result && typeof raw.result === "object") return unwrapOnceStatus(raw.result);
+  return raw;
+}
+
+export function isOnceStoreLive(status = "") {
+  return /live|distributed|delivered|success/i.test(String(status || ""));
+}
+
 /** Normalize GET /releases/:id/status into a stable shape for the hub. */
 export function normalizeOnceDelivery(raw = {}) {
+  const src = unwrapOnceStatus(raw);
   const storesRaw =
-    raw.storeStatuses || raw.stores || raw.store_statuses || raw.distribution || [];
+    src.storeStatuses || src.stores || src.store_statuses || src.distribution || [];
   const stores = (Array.isArray(storesRaw) ? storesRaw : []).map((s) => {
     const name = s.storeName || s.name || s.store || s.distributorName || "Store";
     const status = s.statusText || s.status || s.state || s.deliveryStatus || "—";
@@ -291,14 +350,50 @@ export function normalizeOnceDelivery(raw = {}) {
     return { name, status, url, storeId: s.storeId ?? s.id ?? null };
   });
   const spotify = stores.find((s) => /spotify/i.test(s.name));
+  const aggregate =
+    src.aggregateStatus || src.status || src.aggregate_status || src.state || null;
   return {
-    aggregateStatus:
-      raw.aggregateStatus || raw.status || raw.aggregate_status || raw.state || null,
-    pending: Boolean(raw.pending),
-    fallback: Boolean(raw.fallback),
+    aggregateStatus: typeof aggregate === "string" ? aggregate : aggregate?.status || null,
+    pending: Boolean(src.pending),
+    fallback: Boolean(src.fallback),
+    fallbackReason: src.fallbackReason || src.fallback_reason || null,
     stores,
     spotifyUrl: spotify?.url || null,
     spotifyStatus: spotify?.status || null,
+  };
+}
+
+/** Normalize get_release_performance / get_performance_summary MCP payloads. */
+export function normalizeOncePerformance(perf = {}) {
+  const kpis = perf?.kpis || perf?.kpi || {};
+  const totalRaw =
+    kpis.totalStreams ??
+    kpis.streams ??
+    perf.totalStreams ??
+    perf.streams ??
+    null;
+  const tracks = Array.isArray(perf?.tracks) ? perf.tracks : [];
+  return {
+    fromDate: perf.fromDate || kpis.fromDate || null,
+    toDate: perf.toDate || kpis.toDate || null,
+    totalStreams: totalRaw == null || Number.isNaN(Number(totalRaw)) ? 0 : Number(totalRaw),
+    avgDailyStreams: kpis.avgDailyStreams ?? perf.avgDailyStreams ?? null,
+    periodChangePct: kpis.periodChangePct ?? perf.periodChangePct ?? null,
+    topStore: kpis.topStore || perf.topStore || null,
+    topStores: Array.isArray(perf.topStores) ? perf.topStores : [],
+    distributors: Array.isArray(perf.distributors) ? perf.distributors : [],
+    tracks: tracks.map((t) => ({
+      ...t,
+      title: t.title || t.trackTitle || t.trackName || t.name || null,
+      totalStreams:
+        t.totalStreams ??
+        t.streams ??
+        t.streamsCount ??
+        t.streamCount ??
+        t.kpis?.totalStreams ??
+        null,
+    })),
+    source: perf.source || "once-mcp",
   };
 }
 

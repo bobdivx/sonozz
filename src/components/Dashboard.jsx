@@ -212,7 +212,7 @@ export default function Dashboard() {
         if (saved.seed) setSeed((s) => ({ ...s, ...saved.seed }));
         if (stepParam >= 1 && stepParam <= STEPS.length) setStep(stepParam);
         else if (!saved.project?.lyrics) setStep(3);
-        else if (!saved.project?.track) setStep(4);
+        else if (!saved.project?.track && !saved.project?.distrokid?.releaseId) setStep(4);
         setSaveMsg(`Projet ${saved.title}`);
         if (loaded.album) mirrorAlbumJob(loaded.album, saved.id);
       } catch (e) {

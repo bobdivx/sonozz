@@ -6,7 +6,7 @@ import {
   RefreshCw,
   Store,
 } from "lucide-preact";
-import { loadKeys } from "../../lib/keys.js";
+import { loadKeys, ensureKeysHydrated } from "../../lib/keys.js";
 
 function formatStreams(n) {
   if (n == null || Number.isNaN(Number(n))) return "—";
@@ -30,6 +30,7 @@ function trackRowLabel(t) {
   return (
     t?.title ||
     t?.trackTitle ||
+    t?.trackName ||
     t?.name ||
     t?.isrc ||
     t?.id ||
@@ -41,10 +42,19 @@ function trackRowStreams(t) {
   const n =
     t?.totalStreams ??
     t?.streams ??
+    t?.streamsCount ??
     t?.kpis?.totalStreams ??
     t?.streamCount ??
     null;
   return n == null || Number.isNaN(Number(n)) ? null : Number(n);
+}
+
+function isLiveDelivery(delivery) {
+  if (!delivery || delivery.error) return false;
+  if (delivery.spotifyUrl) return true;
+  return /live|distributed|delivered|success/i.test(
+    `${delivery.spotifyStatus || ""} ${delivery.aggregateStatus || ""}`,
+  );
 }
 
 export default function StatsStep({
@@ -67,7 +77,7 @@ export default function StatsStep({
     if (!slug) {
       setHub(null);
       setLoading(false);
-      return;
+      return null;
     }
     setLoading(true);
     setError("");
@@ -76,15 +86,36 @@ export default function StatsStep({
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Artiste introuvable");
       setHub(json.artist);
+      return json.artist;
     } catch (e) {
       setError(e.message);
+      return null;
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    load();
+    let cancelled = false;
+    (async () => {
+      const artist = await load();
+      if (cancelled) return;
+      await ensureKeysHydrated();
+      if (cancelled) return;
+      const keys = loadKeys();
+      const rid = distrokid?.releaseId || null;
+      const delivery =
+        (rid && artist?.stats?.delivery?.[rid]) ||
+        distrokid?.delivery ||
+        null;
+      const token = keys.onceApiToken?.trim();
+      if (token && rid && (!delivery || delivery.error)) {
+        await refreshStats();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [slug]);
 
   async function refreshStats() {
@@ -111,7 +142,7 @@ export default function StatsStep({
       );
       setMsg(
         json.onceSynced
-          ? "Stats ONCE synchronisées"
+          ? "Stats ONCE synchronisées (stores + streams)"
           : "Stats catalogue OK — ajoute un token ONCE dans Réglages pour sync streams",
       );
     } catch (e) {
@@ -135,8 +166,9 @@ export default function StatsStep({
   const delivery = matchedReleaseId
     ? deliveryMap[matchedReleaseId] ||
       stats.releases?.find((x) => x.releaseId === matchedReleaseId)?.delivery ||
+      distrokid?.delivery ||
       null
-    : null;
+    : distrokid?.delivery || null;
   const rStreams = matchedReleaseId
     ? releaseStreamsMap[matchedReleaseId] ||
       stats.releases?.find((x) => x.releaseId === matchedReleaseId)?.streams ||
@@ -145,8 +177,18 @@ export default function StatsStep({
 
   const changeLabel = formatPct(rStreams?.periodChangePct);
   const title =
-    track?.title || matched?.trackTitle || matched?.title || "Morceau";
-  const artwork = cover?.imageUrl || matched?.coverUrl || null;
+    track?.title ||
+    distrokid?.form?.trackTitle ||
+    distrokid?.title ||
+    matched?.trackTitle ||
+    matched?.title ||
+    "Morceau";
+  const artwork = cover?.imageUrl || matched?.coverUrl || distrokid?.assets?.coverUrl || null;
+  const oncePublished = Boolean(
+    matchedReleaseId ||
+      /^(submitted|live|distributed|delivered)/i.test(String(distrokid?.status || "")),
+  );
+  const deliveryLive = isLiveDelivery(delivery);
   const trackRows = Array.isArray(rStreams?.tracks) ? rStreams.tracks : [];
   const storeRows =
     (Array.isArray(rStreams?.topStores) && rStreams.topStores.length > 0
@@ -159,9 +201,9 @@ export default function StatsStep({
     ["BPM", track?.bpm ?? "—"],
     ["Tonalité", track?.key ?? "—"],
     ["Durée", track?.duration ?? "—"],
-    ["Style", track?.style ?? "—"],
+    ["Style", track?.style || distrokid?.form?.genre || distrokid?.genre || "—"],
     ["Mood", track?.mood ?? "—"],
-    ["Provider", track?.provider ?? "—"],
+    ["Provider", track?.provider || (oncePublished ? "ONCE" : "—")],
   ];
 
   return (
@@ -220,15 +262,22 @@ export default function StatsStep({
             <div class="min-w-0 flex-1">
               <p class="font-display text-xl font-semibold">{title}</p>
               <p class="text-sm text-base-content/60">
-                {track?.artist || artist?.name || "—"}
+                {track?.artist || artist?.name || distrokid?.form?.artistName || "—"}
                 {matched?.onceStatus || distrokid?.status
                   ? ` · ${matched?.onceStatus || distrokid?.status}`
                   : ""}
                 {matchedReleaseId ? ` · ONCE ${matchedReleaseId}` : ""}
               </p>
-              {!track && (
+              {!track && !oncePublished && (
                 <p class="mt-1 text-xs text-warning">
                   Pas encore de morceau généré — passe à l’étape Morceaux.
+                </p>
+              )}
+              {!track?.audioUrl && oncePublished && (
+                <p class="mt-1 text-xs text-base-content/55">
+                  {deliveryLive
+                    ? "En ligne sur les stores — l’audio local n’est plus dans ce projet."
+                    : "Soumis via ONCE — l’audio local n’est plus dans ce projet."}
                 </p>
               )}
             </div>
@@ -242,9 +291,19 @@ export default function StatsStep({
                 ONCE <ExternalLink size={12} />
               </a>
             )}
+            {(delivery?.spotifyUrl || distrokid?.spotifyUrl) && (
+              <a
+                class="btn btn-outline btn-sm gap-1"
+                href={delivery?.spotifyUrl || distrokid?.spotifyUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Spotify <ExternalLink size={12} />
+              </a>
+            )}
           </div>
 
-          {track && (
+          {(track || oncePublished) && (
             <div class="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
               {metaKpis.map(([label, value]) => (
                 <div
@@ -355,7 +414,9 @@ export default function StatsStep({
               </div>
             ) : (
               <p class="text-sm text-base-content/55">
-                Pas encore de streams — rafraîchis après livraison stores (24–72 h).
+                {deliveryLive
+                  ? "Le titre est livré sur les stores — les streams ONCE peuvent mettre 24–72 h+ à arriver (rapport DSP)."
+                  : "Pas encore de streams ONCE — clique Rafraîchir, ou attends 24–72 h après la livraison stores."}
               </p>
             )}
           </section>
@@ -425,10 +486,10 @@ export default function StatsStep({
                       Unison <ExternalLink size={12} />
                     </a>
                   )}
-                  {delivery.spotifyUrl && (
+                  {(delivery.spotifyUrl || distrokid?.spotifyUrl) && (
                     <a
                       class="btn btn-outline btn-sm gap-1"
-                      href={delivery.spotifyUrl}
+                      href={delivery.spotifyUrl || distrokid.spotifyUrl}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -439,7 +500,7 @@ export default function StatsStep({
               </div>
             ) : (
               <p class="text-sm text-base-content/55">
-                Statut stores non sync — clique Rafraîchir (token ONCE requis).
+                Statut stores non sync — clique Rafraîchir (token ONCE dans Paramètres).
               </p>
             )}
           </section>

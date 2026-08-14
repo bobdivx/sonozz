@@ -7,6 +7,7 @@ import {
   adviseArtistCareer,
 } from "../../../server/artists.js";
 import { previewCareerSchedule, runCareerSchedule } from "../../../server/careerSchedule.js";
+import { getUserKeys } from "../../../server/db.js";
 
 export const prerender = false;
 
@@ -28,15 +29,17 @@ export async function POST({ params, request }) {
     const action = body.action || "new-track";
 
     if (action === "refresh-stats") {
-      const onceToken = body.keys?.onceApiToken?.trim() || body.onceApiToken?.trim() || "";
-      const stats = await computeArtistStats(slug, { onceToken });
+      const stored = (await getUserKeys()) || {};
+      const keys = { ...stored, ...(body.keys || {}) };
+      const onceToken = keys.onceApiToken?.trim() || body.onceApiToken?.trim() || "";
+      const stats = await computeArtistStats(slug, { onceToken, keys });
       let career = null;
       let careerCached = false;
       // Après sync ONCE : recalcule le conseil (force) pour détecter ISRC / Unison
       if (body.advise !== false) {
         try {
           const advice = await adviseArtistCareer(slug, {
-            keys: body.keys || {},
+            keys,
             force: true,
           });
           career = advice.career;
