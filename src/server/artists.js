@@ -63,6 +63,87 @@ function stripHeavyProfile(artist = {}) {
   return clone;
 }
 
+/** Évite qu’un sync partiel écrase gender / voice / genderLock avec `undefined`. */
+function omitUndefined(obj = {}) {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+}
+
+function hasVoiceSample(sample) {
+  return Boolean(sample && (sample.s3Key || sample.url || sample.dataUrl));
+}
+
+/** Score pour choisir le profil studio le plus complet (style, voix, genre…). */
+function profileRichness(artist = {}) {
+  let score = 0;
+  if (resolveArtistGender(artist)) score += 6;
+  if (artist.styleLock && typeof artist.styleLock === "object") score += 12;
+  if (hasVoiceSample(artist.voiceSample)) score += 10;
+  if (artist.genre || (Array.isArray(artist.genres) && artist.genres.length)) score += 4;
+  if (artist.voice) score += 2;
+  if (artist.mood) score += 1;
+  if (artist.language) score += 1;
+  if (artist.styleArtist || (Array.isArray(artist.styleArtists) && artist.styleArtists.length)) {
+    score += 3;
+  }
+  if (artist.visualIdentity?.genderLock || artist.visualIdentity?.portraitPrompt) score += 3;
+  if (artist.portraitPrompt) score += 2;
+  if (artist.imageUrl) score += 1;
+  if (artist.influences?.length) score += 1;
+  if (artist.age) score += 1;
+  return score;
+}
+
+function mergeArtistProfile(prev = {}, incoming = {}) {
+  const profile = omitUndefined(incoming);
+  const merged = {
+    ...prev,
+    ...profile,
+    imageUrl: profile.imageUrl || prev.imageUrl || null,
+    slug: profile.slug || prev.slug,
+    name: profile.name || prev.name,
+  };
+  // Ne jamais perdre l’identité vocale / style d’un sync partiel
+  if (!merged.gender && prev.gender) merged.gender = prev.gender;
+  if (!merged.voice && prev.voice) merged.voice = prev.voice;
+  if (!merged.mood && prev.mood) merged.mood = prev.mood;
+  if (!merged.language && prev.language) merged.language = prev.language;
+  if (!merged.genre && prev.genre) merged.genre = prev.genre;
+  if (
+    !(Array.isArray(merged.genres) && merged.genres.length) &&
+    Array.isArray(prev.genres) &&
+    prev.genres.length
+  ) {
+    merged.genres = prev.genres;
+  }
+  if (!merged.styleLock && prev.styleLock) merged.styleLock = prev.styleLock;
+  if (!merged.styleArtist && prev.styleArtist) merged.styleArtist = prev.styleArtist;
+  if (
+    !(Array.isArray(merged.styleArtists) && merged.styleArtists.length) &&
+    Array.isArray(prev.styleArtists) &&
+    prev.styleArtists.length
+  ) {
+    merged.styleArtists = prev.styleArtists;
+  }
+  if (!hasVoiceSample(merged.voiceSample) && hasVoiceSample(prev.voiceSample)) {
+    merged.voiceSample = prev.voiceSample;
+  }
+  if (!merged.portraitPrompt && prev.portraitPrompt) {
+    merged.portraitPrompt = prev.portraitPrompt;
+  }
+  merged.visualIdentity = {
+    ...(prev.visualIdentity || {}),
+    ...(profile.visualIdentity || {}),
+  };
+  if (!merged.visualIdentity.genderLock && prev.visualIdentity?.genderLock) {
+    merged.visualIdentity.genderLock = prev.visualIdentity.genderLock;
+  }
+  if (!merged.visualIdentity.portraitPrompt && prev.visualIdentity?.portraitPrompt) {
+    merged.visualIdentity.portraitPrompt = prev.visualIdentity.portraitPrompt;
+  }
+  if (!Object.keys(merged.visualIdentity).length) delete merged.visualIdentity;
+  return withResolvedArtistGender(merged);
+}
+
 export async function upsertArtistFromProject(artist, { preferredSlug } = {}) {
   if (!artist?.name) return null;
   await ensureArtistSchema();
@@ -77,17 +158,12 @@ export async function upsertArtistFromProject(artist, { preferredSlug } = {}) {
     args: [slug],
   });
 
-  const profile = stripHeavyProfile(withResolvedArtistGender({ ...artist, slug }));
+  const incoming = stripHeavyProfile(withResolvedArtistGender({ ...artist, slug }));
 
   if (existing.rows[0]) {
     const row = existing.rows[0];
     const prev = row.profile_json ? JSON.parse(row.profile_json) : {};
-    const merged = {
-      ...prev,
-      ...profile,
-      imageUrl: profile.imageUrl || prev.imageUrl || null,
-      slug,
-    };
+    const merged = mergeArtistProfile(prev, incoming);
     await db.execute({
       sql: `UPDATE artists SET name = ?, profile_json = ?, updated_at = ? WHERE slug = ?`,
       args: [merged.name || artist.name, JSON.stringify(merged), now, slug],
@@ -97,6 +173,7 @@ export async function upsertArtistFromProject(artist, { preferredSlug } = {}) {
 
   // collision rare: slug libre
   const id = uid("art");
+  const profile = incoming;
   await db.execute({
     sql: `
       INSERT INTO artists (id, slug, name, profile_json, stats_json, created_at, updated_at)
@@ -156,7 +233,7 @@ export async function syncArtistsFromProjects() {
     if (!name) continue;
 
     const imageUrl = lightAssetUrl(row.artist_image);
-    const artist = {
+    const artist = omitUndefined({
       name,
       aka: row.artist_aka || undefined,
       slug: row.artist_slug_json || undefined,
@@ -172,7 +249,7 @@ export async function syncArtistsFromProjects() {
         ? { genderLock: row.artist_gender_lock }
         : undefined,
       imageUrl: imageUrl || undefined,
-    };
+    });
 
     const preferredSlug = row.artist_slug || artist.slug || slugify(artist.aka || artist.name);
     if (seen.has(preferredSlug)) {
@@ -717,6 +794,67 @@ export async function adviseArtistCareer(slug, { keys, force = false } = {}) {
 }
 
 /**
+ * Charge le profil artiste le plus riche : hub + meilleurs projets studio.
+ * Garantit gender / styleLock / voice / voiceSample réutilisables pour un nouveau morceau.
+ */
+export async function resolveArtistProfileForRelease(slug, nameHint = "") {
+  const artist = await getArtistBySlug(slug);
+  if (!artist && !nameHint) return null;
+
+  const name = nameHint || artist?.name || slug;
+  let profile = withResolvedArtistGender({
+    ...(artist?.profile || {}),
+    slug: artist?.slug || slug,
+    name,
+  });
+
+  const db = getDb();
+  const res = await db.execute({
+    sql: `
+      SELECT
+        json_extract(project_json, '$.artist') AS artist_json,
+        updated_at
+      FROM projects
+      WHERE artist_slug = ? OR artist_name = ?
+      ORDER BY updated_at DESC
+      LIMIT 20
+    `,
+    args: [artist?.slug || slug, name],
+  });
+
+  let bestFromProjects = null;
+  let bestScore = -1;
+  for (const row of res.rows) {
+    if (!row.artist_json) continue;
+    let a;
+    try {
+      a = typeof row.artist_json === "string" ? JSON.parse(row.artist_json) : row.artist_json;
+    } catch {
+      continue;
+    }
+    if (!a || typeof a !== "object") continue;
+    const score = profileRichness(a);
+    if (score > bestScore) {
+      bestScore = score;
+      bestFromProjects = a;
+    }
+  }
+
+  if (bestFromProjects) {
+    // Hub = base, projet riche = prioritaire sur style / voix / genres (merge préserve les trous)
+    profile = mergeArtistProfile(profile, bestFromProjects);
+  }
+
+  profile = withResolvedArtistGender({
+    ...profile,
+    slug: artist?.slug || slug,
+    name,
+  });
+
+  return profile;
+}
+
+/**
  * Récupère sexe / voix depuis un projet studio déjà généré (hub parfois incomplet).
  */
 async function recoverArtistGenderFromProjects(slug, name) {
@@ -727,7 +865,9 @@ async function recoverArtistGenderFromProjects(slug, name) {
         json_extract(project_json, '$.artist.gender') AS gender,
         json_extract(project_json, '$.artist.voice') AS voice,
         json_extract(project_json, '$.artist.visualIdentity.gender') AS vi_gender,
-        json_extract(project_json, '$.artist.visualIdentity.genderLock') AS gender_lock
+        json_extract(project_json, '$.artist.visualIdentity.genderLock') AS gender_lock,
+        json_extract(project_json, '$.artist.portraitPrompt') AS portrait_prompt,
+        json_extract(project_json, '$.artist.visualIdentity.portraitPrompt') AS vi_portrait
       FROM projects
       WHERE artist_slug = ? OR artist_name = ?
       ORDER BY updated_at DESC
@@ -740,13 +880,15 @@ async function recoverArtistGenderFromProjects(slug, name) {
     const recovered = {
       gender: row.gender || undefined,
       voice: row.voice || undefined,
+      portraitPrompt: row.portrait_prompt || undefined,
       visualIdentity: {
         ...(row.vi_gender ? { gender: row.vi_gender } : {}),
         ...(row.gender_lock ? { genderLock: row.gender_lock } : {}),
+        ...(row.vi_portrait ? { portraitPrompt: row.vi_portrait } : {}),
       },
     };
     if (!Object.keys(recovered.visualIdentity).length) delete recovered.visualIdentity;
-    if (resolveArtistGender(recovered)) return recovered;
+    if (resolveArtistGender(recovered)) return omitUndefined(recovered);
   }
   return null;
 }
@@ -778,6 +920,11 @@ export async function hydrateProjectArtistGender(saved) {
             ...(hub.profile.visualIdentity || {}),
             ...(artist.visualIdentity || {}),
           },
+          portraitPrompt:
+            artist.portraitPrompt ||
+            artist.visualIdentity?.portraitPrompt ||
+            hub.profile.portraitPrompt ||
+            hub.profile.visualIdentity?.portraitPrompt,
         });
       }
     } catch {
@@ -801,8 +948,14 @@ export async function hydrateProjectArtistGender(saved) {
     }
   }
 
-  if (!artist.gender || artist.gender === original.gender) return saved;
+  artist = withResolvedArtistGender(artist);
+  const resolved = resolveArtistGender(artist);
+  if (!resolved) return saved;
+  if (original.gender === resolved.code && artist.gender === original.gender) {
+    return saved;
+  }
 
+  artist = { ...artist, gender: resolved.code };
   const nextProject = { ...project, artist };
   try {
     await saveProject({
@@ -819,11 +972,20 @@ export async function hydrateProjectArtistGender(saved) {
     /* lecture toujours possible même si la persistance échoue */
   }
 
+  if (slug) {
+    try {
+      await upsertArtistFromProject(artist, { preferredSlug: slug });
+    } catch {
+      /* hub optionnel */
+    }
+  }
+
   return { ...saved, project: nextProject };
 }
 
 /**
  * Nouveau projet / morceau pour un artiste existant (garde le profil).
+ * Réutilise gender, timbre (voice / voiceSample), styleLock, genres du hub + meilleurs projets.
  */
 export async function createArtistRelease(slug, { theme = "", variantOf = null } = {}) {
   const artist = await getArtistBySlug(slug);
@@ -833,13 +995,8 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
     theme?.trim() ||
     (variantOf ? `Suite / variante de « ${variantOf} »` : "");
 
-  const language = artist.profile?.language || "fr";
-
-  let profile = withResolvedArtistGender({
-    ...artist.profile,
-    slug: artist.slug,
-    name: artist.name,
-  });
+  let profile = await resolveArtistProfileForRelease(artist.slug, artist.name);
+  if (!profile) throw new Error("Profil artiste introuvable");
 
   if (!resolveArtistGender(profile)) {
     const recovered = await recoverArtistGenderFromProjects(artist.slug, artist.name);
@@ -854,11 +1011,13 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
           ...(recovered.visualIdentity || {}),
         },
       });
-      await upsertArtistFromProject(profile, { preferredSlug: artist.slug });
     }
-  } else if (!artist.profile?.gender && profile.gender) {
-    await upsertArtistFromProject(profile, { preferredSlug: artist.slug });
   }
+
+  // Persiste le profil enrichi sur le hub pour les prochains singles
+  await upsertArtistFromProject(profile, { preferredSlug: artist.slug });
+
+  const language = profile.language || artist.profile?.language || "fr";
 
   const project = {
     trends: null,
@@ -878,9 +1037,13 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
 
   const seed = {
     name: artist.name,
-    bioHint: artist.profile?.bio || "",
+    bioHint: profile.bio || artist.profile?.bio || "",
     theme: themeHint || "Nouveau single",
     market: "FR",
+    genre: profile.genre || "",
+    genres: Array.isArray(profile.genres) ? profile.genres : [],
+    language,
+    styleArtist: profile.styleArtist || "",
     artistSlug: artist.slug,
   };
 
@@ -918,6 +1081,11 @@ export async function openArtistStyleEditor(slug) {
   const artist = await getArtistBySlug(slug);
   if (!artist) throw new Error("Artiste introuvable");
 
+  const richProfile = await resolveArtistProfileForRelease(artist.slug, artist.name);
+  if (richProfile) {
+    await upsertArtistFromProject(richProfile, { preferredSlug: artist.slug });
+  }
+
   const releases = await listArtistReleases(slug, 1);
   if (releases[0]?.id) {
     const existing = await getProject(releases[0].id);
@@ -926,7 +1094,7 @@ export async function openArtistStyleEditor(slug) {
         ...existing.project,
         artist: withResolvedArtistGender({
           ...existing.project.artist,
-          ...artist.profile,
+          ...(richProfile || artist.profile),
           slug: artist.slug,
           name: artist.name,
         }),
@@ -959,7 +1127,7 @@ export async function openArtistStyleEditor(slug) {
 
 export async function linkProjectToArtist(projectId, artist) {
   if (!projectId || !artist?.name) return null;
-  const upserted = await upsertArtistFromProject(artist);
+  const upserted = await upsertArtistFromProject(withResolvedArtistGender(artist));
   if (!upserted) return null;
   const db = getDb();
   await db.execute({
@@ -967,6 +1135,94 @@ export async function linkProjectToArtist(projectId, artist) {
     args: [upserted.slug, projectId],
   });
   return upserted;
+}
+
+/**
+ * Backfill : enrichit tous les hubs + projets (gender, style, voix) depuis le plus riche profil.
+ */
+export async function backfillAllArtistProfiles() {
+  await ensureArtistSchema();
+  const db = getDb();
+  const artists = await db.execute({
+    sql: `SELECT slug, name FROM artists ORDER BY updated_at DESC`,
+  });
+
+  const report = {
+    artists: 0,
+    artistsFixedGender: 0,
+    artistsEnriched: 0,
+    projects: 0,
+    projectsFixedGender: 0,
+    stillMissingGender: [],
+  };
+
+  for (const row of artists.rows) {
+    report.artists += 1;
+    const before = await getArtistBySlug(row.slug);
+    const beforeGender = Boolean(resolveArtistGender(before?.profile));
+    const beforeScore = profileRichness(before?.profile || {});
+
+    const profile = await resolveArtistProfileForRelease(row.slug, row.name);
+    if (!profile) continue;
+
+    await upsertArtistFromProject(profile, { preferredSlug: row.slug });
+    const afterGender = Boolean(resolveArtistGender(profile));
+    const afterScore = profileRichness(profile);
+    if (!beforeGender && afterGender) report.artistsFixedGender += 1;
+    if (afterScore > beforeScore) report.artistsEnriched += 1;
+    if (!afterGender) report.stillMissingGender.push(row.slug);
+
+    const projects = await db.execute({
+      sql: `
+        SELECT id, project_json, seed_json
+        FROM projects
+        WHERE artist_slug = ? OR artist_name = ?
+      `,
+      args: [row.slug, row.name],
+    });
+
+    for (const prow of projects.rows) {
+      report.projects += 1;
+      let project;
+      try {
+        project = JSON.parse(prow.project_json);
+      } catch {
+        continue;
+      }
+      const original = project.artist;
+      if (!original) continue;
+      const hadGender = Boolean(resolveArtistGender(original));
+      const merged = mergeArtistProfile(original, profile);
+      if (!resolveArtistGender(merged) && !hadGender) continue;
+      if (
+        hadGender &&
+        original.gender === merged.gender &&
+        profileRichness(original) >= profileRichness(merged)
+      ) {
+        continue;
+      }
+      project.artist = merged;
+      let seed = {};
+      try {
+        seed = prow.seed_json ? JSON.parse(prow.seed_json) : {};
+      } catch {
+        seed = {};
+      }
+      await saveProject({
+        id: prow.id,
+        project,
+        seed,
+        event: {
+          stepKey: "artist",
+          eventType: "backfill",
+          message: "Profil artiste enrichi (voix / style / gender)",
+        },
+      });
+      if (!hadGender && resolveArtistGender(merged)) report.projectsFixedGender += 1;
+    }
+  }
+
+  return report;
 }
 
 /**

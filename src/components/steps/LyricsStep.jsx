@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { PenLine, Languages, Music2 } from "lucide-preact";
-import { MUSIC_LANGUAGES, languageLabel } from "../../lib/studio.js";
+import { languageLabel, languagesForProvider, songGenLanguageHint, languageEngineLabel } from "../../lib/studio.js";
+import { loadKeys } from "../../lib/keys.js";
 import VersionPicker from "../VersionPicker.jsx";
 
 export default function LyricsStep({
@@ -15,6 +16,12 @@ export default function LyricsStep({
 }) {
   const [theme, setTheme] = useState(lyrics?.theme || "");
   const [language, setLanguage] = useState(lyrics?.language || artist?.language || "fr");
+  const keysSnap = loadKeys();
+  const langOptions = languagesForProvider(
+    keysSnap.musicProvider,
+    keysSnap.songGenPreferredModel,
+  );
+  const songGenLangs = String(keysSnap.musicProvider || "") === "songgen";
 
   useEffect(() => {
     if (lyrics?.language) setLanguage(lyrics.language);
@@ -24,6 +31,12 @@ export default function LyricsStep({
   useEffect(() => {
     if (lyrics?.theme) setTheme(lyrics.theme);
   }, [lyrics?.theme]);
+
+  useEffect(() => {
+    if (!langOptions.some((l) => l.code === language) && langOptions[0]) {
+      setLanguage(langOptions[0].code);
+    }
+  }, [language, langOptions]);
 
   const hasVersions = versions.length > 0;
   const generateLabel = hasVersions
@@ -55,9 +68,19 @@ export default function LyricsStep({
             <Languages size={14} class="text-primary" />
             Langue des paroles
           </legend>
+          {songGenLangs && (
+            <p class="text-xs text-warning">
+              {songGenLanguageHint(keysSnap.songGenPreferredModel || "songgeneration_large")}
+            </p>
+          )}
           <div class="flex flex-wrap gap-2">
-            {MUSIC_LANGUAGES.map((l) => {
+            {langOptions.map((l) => {
               const active = language === l.code;
+              const engine = languageEngineLabel(
+                l.code,
+                keysSnap.musicProvider,
+                keysSnap.songGenPreferredModel,
+              );
               return (
                 <button
                   key={l.code}
@@ -66,6 +89,9 @@ export default function LyricsStep({
                   onClick={() => setLanguage(l.code)}
                 >
                   {l.label}
+                  {engine === "MiniMax" ? (
+                    <span class="ml-1 text-[10px] opacity-70">MiniMax</span>
+                  ) : null}
                 </button>
               );
             })}

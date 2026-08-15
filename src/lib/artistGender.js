@@ -19,7 +19,8 @@ export function parseGenderCode(raw) {
   if (g === "male" || g === "female" || g === "nonbinary") return g;
   if (
     /^(female|woman|femme|f|fille)$/.test(g) ||
-    /\bfemale\b|\bfemme\b|\bwoman\b|\bwomen\b|\bgirl\b|\bsoprano\b|\bmezzo\b/.test(g)
+    /\bfemale\b|\bfemme\b|\bwoman\b|\bwomen\b|\bgirl\b|\bsoprano\b|\bmezzo\b/.test(g) ||
+    /\bshe\b|\bher\b|\bhers\b|\bherself\b|\belle\b/.test(g)
   ) {
     return "female";
   }
@@ -31,7 +32,8 @@ export function parseGenderCode(raw) {
   }
   if (
     /^(male|man|homme|m|garcon|masculin)$/.test(g) ||
-    /\bmale\b|\bhomme\b|\bman\b|\bmen\b|\bmasculine\b|\bbaritone\b|\btenor\b/.test(g)
+    /\bmale\b|\bhomme\b|\bman\b|\bmen\b|\bmasculine\b|\bbaritone\b|\btenor\b/.test(g) ||
+    /\bhe\b|\bhim\b|\bhis\b|\bhimself\b|\bil\b/.test(g)
   ) {
     return "male";
   }
@@ -39,7 +41,17 @@ export function parseGenderCode(raw) {
 }
 
 /**
- * Voix / sexe déjà enregistrés sur le profil (création, genderLock, voice…).
+ * `artist.voice` est souvent une description timbre (« Voix grave… »), pas un code sexe.
+ * On ne parse que les libellés courts (Homme, male, female vocals…).
+ */
+function voiceAsGenderHint(voice) {
+  const raw = String(voice || "").trim();
+  if (!raw || raw.length > 48) return null;
+  return parseGenderCode(raw);
+}
+
+/**
+ * Voix / sexe déjà enregistrés sur le profil (création, genderLock, portrait…).
  * @returns {{ code: "male"|"female"|"nonbinary", label: string } | null}
  */
 export function resolveArtistGender(artist) {
@@ -48,8 +60,10 @@ export function resolveArtistGender(artist) {
     artist.gender,
     artist.visualIdentity?.gender,
     artist.visualIdentity?.genderLock,
-    artist.voice,
+    voiceAsGenderHint(artist.voice),
     artist.styleLock?.vocalStyle,
+    artist.portraitPrompt,
+    artist.visualIdentity?.portraitPrompt,
   ];
   for (const src of sources) {
     const code = parseGenderCode(src);

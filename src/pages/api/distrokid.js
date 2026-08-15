@@ -7,6 +7,8 @@ export async function POST({ request }) {
     const data = await runDistroKid(body);
     return json(data);
   } catch (e) {
+    console.error("[distrokid]", e?.message || e);
+    if (e?.stack) console.error(e.stack);
     return error(e.message || "Erreur ONCE", 500);
   }
 }

@@ -21,6 +21,7 @@ import {
   isSongGenMusicProvider,
   resolveVocalGender,
 } from "./songGeneration.js";
+import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
 import { slugify, getArtistBySlug } from "./artists.js";
 import { llmJson, requireTextLlm } from "./llm.js";
@@ -287,6 +288,8 @@ const LANG_PROMPT = {
   fr: "français",
   en: "anglais (English)",
   es: "espagnol",
+  zh: "chinois (mandarin)",
+  ja: "japonais",
   pt: "portugais",
   it: "italien",
   de: "allemand",
@@ -1119,6 +1122,16 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
     );
   }
   artist = withResolvedArtistGender(artist);
+  const lang = lyrics?.language || artist?.language || "fr";
+  const songGenModel = keys?.songGenPreferredModel;
+  const wantSongGen = isSongGenMusicProvider(keys);
+  const songGenNative = wantSongGen && isLanguageOkForProvider(lang, "songgen", songGenModel);
+  const hasMinimax = Boolean(keys?.replicateApiToken?.trim());
+  if (wantSongGen && !songGenNative && !hasMinimax) {
+    throw new Error(
+      `${songGenLanguageHint(songGenModel || "songgeneration_large")} Ajoute un token Replicate pour chanter cette langue, ou passe les paroles en anglais.`,
+    );
+  }
   const isPreview = Boolean(preview);
   const { prompt, styleLock, vocal, arrangeBpm, arrange, packed } = buildTrackMusicPrompt({
     lyrics,
@@ -1141,7 +1154,7 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
     arrange,
   });
 
-  if (isSongGenMusicProvider(keys)) {
+  if (wantSongGen && songGenNative) {
     const started = await startSongGeneration(keys, {
       prompt,
       lyrics: lyrics?.text || "",
@@ -1195,9 +1208,13 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
         bpm: bpmGuess,
         isPreview,
         status: isPreview ? "preview-ready" : "prompt-ready",
-        note: isPreview
-          ? "Extrait MiniMax (paroles tronquées) — brouillon indicatif"
-          : draft.note,
+        note: wantSongGen && !songGenNative
+          ? isPreview
+            ? `Extrait MiniMax · ${lang} — SongGen Large ne chante pas cette langue`
+            : `MiniMax · ${lang} (SongGen Large : anglais / chinois seulement)`
+          : isPreview
+            ? "Extrait MiniMax (paroles tronquées) — brouillon indicatif"
+            : draft.note,
       },
     };
   }

@@ -38,11 +38,11 @@ const MODEL_RANK = {
 /** Params d’inférence selon le modèle réellement choisi (matériel). */
 const MODEL_INFER_PARAMS = {
   songgeneration_large: {
-    cfg_coef: 2.2,
-    temperature: 0.7,
+    cfg_coef: 1.95,
+    temperature: 0.72,
     top_k: 40,
     top_p: 0.0,
-    extend_stride: 8,
+    extend_stride: 6,
     label: "Large · qualité max",
   },
   songgeneration_base_full: {
@@ -390,12 +390,10 @@ export function lyricsToSections(lyricsText = "") {
 
   if (!text) {
     return [
-      { type: "intro-short", lyrics: null },
       { type: "verse", lyrics: "la la la" },
       { type: "chorus", lyrics: "oh oh oh" },
       { type: "verse", lyrics: "la la la" },
       { type: "chorus", lyrics: "oh oh oh" },
-      { type: "outro-short", lyrics: null },
     ];
   }
 
@@ -403,12 +401,8 @@ export function lyricsToSections(lyricsText = "") {
   const tags = [...text.matchAll(tagRe)];
   if (!tags.length) {
     return [
-      { type: "intro-short", lyrics: null },
-      { type: "verse", lyrics: text.slice(0, 800) },
-      { type: "chorus", lyrics: text.slice(0, 400) },
-      { type: "verse", lyrics: text.slice(0, 600) },
-      { type: "chorus", lyrics: text.slice(0, 400) },
-      { type: "outro-short", lyrics: null },
+      { type: "verse", lyrics: formatLyricsForSongGen(text.slice(0, 800), { maxLines: 16, maxChars: 800 }) },
+      { type: "chorus", lyrics: formatLyricsForSongGen(text.slice(0, 400), { maxLines: 8, maxChars: 400 }) },
     ];
   }
 
@@ -434,72 +428,70 @@ export function lyricsToSections(lyricsText = "") {
     } else if (/^verse|couplet/.test(rawType)) type = "verse";
 
     const vocal = ["verse", "chorus", "bridge", "prechorus"].includes(type);
+    const lyrics =
+      vocal && body ? formatLyricsForSongGen(body, { maxLines: 24, maxChars: 1400 }) : null;
+
+    // Intro/outro instrumentales vides → drone / sifflement : on les ignore.
+    if (/^intro|^outro/.test(type) && !lyrics) continue;
+
     sections.push({
       type,
-      lyrics: vocal && body ? body : null,
+      lyrics,
     });
   }
 
-  // Intro courte forcée si absente → pose le lit instrumental sans le drone ~1 min.
-  if (sections.length && !/^intro/.test(sections[0].type)) {
-    sections.unshift({ type: "intro-short", lyrics: null });
-  }
-  // Outro courte seulement si absente (fondu propre, pas un long pad).
-  if (sections.length && !/^outro/.test(sections[sections.length - 1].type)) {
-    sections.push({ type: "outro-short", lyrics: null });
-  }
-
-  return sections.length ? sections : [{ type: "verse", lyrics: text.slice(0, 800) }];
+  return sections.length ? sections : [{ type: "verse", lyrics: formatLyricsForSongGen(text, { maxLines: 16, maxChars: 800 }) }];
 }
 
 /**
- * Extrait court SongGen : intro courte + 1er verse + 1er chorus (pas de bridge/outro/2e couplet).
- * Vrai gain GPU vs morceau complet.
+ * LeVo (SongGen) joint les lignes par « . » et strippe la ponctuation.
+ * On n’envoie que des lignes COMPLÈTES (un slice mid-mot = charabia).
+ * Apostrophes FR → espace, sinon Studio les enlève (« c'est » → « cest »).
+ */
+export function formatLyricsForSongGen(raw, { maxLines = 8, maxChars = 360 } = {}) {
+  const lines = String(raw || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^\[[^\]]+\]\s*/g, "")
+        .replace(/['’‘‛]/g, " ")
+        .replace(/[«»""„]/g, "")
+        .replace(/[,;:!?…]/g, "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter((line) => line.length >= 2);
+
+  const out = [];
+  let chars = 0;
+  for (const line of lines) {
+    if (out.length >= maxLines) break;
+    if (out.length >= 2 && chars + line.length > maxChars) break;
+    out.push(line);
+    chars += line.length + 1;
+  }
+  return out.join("\n");
+}
+
+/**
+ * Extrait SongGen : couplet court + refrain (sans intro).
+ * Un refrain seul (~10s) sort souvent vocoder a cappella chez LeVo.
  */
 export function lyricsToPreviewSections(lyricsText = "") {
   const full = lyricsToSections(lyricsText);
+  const chorus = full.find((s) => s.type === "chorus" && String(s.lyrics || "").trim());
+  const verse = full.find((s) => s.type === "verse" && String(s.lyrics || "").trim());
   const out = [];
-  let hasVerse = false;
-  let hasChorus = false;
-
-  for (const s of full) {
-    if (/^intro/.test(s.type) && !out.some((x) => /^intro/.test(x.type))) {
-      out.push({ type: "intro-short", lyrics: null });
-      continue;
-    }
-    if (/^outro/.test(s.type)) continue;
-    if (s.type === "verse" && !hasVerse) {
-      out.push({
-        ...s,
-        lyrics: s.lyrics ? String(s.lyrics).slice(0, 400) : s.lyrics,
-      });
-      hasVerse = true;
-      continue;
-    }
-    if (s.type === "chorus" && !hasChorus) {
-      out.push({
-        ...s,
-        lyrics: s.lyrics ? String(s.lyrics).slice(0, 280) : s.lyrics,
-      });
-      hasChorus = true;
-      continue;
-    }
-    if (hasVerse && hasChorus) break;
+  if (verse?.lyrics) {
+    const v = formatLyricsForSongGen(verse.lyrics, { maxLines: 4, maxChars: 180 });
+    if (v) out.push({ type: "verse", lyrics: v });
   }
-
-  if (!out.length) {
-    return [
-      { type: "intro-short", lyrics: null },
-      { type: "verse", lyrics: "la la la" },
-      { type: "chorus", lyrics: "oh oh oh" },
-    ];
-  }
-  if (!hasVerse) {
-    out.push({ type: "verse", lyrics: "la la la" });
-  }
-  if (!hasChorus) {
-    out.push({ type: "chorus", lyrics: "oh oh oh" });
-  }
+  const hook = formatLyricsForSongGen((chorus || verse)?.lyrics || lyricsText, {
+    maxLines: 6,
+    maxChars: 240,
+  });
+  out.push({ type: "chorus", lyrics: hook || "oh oh oh" });
   return out;
 }
 
@@ -578,8 +570,9 @@ export function resolveVocalGender(artist) {
  * @see BazedFrog/SongGeneration-Studio generation.py
  */
 function mapGenreForStudio(genre = "") {
+  // Tester la chaîne ENTIÈRE (pas le 1er token) : « Afro-trap / Dancehall »
+  // sinon « afro-trap » matchait `trap` → Pop et perdait dancehall/afrobeat.
   const g = String(genre || "")
-    .split(/\s*[×xX|,;/]\s*/)[0]
     .trim()
     .toLowerCase()
     .normalize("NFD")
@@ -587,7 +580,11 @@ function mapGenreForStudio(genre = "") {
 
   if (!g) return "Pop";
 
-  // Ordre : plus spécifique d’abord (évite que « pop » gagne trop tôt)
+  // Ordre : plus spécifique d’abord
+  // Afro / dancehall AVANT « dance » (sinon Dancehall → Electronic)
+  if (/afro-?trap|afrobeat|afrobeats|amapiano|dancehall|reggae|ska|\bdub\b/.test(g)) {
+    return "Reggae";
+  }
   if (/gospel|inspirational|choir|spiritual|worship/.test(g)) return "R&B";
   if (/r&?b|soul|neo-?soul|motown|funk/.test(g)) return "R&B";
   if (/metal|hardcore|screamo/.test(g)) return "Metal";
@@ -596,14 +593,13 @@ function mapGenreForStudio(genre = "") {
   if (/folk|acoustic|chanson|singer-?songwriter|americana|country|bluegrass/.test(g))
     return "Folk";
   if (
-    /electro|edm|dance|house|techno|hyperpop|synth|electronic|trance|dubstep|drum.?and.?bass|ambient|indie electronic/.test(
+    /electro|edm|\bdance\b|house|techno|hyperpop|synth|electronic|trance|dubstep|drum.?and.?bass|ambient|indie electronic/.test(
       g,
     )
   ) {
     return "Electronic";
   }
-  if (/reggae|dancehall|ska|dub\b/.test(g)) return "Reggae";
-  if (/latin|reggaeton|salsa|bachata|cumbia|afrobeats|afrobeat|amapiano/.test(g)) return "Pop";
+  if (/latin|reggaeton|salsa|bachata|cumbia/.test(g)) return "Pop";
   if (/hip[\s-]?hop|rap|trap|drill|boom\s*bap|grime/.test(g)) return "Pop";
   if (/chinese|c-pop|mandopop/.test(g)) return "Chinese Style";
   if (/ballad|slow jam|love song/.test(g)) return "R&B";
@@ -611,13 +607,73 @@ function mapGenreForStudio(genre = "") {
   return "Pop";
 }
 
+/** Emotion Studio : anglais court (LeVo ignore souvent le FR). */
+function mapEmotionForStudio(mood = "", { gospel = false, wantsChoir = false } = {}) {
+  const raw = String(mood || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+  if (!raw) {
+    if (gospel) return "uplifting";
+    if (wantsChoir) return "soulful";
+    return "energetic";
+  }
+  if (/festif|dansant|party|upbeat|joyeux|energie|energetic|hype|fire|soleil|summer/.test(raw)) {
+    return "energetic";
+  }
+  if (/melancol|sad|triste|dark|sombre|intim/.test(raw)) return "melancholic";
+  if (/romanti|love|doux|tendre|sensual/.test(raw)) return "romantic";
+  if (/agress|rage|angry|hard|raw/.test(raw)) return "aggressive";
+  if (/chill|cool|laid.?back|relax|zen/.test(raw)) return "chill";
+  if (/soulful|emotion|profond/.test(raw)) return "soulful";
+  // Premier token si déjà anglais court
+  const first = raw.split(/[,/|·]/)[0].trim();
+  if (/^[a-z][a-z\s-]{1,28}$/.test(first) && !/[àâäéèêëïîôùûüç]/.test(first)) {
+    return first.slice(0, 40);
+  }
+  return "energetic";
+}
+
+/** Tags genre libres (sans styleLock) — complètent le genre Studio trop grossier. */
+function genreFlavorTags(genreHint = "") {
+  const raw = String(genreHint || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const tags = [];
+  const add = (t) => {
+    if (t && !tags.includes(t)) tags.push(t);
+  };
+  if (/afro-?trap|afrobeat|afrobeats/.test(raw)) {
+    add("afrobeats");
+    add("afrobeat");
+    add("dancehall");
+    add("tropical percussion");
+    add("syncopated groove");
+  } else if (/dancehall/.test(raw)) {
+    add("dancehall");
+    add("caribbean");
+    add("offbeat guitar");
+  } else if (/trap|drill|hip[\s-]?hop|rap/.test(raw)) {
+    add("trap drums");
+    add("808 bass");
+    add("hip hop");
+  } else if (/hyperpop|electro/.test(raw)) {
+    add("hyperpop");
+    add("glitchy synths");
+  }
+  return tags;
+}
+
 /**
  * Tags courts pour descriptions LeVo (pas de pavés anglais — ça aplatit le mix).
  * @param {object|null} lock
  * @param {ReturnType<typeof musicArrangeToSongGen>} fromArrange
  * @param {"male"|"female"} genderCode
+ * @param {{ language?: string }} [opts]
  */
-function buildSongGenStyleTags(lock, fromArrange, genderCode = "male") {
+function buildSongGenStyleTags(lock, fromArrange, genderCode = "male", { language } = {}) {
   const tags = [];
   const push = (v, max = 36) => {
     let s0 = stripOppositeGender(v, genderCode);
@@ -641,18 +697,21 @@ function buildSongGenStyleTags(lock, fromArrange, genderCode = "male") {
     tags.push(s0);
   };
 
-  // Verrou sexe EN TÊTE — l’auto_prompt Studio clone souvent une chanteuse
+  // Mix d’abord — trop de tags « vocals » → vocoder sans bande audible
+  push("full band mix", 20);
+  push("punchy drums", 16);
+  push("audible bass", 16);
   if (genderCode === "female") {
-    push("female", 12);
-    push("female singer", 20);
-    push("woman vocals", 20);
+    push("natural female vocals", 24);
   } else {
-    push("male", 12);
-    push("male singer", 20);
-    push("man vocals", 20);
-    push("baritone", 12);
-    push("deep male voice", 24);
+    push("natural male vocals", 24);
   }
+  push("dry vocals", 14);
+  push("no vocoder", 14);
+  push("no autotune", 14);
+  const lang = String(language || "").toLowerCase();
+  if (lang.startsWith("fr")) push("french lyrics", 16);
+  else if (lang.startsWith("en")) push("english lyrics", 16);
 
   if (Array.isArray(lock?.sonicKeywords)) {
     for (const k of lock.sonicKeywords.slice(0, 8)) push(k, 32);
@@ -723,7 +782,16 @@ function bandForStudioGenre(studioGenre = "Pop", { gospel = false } = {}) {
     return ["acoustic guitar", "bass", "soft drums", "piano", "strings"];
   }
   if (g.includes("reggae")) {
-    return ["guitar", "bass", "drums", "organ", "percussion"];
+    return [
+      "guitar",
+      "bass",
+      "drums",
+      "organ",
+      "percussion",
+      "shaker",
+      "808 bass",
+      "synth pads",
+    ];
   }
   // Pop / défaut
   return ["electric guitar", "bass", "drum kit", "piano", "synth pads", "keys"];
@@ -775,9 +843,17 @@ function shortTimbre(raw = "") {
 
 
 /** Timbre aligné sur le sexe — hard-lock (le styleLock / auto_prompt fuit souvent vers une voix femme). */
-function timbreForGender(genderCode, voiceSample, _lock) {
+function timbreForGender(genderCode, voiceSample, _lock, voiceDesc = "") {
   // Défauts forts : ne pas faire confiance au styleLock (réf. souvent femme).
-  if (genderCode === "female") return "bright soft female";
+  if (genderCode === "female") {
+    const personal = shortTimbre(
+      voiceSample?.songGenTimbre || voiceSample?.analyzedTimbre || "",
+    );
+    if (personal && !conflictsGenderText(personal, "female") && !/\b(vocoder|autotune)\b/i.test(personal)) {
+      return stripOppositeGender(personal, "female") || "natural female";
+    }
+    return "natural female";
+  }
 
   const personal = shortTimbre(
     voiceSample?.songGenTimbre || voiceSample?.analyzedTimbre || "",
@@ -786,12 +862,14 @@ function timbreForGender(genderCode, voiceSample, _lock) {
     personal &&
     !conflictsGenderText(personal, "male") &&
     !FEMININE_TIMBRE_RE.test(personal) &&
-    (MASCULINE_TIMBRE_RE.test(personal) || MALE_VOICE_RE.test(personal))
+    (MASCULINE_TIMBRE_RE.test(personal) || MALE_VOICE_RE.test(personal)) &&
+    !/\b(vocoder|autotune)\b/i.test(personal)
   ) {
-    return stripOppositeGender(personal, "male") || "deep warm baritone";
+    return stripOppositeGender(personal, "male") || "natural male";
   }
-  // Ignorer lock.timbre : source #1 de voix féminine sur artiste homme.
-  return "deep warm baritone";
+
+  // « grave / autotune » du profil LLM → vocoder chez LeVo. On reste dry.
+  return "natural male";
 }
 
 function findModelEntry(catalog, modelId) {
@@ -1182,7 +1260,7 @@ export async function startSongGeneration(
   }
 
   // Timbre : court, optionnel. Pas d’analyse Gemini à chaque gen (voix souvent pire).
-  const cachedTimbre = timbreForGender(vocal.code, voiceSample, lock);
+  const cachedTimbre = timbreForGender(vocal.code, voiceSample, lock, artist?.voice);
 
   // Arrangement : si vide → déduire du styleLock (titre / artiste de référence)
   let arrange = normalizeMusicArrange(artist?.musicArrange);
@@ -1207,14 +1285,30 @@ export async function startSongGeneration(
 
   const instruments = buildSongGenInstruments(lock, fromArrange, { gospel, studioGenre });
 
-  const styleTags = buildSongGenStyleTags(lock, fromArrange, vocal.code);
-  // Instruments aussi dans custom_style (LeVo les lit mieux en tags répétés)
-  const custom = [...styleTags, ...instruments.split(",").map((x) => x.trim()).filter(Boolean)]
+  const styleTags = buildSongGenStyleTags(lock, fromArrange, vocal.code, {
+    language: artist?.language || lyrics?.language,
+  });
+  for (const flavor of genreFlavorTags(genreHint)) {
+    if (!styleTags.some((t) => t.toLowerCase() === flavor.toLowerCase())) {
+      styleTags.push(flavor);
+    }
+  }
+  // PAS d’instruments ici : déjà dans le champ dédié. Les dupliquer sature LeVo
+  // (voix robotique + mix brouillon).
+  const custom = styleTags
     .filter((t, i, arr) => arr.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i)
+    .slice(0, preview ? 10 : 14)
     .join(", ")
-    .slice(0, 480);
+    .slice(0, preview ? 220 : 360);
 
   const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
+  const genreBpm = /dancehall|reggae/i.test(genreHint)
+    ? 98
+    : /afro/i.test(genreHint)
+      ? 108
+      : /trap|drill/i.test(genreHint)
+        ? 138
+        : 110;
 
   // Modèle auto selon VRAM + préférence SONOZZ (Large soft sur 3090)
   let catalog = null;
@@ -1236,13 +1330,14 @@ export async function startSongGeneration(
     totalGb: gpu.totalGb,
   });
   const modelId = pick.modelId;
-  const infer = pick.params || MODEL_INFER_PARAMS.songgeneration_base;
+  const infer = { ...(pick.params || MODEL_INFER_PARAMS.songgeneration_base) };
+  // Preview : stride court (Large=8 allonge le drone) + CFG un peu plus bas (moins de saturation)
+  if (preview) {
+    infer.extend_stride = Math.min(Number(infer.extend_stride) || 5, 4);
+    infer.cfg_coef = Math.min(Number(infer.cfg_coef) || 1.8, 1.85);
+  }
 
-  let emotionRaw = String(
-    mood || lock?.mood || (gospel ? "uplifting" : wantsChoir ? "soulful" : "energetic"),
-  )
-    .split(/[,/|]/)[0]
-    .trim();
+  let emotionRaw = mapEmotionForStudio(mood || lock?.mood || "", { gospel, wantsChoir });
   if (vocal.code === "male" && FEMININE_TIMBRE_RE.test(emotionRaw)) {
     emotionRaw = "energetic";
   }
@@ -1260,7 +1355,10 @@ export async function startSongGeneration(
     custom_style: custom,
     bpm: Math.min(
       200,
-      Math.max(60, Number.isFinite(lockBpm) && lockBpm >= 60 ? Math.round(lockBpm) : 110),
+      Math.max(
+        60,
+        Number.isFinite(lockBpm) && lockBpm >= 60 ? Math.round(lockBpm) : genreBpm,
+      ),
     ),
     output_mode: "mixed",
     memory_mode: "auto",
@@ -1286,10 +1384,14 @@ export async function startSongGeneration(
     `temp=${body.temperature}`,
     `gender=${body.gender}`,
     `genre=${body.genre}`,
+    `emotion=${body.emotion}`,
     `choir=${fromArrange.choir || "none"}`,
     `bpm=${body.bpm}`,
     `instruments=${body.instruments.slice(0, 80)}`,
     `timbre=${body.timbre}`,
+    `style=${body.custom_style.slice(0, 120)}`,
+    `lock=${lock ? "yes" : "NO"}`,
+    `lyric0=${String(sections[0]?.lyrics || "").slice(0, 60).replace(/\n/g, " / ")}`,
     "ref=OFF mix=forced",
   );
   const created = await songGenFetch(base, "/api/generate", { method: "POST", body });

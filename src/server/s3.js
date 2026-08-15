@@ -199,6 +199,23 @@ export async function uploadClipBuffer(buffer, { projectId, mimeType = "video/we
   };
 }
 
+/** URL signée GET pour un objet (bucket privé — ONCE / externes). */
+export async function signedUrlForKey(key, expiresIn = 60 * 60 * 24 * 7) {
+  const clean = String(key || "")
+    .trim()
+    .replace(/^\//, "");
+  if (!clean || clean.includes("..") || !/^(audio|clips)\//i.test(clean)) {
+    throw new Error("Clé S3 invalide pour signature");
+  }
+  const s3 = getS3Client();
+  const cfg = getS3Config();
+  return getSignedUrl(
+    s3,
+    new GetObjectCommand({ Bucket: cfg.bucket, Key: clean }),
+    { expiresIn: Math.max(60, Math.min(expiresIn, 60 * 60 * 24 * 7)) },
+  );
+}
+
 export async function downloadClipBuffer(keyOrUrl) {
   if (!keyOrUrl) throw new Error("Clé / URL S3 manquante");
 

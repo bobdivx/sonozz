@@ -12,13 +12,16 @@ import {
   Heart,
 } from "lucide-preact";
 import {
-  MUSIC_LANGUAGES,
   MUSIC_STYLES,
   formatGenres,
   languageLabel,
+  languagesForProvider,
+  songGenLanguageHint,
+  languageEngineLabel,
   matchMusicStyleFromGenre,
   parseGenres,
 } from "../../lib/studio.js";
+import { loadKeys } from "../../lib/keys.js";
 import StyleArtistPicker from "../StyleArtistPicker.jsx";
 import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "../ArtistNameField.jsx";
@@ -94,12 +97,24 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
   });
   const [voiceSample, setVoiceSample] = useState(() => artist?.voiceSample || null);
   const [pickError, setPickError] = useState("");
+  const keysSnap = loadKeys();
+  const langOptions = languagesForProvider(
+    keysSnap.musicProvider,
+    keysSnap.songGenPreferredModel,
+  );
+  const songGenLangs = String(keysSnap.musicProvider || "") === "songgen";
 
   useEffect(() => {
     if (initialMode === "self" || initialMode === "fiction") {
       setMode(initialMode);
     }
   }, [initialMode]);
+
+  useEffect(() => {
+    if (!langOptions.some((l) => l.code === language) && langOptions[0]) {
+      setLanguage(langOptions[0].code);
+    }
+  }, [language, langOptions]);
 
   useEffect(() => {
     if (!artist) return;
@@ -620,9 +635,19 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
           <p class="text-xs text-base-content/45">
             Langue des paroles, du chant et des métadonnées de release.
           </p>
+          {songGenLangs && (
+            <p class="text-xs text-warning">
+              {songGenLanguageHint(keysSnap.songGenPreferredModel || "songgeneration_large")}
+            </p>
+          )}
           <div class="flex flex-wrap gap-2">
-            {MUSIC_LANGUAGES.map((l) => {
+            {langOptions.map((l) => {
               const active = language === l.code;
+              const engine = languageEngineLabel(
+                l.code,
+                keysSnap.musicProvider,
+                keysSnap.songGenPreferredModel,
+              );
               return (
                 <button
                   key={l.code}
@@ -631,6 +656,9 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                   onClick={() => setLanguage(l.code)}
                 >
                   {l.label}
+                  {engine === "MiniMax" ? (
+                    <span class="ml-1 text-[10px] opacity-70">MiniMax</span>
+                  ) : null}
                 </button>
               );
             })}

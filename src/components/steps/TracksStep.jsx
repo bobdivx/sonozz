@@ -36,6 +36,8 @@ import {
   isTrackAudioFinal,
   isPlaceholderTitle,
   titleFromAudioFileName,
+  isSongGenNativeLanguage,
+  languageLabel,
 } from "../../lib/studio.js";
 import { resolveArtistGender } from "../../lib/artistGender.js";
 import VersionPicker from "../VersionPicker.jsx";
@@ -191,6 +193,9 @@ export default function TracksStep({
 
   const hasSongGen = musicProvider === "songgen";
   const hasReplicate = musicProvider === "replicate" && hasReplicateToken;
+  const trackLang = String(lyrics?.language || artist?.language || "fr").slice(0, 2);
+  const songGenModel = loadKeys().songGenPreferredModel || "songgeneration_large";
+  const songGenLangFallback = hasSongGen && !isSongGenNativeLanguage(trackLang, songGenModel);
   const resolvedVoice = resolveArtistGender(artist);
   const voiceLabel = resolvedVoice?.label || null;
 
@@ -668,7 +673,8 @@ export default function TracksStep({
     !hasLyricsText ||
     (hasSongGen && probeStatus === "error") ||
     modelsNotReady ||
-    (hasSongGen && !voiceLabel);
+    (hasSongGen && !voiceLabel) ||
+    (songGenLangFallback && !hasReplicateToken);
   const onceDashboard =
     distrokid?.dashboardUrl ||
     (onceReleaseId.trim()
@@ -885,6 +891,14 @@ export default function TracksStep({
         <p class="text-sm text-warning">
           Voix SongGen introuvable sur ce projet. Ouvre « Profil utilisé », ou retourne à l’étape
           Artiste pour choisir Homme / Femme.
+        </p>
+      )}
+      {songGenLangFallback && (
+        <p class="text-sm text-warning">
+          {languageLabel(trackLang)} : SongGen Large ne chante que l’anglais et le chinois.
+          {hasReplicateToken
+            ? " L’audio passera automatiquement par MiniMax."
+            : " Ajoute un token Replicate (Provider audio) pour MiniMax, ou passe les paroles en anglais."}
         </p>
       )}
       {modelsNotReady && (

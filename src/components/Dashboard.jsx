@@ -32,7 +32,9 @@ import {
   STEPS,
   emptyProject,
   MUSIC_STYLES,
-  MUSIC_LANGUAGES,
+  languagesForProvider,
+  songGenLanguageHint,
+  languageEngineLabel,
   formatGenres,
   createAlbumId,
   createAlbumTrackId,
@@ -1456,17 +1458,42 @@ export default function Dashboard() {
             </div>
             <label class="form-control w-full">
               <span class="label-text mb-1 text-xs text-base-content/55">Langue des chansons</span>
+              {String(loadKeys().musicProvider || "") === "songgen" && (
+                <p class="mb-1 text-[11px] text-warning">
+                  {songGenLanguageHint(loadKeys().songGenPreferredModel || "songgeneration_large")}
+                </p>
+              )}
               <select
                 class="select select-bordered w-full bg-base-200"
-                value={seed.language}
+                value={
+                  languagesForProvider(
+                    loadKeys().musicProvider,
+                    loadKeys().songGenPreferredModel,
+                  ).some((l) => l.code === seed.language)
+                    ? seed.language
+                    : languagesForProvider(
+                        loadKeys().musicProvider,
+                        loadKeys().songGenPreferredModel,
+                      )[0]?.code || "en"
+                }
                 disabled={autoRunning}
                 onChange={(e) => setSeed((s) => ({ ...s, language: e.currentTarget.value }))}
               >
-                {MUSIC_LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.label}
-                  </option>
-                ))}
+                {languagesForProvider(
+                  loadKeys().musicProvider,
+                  loadKeys().songGenPreferredModel,
+                ).map((l) => {
+                  const engine = languageEngineLabel(
+                    l.code,
+                    loadKeys().musicProvider,
+                    loadKeys().songGenPreferredModel,
+                  );
+                  return (
+                    <option key={l.code} value={l.code}>
+                      {engine === "MiniMax" ? `${l.label} · MiniMax` : l.label}
+                    </option>
+                  );
+                })}
               </select>
             </label>
             <input

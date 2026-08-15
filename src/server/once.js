@@ -89,8 +89,21 @@ async function onceFetch(token, path, options = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data.message || data.error || data.code || `ONCE HTTP ${res.status}`;
-    throw new Error(msg);
+    const detail =
+      (typeof data?.message === "string" && data.message) ||
+      (typeof data?.error === "string" && data.error) ||
+      (typeof data?.detail === "string" && data.detail) ||
+      null;
+    const code = data?.code || data?.type || "";
+    const msg = [detail || `ONCE HTTP ${res.status}`, code && code !== detail ? `(${code})` : ""]
+      .filter(Boolean)
+      .join(" ");
+    const err = new Error(msg);
+    err.status = res.status;
+    err.code = data?.code || null;
+    err.type = data?.type || null;
+    err.path = path;
+    throw err;
   }
   return data;
 }
@@ -551,18 +564,94 @@ async function resolveCoverFileUrl(token, cover, { artist, track, keys } = {}) {
 
 async function resolveAudioFileUrl(token, track) {
   const audioUrl = track?.audioUrl;
-  if (!audioUrl) {
+  const audioS3Key =
+    (typeof track?.audioS3Key === "string" && track.audioS3Key.trim()) || null;
+  if (!audioUrl && !audioS3Key) {
     return null;
   }
-  if (!(audioUrl.startsWith("http://") || audioUrl.startsWith("https://"))) {
-    throw new Error("L'audio doit être une URL publique (Replicate) pour ONCE.");
+
+  const { loadAudioBuffer, extFromMime, sniffMime } = await import("./audioPersist.js");
+  const { isS3Configured, tryParseS3ObjectKey, signedUrlForKey } = await import("./s3.js");
+
+  const s3Key =
+    (audioS3Key && /^(audio|clips)\//i.test(audioS3Key) && audioS3Key) ||
+    (audioUrl && tryParseS3ObjectKey(audioUrl)) ||
+    null;
+
+  // 1) Bucket privé Scaleway : ONCE ne peut pas GET l’URL (403).
+  //    → URL signée fraîche (from-url), sinon upload base64 côté SONOZZ.
+  if (s3Key && isS3Configured()) {
+    const keyExt = String(s3Key).split(".").pop()?.toLowerCase() || "mp3";
+    try {
+      const freshUrl = await signedUrlForKey(s3Key, 60 * 60 * 24);
+      const uploaded = await uploadOnceFromUrl(token, {
+        type: "audio",
+        url: freshUrl,
+        fileName: `track.${keyExt}`,
+      });
+      const fileUrl = extractOnceFileUrl(uploaded);
+      if (fileUrl) return fileUrl;
+    } catch (e) {
+      console.warn("[once] from-url signé KO, fallback base64:", e.message);
+    }
+
+    try {
+      const { downloadClipBuffer } = await import("./s3.js");
+      const dl = await downloadClipBuffer(s3Key);
+      const mime = sniffMime(dl.buffer, dl.mimeType || "audio/mpeg");
+      const ext = extFromMime(mime) || keyExt;
+      const uploaded = await uploadOnceBase64(token, {
+        type: "audio",
+        fileName: `track.${ext}`,
+        dataBase64: dl.buffer.toString("base64"),
+        mimeType: mime,
+      });
+      const fileUrl = extractOnceFileUrl(uploaded);
+      if (fileUrl) return fileUrl;
+      throw new Error("ONCE n’a pas renvoyé de fileUrl pour l’audio");
+    } catch (e) {
+      throw new Error(
+        `Audio S3 inaccessible pour ONCE (${e.message}). Rouvre l’étape Morceaux → Re-sauver, puis republie.`,
+      );
+    }
   }
-  const uploaded = await uploadOnceFromUrl(token, {
-    type: "audio",
-    url: audioUrl,
-    fileName: "track.mp3",
-  });
-  return uploaded.fileUrl || uploaded.file_url || uploaded.url;
+
+  if (!audioUrl || !(audioUrl.startsWith("http://") || audioUrl.startsWith("https://"))) {
+    throw new Error(
+      "Audio manquant ou non public — génère / importe un morceau (étape 4) avant de publier sur ONCE.",
+    );
+  }
+
+  try {
+    const uploaded = await uploadOnceFromUrl(token, {
+      type: "audio",
+      url: audioUrl,
+      fileName: "track.mp3",
+    });
+    return extractOnceFileUrl(uploaded);
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (/403|Forbidden|Failed to download/i.test(msg)) {
+      // URL signée expirée ou bucket privé sans clé — tenter lecture locale + base64
+      try {
+        const { buffer, mimeType } = await loadAudioBuffer(audioUrl);
+        const mime = sniffMime(buffer, mimeType || "audio/mpeg");
+        const uploaded = await uploadOnceBase64(token, {
+          type: "audio",
+          fileName: `track.${extFromMime(mime)}`,
+          dataBase64: buffer.toString("base64"),
+          mimeType: mime,
+        });
+        const fileUrl = extractOnceFileUrl(uploaded);
+        if (fileUrl) return fileUrl;
+      } catch (inner) {
+        throw new Error(
+          `ONCE ne peut pas télécharger l’audio (HTTP 403 — bucket privé / lien expiré). ${inner.message}. Étape Morceaux → Re-sauver, puis republie.`,
+        );
+      }
+    }
+    throw e;
+  }
 }
 
 /** SONOZZ pipeline = AI-generated music (SongGeneration / MiniMax / Replicate). */
@@ -580,6 +669,68 @@ export function canReuseOnceRelease(distrokid) {
   const id = String(distrokid?.releaseId || "").trim();
   if (!id || id.startsWith("once_") || id.length < 8) return false;
   return true;
+}
+
+function normalizeOnceTitle(s = "") {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+/**
+ * Vérifie qu’une release est modifiable avec le token courant.
+ * Si l’id projet est mort (autre compte / supprimé), tente un match titre+artiste.
+ * @returns {Promise<string>} releaseId utilisable
+ */
+async function resolveReusableReleaseId(token, releaseId, { title, artistName } = {}) {
+  const id = String(releaseId || "").trim();
+  if (!id) {
+    throw new Error("releaseId ONCE manquant pour la republication.");
+  }
+
+  try {
+    await onceFetch(token, `/releases/${encodeURIComponent(id)}`);
+    return id;
+  } catch (e) {
+    const status = e.status || 0;
+    if (status !== 403 && status !== 404 && !/forbidden|not_found|not found/i.test(e.message || "")) {
+      throw e;
+    }
+  }
+
+  // Id stale : chercher une release du même titre sur ce compte
+  let list = [];
+  try {
+    const data = await onceFetch(token, "/releases");
+    list = Array.isArray(data?.releases) ? data.releases : Array.isArray(data) ? data : [];
+  } catch {
+    list = [];
+  }
+
+  const wantTitle = normalizeOnceTitle(title);
+  const wantArtist = normalizeOnceTitle(artistName);
+  const match = list.find((r) => {
+    const t = normalizeOnceTitle(r.title || r.trackTitle);
+    const a = normalizeOnceTitle(r.primary_artist_name || r.artistName);
+    if (!wantTitle || t !== wantTitle) return false;
+    if (wantArtist && a && a !== wantArtist) return false;
+    return Boolean(r.id);
+  });
+
+  if (match?.id) {
+    console.warn(
+      `[once] releaseId projet ${id.slice(0, 8)}… inaccessible — réutilisation de ${String(match.id).slice(0, 8)}… (« ${match.title} »)`,
+    );
+    return String(match.id);
+  }
+
+  throw new Error(
+    `Release ONCE ${id.slice(0, 8)}… introuvable sur ce compte (supprimée ou autre token). ` +
+      `Utilise « Publier » (nouvelle release) plutôt que « Réutiliser », ou mets à jour le releaseId dans le projet.`,
+  );
 }
 
 export async function submitOnceRelease(
@@ -601,8 +752,8 @@ export async function submitOnceRelease(
     );
   }
 
-  const reuseId = reuseRelease ? String(existingReleaseId || "").trim() : "";
-  if (reuseRelease && !reuseId) {
+  const reuseIdRaw = reuseRelease ? String(existingReleaseId || "").trim() : "";
+  if (reuseRelease && !reuseIdRaw) {
     throw new Error(
       "Republication : releaseId ONCE manquant. Ouvre le projet qui a déjà une release, ou publie une nouvelle release.",
     );
@@ -629,6 +780,11 @@ export async function submitOnceRelease(
   const credits = await onceCredits(token);
   const profile = me?.profile || me;
   const creditBalanceBefore = credits?.balance ?? credits?.credits ?? credits?.available ?? null;
+
+  const reuseId = reuseIdRaw
+    ? await resolveReusableReleaseId(token, reuseIdRaw, { title, artistName })
+    : "";
+  const releaseIdHealed = Boolean(reuseId && reuseIdRaw && reuseId !== reuseIdRaw);
 
   const coverArtFileUrl = await resolveCoverFileUrl(token, cover, { artist, track, keys });
   const audioFileUrl = await resolveAudioFileUrl(token, track);
@@ -797,6 +953,14 @@ export async function submitOnceRelease(
     : "https://once.app/";
 
   const reused = Boolean(reuseId);
+  if (releaseIdHealed) {
+    warning = [
+      warning,
+      `Ancien releaseId projet inaccessible — réutilisation de ${releaseId} (même titre sur ce compte ONCE).`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
   const note = reused
     ? creditsDebited === 0
       ? `Republication sur la même release (${releaseId}) — aucun crédit supplémentaire débité.`
@@ -809,6 +973,7 @@ export async function submitOnceRelease(
     releaseId,
     packageId: releaseId || `once_${Date.now().toString(36)}`,
     reusedRelease: reused,
+    releaseIdHealed,
     creditsDebited,
     account: profile?.email || profile?.first_name || profile?.id || null,
     credits: {
