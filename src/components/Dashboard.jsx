@@ -37,12 +37,15 @@ import {
   createAlbumId,
   createAlbumTrackId,
   isTrackAudioFinal,
+  isPlaceholderTitle,
+  titleFromAudioFileName,
 } from "../lib/studio.js";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
 import { migrateProjectClipBlobs } from "../lib/clipStore.js";
 import { musicArrangeFromStyleLock } from "../lib/musicArrange.js";
+import { withResolvedArtistGender } from "../lib/artistGender.js";
 import StyleArtistPicker from "./StyleArtistPicker.jsx";
 import StyleTrackPicker from "./StyleTrackPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "./ArtistNameField.jsx";
@@ -117,6 +120,37 @@ function formatElapsed(ms) {
 /** Clips + versions créatives (paroles / audio / jaquettes). */
 function normalizeProjectState(project = {}) {
   return normalizeProjectVersions(normalizeProjectClips(project));
+}
+
+function resolveImportedTitle(meta = {}, project = {}) {
+  const fromMeta = String(meta.title || "").trim();
+  if (fromMeta) return fromMeta;
+  const fromLyrics = String(project.lyrics?.title || "").trim();
+  if (!isPlaceholderTitle(fromLyrics)) return fromLyrics;
+  const fromTrack = String(project.track?.title || "").trim();
+  if (!isPlaceholderTitle(fromTrack)) return fromTrack;
+  const fromFile = titleFromAudioFileName(meta.fileName);
+  if (fromFile) return fromFile;
+  return fromTrack || fromLyrics || "Untitled";
+}
+
+function applySongTitle(project, title) {
+  const cleaned = String(title || "").trim();
+  if (!cleaned || isPlaceholderTitle(cleaned)) return project;
+  let next = project;
+  if (next.activeTrackId && next.track) {
+    next = updateVersion(next, "track", next.activeTrackId, {
+      ...next.track,
+      title: cleaned,
+    });
+  }
+  if (next.activeLyricsId && next.lyrics && isPlaceholderTitle(next.lyrics.title)) {
+    next = updateVersion(next, "lyrics", next.activeLyricsId, {
+      ...next.lyrics,
+      title: cleaned,
+    });
+  }
+  return next;
 }
 
 export default function Dashboard() {
@@ -208,6 +242,24 @@ export default function Dashboard() {
         const { project: saved } = await api.getProject(pid);
         setProjectId(saved.id);
         const loaded = normalizeProjectState({ ...emptyProject(), ...(saved.project || {}) });
+        if (loaded.artist) {
+          const hydrated = withResolvedArtistGender(loaded.artist);
+          if (hydrated.gender && hydrated.gender !== loaded.artist.gender) {
+            loaded.artist = hydrated;
+            void api
+              .saveProject({
+                id: saved.id,
+                project: stripClipsForDb(loaded),
+                seed: saved.seed,
+                event: {
+                  stepKey: "artist",
+                  eventType: "backfill",
+                  message: "Voix artiste rétablie depuis le profil",
+                },
+              })
+              .catch(() => {});
+          }
+        }
         setProject(loaded);
         if (saved.seed) setSeed((s) => ({ ...s, ...saved.seed }));
         if (stepParam >= 1 && stepParam <= STEPS.length) setStep(stepParam);
@@ -293,6 +345,9 @@ export default function Dashboard() {
   };
   const completed = Object.values(doneMap).filter(Boolean).length;
   const progress = Math.round((completed / STEPS.length) * 100);
+  const projectSongTitle = [project.lyrics?.title, project.track?.title].find(
+    (t) => t && !isPlaceholderTitle(t),
+  );
 
   async function persist(nextProject, event, opts = {}) {
     const { skipLocalUpdate = false } = opts;
@@ -1280,7 +1335,7 @@ export default function Dashboard() {
             {project.artist && (
               <p class="text-sm text-base-content/55">
                 Projet : <span class="text-base-content">{project.artist.name}</span>
-                {project.lyrics?.title ? ` — ${project.lyrics.title}` : ""}
+                {projectSongTitle ? ` — ${projectSongTitle}` : ""}
               </p>
             )}
           </div>
@@ -1699,6 +1754,20 @@ export default function Dashboard() {
                 message: "Version audio supprimée",
               });
             }}
+            onRenameTrack={(title) => {
+              setError("");
+              setProject((prev) => {
+                const base = normalizeProjectState(prev);
+                if (!base.track || !base.activeTrackId) return prev;
+                const next = applySongTitle(base, title);
+                persist(next, {
+                  stepKey: "track",
+                  eventType: "track-rename",
+                  message: `Titre : ${String(title || "").trim()}`,
+                });
+                return next;
+              });
+            }}
             onApplyStyleTrack={async (pick) => {
               if (!pick?.source || !pick?.id) return;
               const data = await api.resolveStyleTrack(pick);
@@ -1844,6 +1913,7 @@ export default function Dashboard() {
                     : meta.provider === "import-file"
                       ? `Audio importé (${meta.fileName || "fichier"})${meta.persisted ? " · S3" : ""}.`
                       : `Audio attaché via URL${meta.persisted ? " · S3" : ""}.`);
+                const resolvedTitle = resolveImportedTitle(meta, base);
                 const fields = {
                   audioUrl,
                   audioS3Key: meta.s3Key || base.track?.audioS3Key,
@@ -1863,7 +1933,7 @@ export default function Dashboard() {
                 let next;
                 if (!base.track) {
                   next = appendVersion(base, "track", {
-                    title: base.lyrics?.title || "Untitled",
+                    title: resolvedTitle,
                     artist: base.artist?.name,
                     ...fields,
                   });
@@ -1871,14 +1941,16 @@ export default function Dashboard() {
                   const rest = { ...base.track };
                   delete rest.id;
                   delete rest.createdAt;
-                  next = appendVersion(base, "track", { ...rest, ...fields });
+                  next = appendVersion(base, "track", { ...rest, ...fields, title: resolvedTitle });
                 } else {
                   next = updateVersion(base, "track", base.activeTrackId, {
                     ...base.track,
                     ...fields,
+                    title: resolvedTitle,
                     audioS3Key: meta.s3Key || base.track.audioS3Key,
                   });
                 }
+                next = applySongTitle(next, resolvedTitle);
                 if (meta.releaseId) {
                   next = {
                     ...next,

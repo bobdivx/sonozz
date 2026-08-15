@@ -20,6 +20,7 @@ import {
   Save,
   FileAudio,
   ScrollText,
+  Pencil,
   X,
 } from "lucide-preact";
 import { loadKeys, saveKeysAsync, ensureKeysHydrated } from "../../lib/keys.js";
@@ -30,7 +31,13 @@ import SongGenModelsPanel from "../SongGenModelsPanel.jsx";
 import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import { normalizeMusicArrange, musicArrangeFromStyleLock, isDefaultMusicArrange } from "../../lib/musicArrange.js";
 import { buildSunoPrompt } from "../../lib/sunoPrompt.js";
-import { confirmDeleteProject, isTrackAudioFinal } from "../../lib/studio.js";
+import {
+  confirmDeleteProject,
+  isTrackAudioFinal,
+  isPlaceholderTitle,
+  titleFromAudioFileName,
+} from "../../lib/studio.js";
+import { resolveArtistGender } from "../../lib/artistGender.js";
 import VersionPicker from "../VersionPicker.jsx";
 
 function songGenUrlFromKeys(keys) {
@@ -38,6 +45,8 @@ function songGenUrlFromKeys(keys) {
     .trim()
     .replace(/\/+$/, "") || "http://127.0.0.1:7860";
 }
+
+const AUDIO_FILE_ACCEPT = "audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.webm";
 
 function StepModal({ open, title, onClose, children, wide = false }) {
   if (!open || typeof document === "undefined") return null;
@@ -95,6 +104,7 @@ export default function TracksStep({
   onDeleteProject,
   onSelectVersion,
   onDeleteVersion,
+  onRenameTrack,
 }) {
   const [musicProvider, setMusicProvider] = useState("replicate");
   const [songGenUrl, setSongGenUrl] = useState("http://127.0.0.1:7860");
@@ -104,6 +114,7 @@ export default function TracksStep({
   const [keysHydrated, setKeysHydrated] = useState(false);
   const [probeStatus, setProbeStatus] = useState("idle"); // idle | checking | ok | error
   const [probeMessage, setProbeMessage] = useState("");
+  const [songGenReadyFlag, setSongGenReadyFlag] = useState(null);
   const [songGenModels, setSongGenModels] = useState([]);
   const [pickedModelId, setPickedModelId] = useState(null);
   const [preferredModelId, setPreferredModelId] = useState(null);
@@ -115,6 +126,8 @@ export default function TracksStep({
   const [onceReleaseId, setOnceReleaseId] = useState("");
   const [onceBusy, setOnceBusy] = useState(false);
   const [onceHint, setOnceHint] = useState("");
+  const [importTitle, setImportTitle] = useState("");
+  const [draftTitle, setDraftTitle] = useState(track?.title || "");
   const [styleTrackPick, setStyleTrackPick] = useState(() => {
     const st = artist?.styleLock?.seedTrack;
     if (st?.source && st?.sourceId) {
@@ -133,6 +146,7 @@ export default function TracksStep({
   const [styleTrackBusy, setStyleTrackBusy] = useState(false);
   const [modal, setModal] = useState(null); // ref | arrange | profile | provider | once | suno
   const onceFileRef = useRef(null);
+  const importFileRef = useRef(null);
   const probeSeq = useRef(0);
   const lastArrangeLockKey = useRef("");
   const downloadPollRef = useRef(null);
@@ -141,17 +155,44 @@ export default function TracksStep({
     setModal(null);
   }
 
+  function existingSongTitle() {
+    for (const t of [track?.title, lyrics?.title]) {
+      if (!isPlaceholderTitle(t)) return String(t).trim();
+    }
+    return "";
+  }
+
+  function resolvedImportTitle(fileName) {
+    const typed = String(importTitle || "").trim();
+    if (typed) return typed;
+    const existing = existingSongTitle();
+    if (existing) return existing;
+    return titleFromAudioFileName(fileName);
+  }
+
+  function openImportModal() {
+    setImportTitle(existingSongTitle());
+    setModal("once");
+  }
+
+  useEffect(() => {
+    setDraftTitle(track?.title || "");
+  }, [track?.id, track?.title]);
+
+  function commitDraftTitle() {
+    const next = String(draftTitle || "").trim();
+    if (!next) {
+      setDraftTitle(track?.title || "");
+      return;
+    }
+    if (next === String(track?.title || "").trim()) return;
+    onRenameTrack?.(next);
+  }
+
   const hasSongGen = musicProvider === "songgen";
   const hasReplicate = musicProvider === "replicate" && hasReplicateToken;
-  const voiceCode = String(artist?.gender || "").toLowerCase();
-  const voiceLabel =
-    voiceCode === "female"
-      ? "Femme"
-      : voiceCode === "male"
-        ? "Homme"
-        : voiceCode === "nonbinary"
-          ? "Non-binaire"
-          : null;
+  const resolvedVoice = resolveArtistGender(artist);
+  const voiceLabel = resolvedVoice?.label || null;
 
   const inferredArrange = artist?.styleLock
     ? musicArrangeFromStyleLock(artist.styleLock)
@@ -228,12 +269,14 @@ export default function TracksStep({
     else if (res?.defaultModel) setPickedModelId(res.defaultModel);
     if (res?.preferredModel != null) setPreferredModelId(res.preferredModel || null);
     if (res?.gpu) setSongGenGpu(res.gpu);
+    if (typeof res?.hasReadyModel === "boolean") setSongGenReadyFlag(res.hasReadyModel);
     if (res?.ok) {
       setProbeStatus("ok");
       setProbeMessage(res.message || "Joignable");
     } else {
       setProbeStatus("error");
       setProbeMessage(res?.message || "Injoignable");
+      setSongGenReadyFlag(false);
     }
     return res;
   }
@@ -268,6 +311,7 @@ export default function TracksStep({
       if (seq !== probeSeq.current) return;
       setProbeStatus("error");
       setProbeMessage(e.message || "Test impossible");
+      setSongGenReadyFlag(false);
       stopDownloadPoll();
     }
   }
@@ -321,6 +365,7 @@ export default function TracksStep({
         setProbeStatus("idle");
         setProbeMessage("");
         setSongGenModels([]);
+        setSongGenReadyFlag(null);
         setPickedModelId(null);
       }
     })();
@@ -363,6 +408,7 @@ export default function TracksStep({
         probeSeq.current += 1;
         setProbeStatus("idle");
         setProbeMessage("");
+        setSongGenReadyFlag(null);
       }
     } catch (e) {
       setImportError(e.message || "Impossible d’enregistrer le provider");
@@ -405,28 +451,41 @@ export default function TracksStep({
         provider: "import-url",
         s3Key: saved.s3Key,
         persisted: Boolean(saved.persisted || saved.reused),
+        title: resolvedImportTitle(),
       });
     } catch (e) {
-      onAttachAudio?.(url, { provider: "import-url", warning: e.message });
+      onAttachAudio?.(url, {
+        provider: "import-url",
+        warning: e.message,
+        title: resolvedImportTitle(),
+      });
       setImportError(
         `${e.message} — audio attaché en temporaire ; configure S3 pour le garder.`,
       );
     }
   }
 
-  async function onFileChange(e) {
-    setImportError("");
-    const file = e.currentTarget.files?.[0];
+  function isAudioFile(file) {
+    const type = String(file?.type || "").toLowerCase();
+    if (type.startsWith("audio/")) return true;
+    return /\.(mp3|wav|flac|m4a|aac|ogg|opus|webm)$/i.test(file?.name || "");
+  }
+
+  async function importLocalFile(file) {
     if (!file) return;
-    if (!file.type.startsWith("audio/")) {
-      setImportError("Choisis un fichier audio (mp3, wav, m4a…).");
+    if (!isAudioFile(file)) {
+      setImportError("Choisis un fichier audio (mp3, wav, flac, m4a…).");
       return;
     }
+    setImportError("");
+    setOnceHint("");
+    setOnceBusy(true);
     try {
       const form = new FormData();
       form.append("audio", file, file.name);
       form.append("projectId", projectId || "anon");
-      form.append("mimeType", file.type || "audio/mpeg");
+      form.append("mimeType", file.type || "");
+      form.append("fileName", file.name);
       const res = await fetch("/api/audio/persist", { method: "POST", body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Upload audio impossible");
@@ -435,7 +494,11 @@ export default function TracksStep({
         fileName: file.name,
         s3Key: data.s3Key,
         persisted: true,
+        title: resolvedImportTitle(file.name),
+        note: `Audio importé · ${file.name}`,
       });
+      setOnceHint(`Morceau importé (${file.name}).`);
+      closeModal();
     } catch (err) {
       const reader = new FileReader();
       reader.onload = () => {
@@ -443,12 +506,21 @@ export default function TracksStep({
           provider: "import-file",
           fileName: file.name,
           warning: err.message,
+          title: resolvedImportTitle(file.name),
         });
       };
       reader.onerror = () => setImportError("Lecture du fichier impossible");
       reader.readAsDataURL(file);
       setImportError(`${err.message} — import local temporaire.`);
+    } finally {
+      setOnceBusy(false);
     }
+  }
+
+  async function onFileChange(e) {
+    const file = e.currentTarget.files?.[0];
+    e.currentTarget.value = "";
+    await importLocalFile(file);
   }
 
   function applyOnceRestore(data) {
@@ -457,6 +529,7 @@ export default function TracksStep({
       s3Key: data.s3Key,
       persisted: true,
       releaseId: data.releaseId,
+      title: resolvedImportTitle() || data.title,
       note: `Audio ORIGINAL ONCE (${data.releaseId}) · ${data.via}`,
     });
     setOnceHint(
@@ -511,27 +584,30 @@ export default function TracksStep({
     const file = e.currentTarget.files?.[0];
     e.currentTarget.value = "";
     if (!file) return;
+    const releaseId = onceReleaseId.trim();
+    if (!releaseId) {
+      await importLocalFile(file);
+      return;
+    }
     setOnceBusy(true);
     setImportError("");
     setOnceHint("");
     try {
-      const releaseId = onceReleaseId.trim();
-      if (!releaseId) throw new Error("Indique l’ID de release ONCE avant l’import.");
       if (!projectId) throw new Error("Projet non sauvegardé.");
       const keys = loadKeys();
-      if (!keys.onceApiToken?.trim()) throw new Error("Token ONCE manquant — Paramètres.");
       const form = new FormData();
       form.append("audio", file, file.name);
       form.append("releaseId", releaseId);
       form.append("projectId", projectId);
-      form.append("mimeType", file.type || "audio/wav");
+      form.append("mimeType", file.type || "");
+      form.append("fileName", file.name);
       form.append("keys", JSON.stringify(keys));
       const res = await fetch("/api/audio/from-once", { method: "POST", body: form });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) throw new Error(data.error || "Import WAV ONCE impossible");
+      if (!res.ok || !data.ok) throw new Error(data.error || "Import audio impossible");
       applyOnceRestore(data);
     } catch (err) {
-      setImportError(err.message || "Import WAV ONCE échoué");
+      setImportError(err.message || "Import audio échoué");
     } finally {
       setOnceBusy(false);
     }
@@ -582,12 +658,16 @@ export default function TracksStep({
   const isOnceOriginal = track?.provider === "once-original";
   const canGenerateAudio = hasSongGen || hasReplicate;
   const artistSlug = artist?.slug;
-  const songGenHasReady = songGenModels.some((m) => m.status === "ready");
+  const songGenHasReady =
+    songGenReadyFlag === true || songGenModels.some((m) => m.status === "ready");
+  const hasLyricsText = Boolean(String(lyrics?.text || "").trim());
+  const modelsNotReady =
+    hasSongGen && probeStatus === "ok" && songGenReadyFlag === false && !songGenHasReady;
   const genDisabled =
     loading ||
-    !lyrics ||
+    !hasLyricsText ||
     (hasSongGen && probeStatus === "error") ||
-    (hasSongGen && probeStatus === "ok" && songGenModels.length > 0 && !songGenHasReady) ||
+    modelsNotReady ||
     (hasSongGen && !voiceLabel);
   const onceDashboard =
     distrokid?.dashboardUrl ||
@@ -684,11 +764,11 @@ export default function TracksStep({
         <button
           type="button"
           class="btn btn-outline btn-sm gap-1.5"
-          onClick={() => setModal("once")}
+          onClick={openImportModal}
         >
           <FileAudio size={14} />
-          Audio original ONCE
-          {isOnceOriginal ? <span class="badge badge-success badge-xs">✓</span> : null}
+          Importer un morceau
+          {isOnceOriginal ? <span class="badge badge-success badge-xs">ONCE</span> : null}
         </button>
         {track?.audioUrl && (
           <button
@@ -712,7 +792,7 @@ export default function TracksStep({
           <p class="font-medium text-warning">Aucun provider audio prêt</p>
           <p class="mt-1 text-sm text-base-content/70">
             Ouvre Provider audio pour choisir SongGeneration ou un token Replicate, sinon importe un
-            mp3 (Suno).
+            fichier audio (mp3, wav, flac).
           </p>
         </div>
       )}
@@ -724,9 +804,15 @@ export default function TracksStep({
           disabled={genDisabled || !canGenerateAudio}
           onClick={() => onGeneratePreview?.()}
           title={
-            hasSongGen
-              ? "Brouillon court (intro + couplet + refrain) — moins de GPU"
-              : "Brouillon avec paroles tronquées — MiniMax reste cloud"
+            !hasLyricsText
+              ? "Génère d’abord les paroles (étape 3) — le profil artiste ne suffit pas"
+              : hasSongGen && !voiceLabel
+                ? "Voix / sexe manquant sur ce projet — ouvre Profil utilisé"
+                : modelsNotReady
+                  ? "Aucun modèle SongGen prêt — ouvre Provider audio"
+                  : hasSongGen
+                    ? "Brouillon court (intro + couplet + refrain) — moins de GPU"
+                    : "Brouillon avec paroles tronquées — MiniMax reste cloud"
           }
         >
           {loading ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={18} />}
@@ -742,13 +828,19 @@ export default function TracksStep({
           disabled={genDisabled}
           onClick={onGenerate}
           title={
-            hasSongGen && probeStatus === "error"
-              ? "SongGeneration injoignable — corrige l’URL ou Retester"
-              : hasSongGen
-                ? `Morceau complet via SongGeneration @ ${songGenUrl}`
-                : !hasReplicate
-                  ? "Sans provider → brief Suno uniquement"
-                  : "Morceau complet via MiniMax Music 2.6"
+            !hasLyricsText
+              ? "Génère d’abord les paroles (étape 3) — le profil artiste ne suffit pas"
+              : hasSongGen && !voiceLabel
+                ? "Voix / sexe manquant sur ce projet — ouvre Profil utilisé"
+                : modelsNotReady
+                  ? "Aucun modèle SongGen prêt — ouvre Provider audio et télécharge Large"
+                  : hasSongGen && probeStatus === "error"
+                    ? "SongGeneration injoignable — corrige l’URL ou Retester"
+                    : hasSongGen
+                      ? `Morceau complet via SongGeneration @ ${songGenUrl}`
+                      : !hasReplicate
+                        ? "Sans provider → brief Suno uniquement"
+                        : "Morceau complet via MiniMax Music 2.6"
           }
         >
           {loading ? <span class="loading loading-spinner loading-sm" /> : <Disc3 size={18} />}
@@ -783,10 +875,28 @@ export default function TracksStep({
           <p class="text-xs text-base-content/60">{progress.message}</p>
         </div>
       )}
-      {!lyrics && <p class="text-sm text-warning">Générez d'abord les paroles (étape 3).</p>}
+      {!hasLyricsText && (
+        <p class="text-sm text-warning">
+          Génère d’abord les paroles à l’étape 3. Le profil artiste (style, voix, références) est
+          déjà persisté — il ne débloque pas l’audio tant qu’il n’y a pas de texte.
+        </p>
+      )}
+      {hasSongGen && !voiceLabel && hasLyricsText && (
+        <p class="text-sm text-warning">
+          Voix SongGen introuvable sur ce projet. Ouvre « Profil utilisé », ou retourne à l’étape
+          Artiste pour choisir Homme / Femme.
+        </p>
+      )}
+      {modelsNotReady && (
+        <p class="text-sm text-warning">
+          Studio joignable, mais aucun modèle n’est prêt. Ouvre Provider audio et télécharge Large
+          (~20 Go), puis clique Utiliser.
+        </p>
+      )}
       {hasSongGen && probeStatus === "error" && (
         <p class="text-sm text-error">
-          Studio injoignable depuis Astro — lance Pinokio / vérifie l’URL (Provider audio).
+          {probeMessage ||
+            "Studio injoignable depuis Astro — lance Pinokio / vérifie l’URL (Provider audio)."}
         </p>
       )}
       {onceHint && <p class="text-xs text-success">{onceHint}</p>}
@@ -796,8 +906,27 @@ export default function TracksStep({
         <div class="animate-rise space-y-4 border-t border-base-content/10 pt-5">
           <div class="flex flex-wrap items-center gap-3">
             <Disc3 size={22} class={`text-primary ${hasAudio ? "animate-pulse-soft" : ""}`} />
-            <div>
-              <h3 class="font-display text-xl font-semibold">{track.title}</h3>
+            <div class="min-w-0 flex-1">
+              <label class="flex max-w-md items-center gap-2">
+                <span class="sr-only">Titre du morceau</span>
+                <Pencil size={14} class="shrink-0 text-base-content/40" />
+                <input
+                  class="input input-ghost h-auto min-h-0 w-full px-0 font-display text-xl font-semibold"
+                  value={draftTitle}
+                  placeholder="Titre du morceau"
+                  onInput={(e) => setDraftTitle(e.currentTarget.value)}
+                  onBlur={commitDraftTitle}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+              </label>
+              {isPlaceholderTitle(track.title) ? (
+                <p class="text-xs text-warning">Donne un titre à ce morceau — il s’appelle encore Untitled.</p>
+              ) : null}
               <p class="text-sm text-base-content/60">
                 {track.artist} · {track.style} · {track.key} · {track.bpm} BPM · {track.duration} ·{" "}
                 {track.provider}
@@ -943,8 +1072,18 @@ export default function TracksStep({
               <p class="text-sm font-medium">
                 {track.assetMissingReason
                   ? "Audio perdu (lien expiré ou non sauvegardé) — réimporte un mp3"
-                  : "Importer l’audio (Suno / fichier local)"}
+                  : "Importer l’audio (fichier local, Suno, FLAC…)"}
               </p>
+              <label class="form-control w-full">
+                <span class="label-text mb-1 text-xs text-base-content/60">Titre du morceau</span>
+                <input
+                  class="input input-bordered input-sm w-full bg-base-100"
+                  type="text"
+                  placeholder="Ex. Dernier train"
+                  value={importTitle}
+                  onInput={(e) => setImportTitle(e.currentTarget.value)}
+                />
+              </label>
               <ol class="list-decimal space-y-1 pl-5 text-xs text-base-content/60">
                 <li>
                   Ouvre{" "}
@@ -968,19 +1107,24 @@ export default function TracksStep({
                     suno.com
                   </a>
                 </li>
-                <li>Télécharge le mp3, puis importe-le ici</li>
+                <li>Télécharge le fichier (mp3, wav, flac…), puis importe-le ici</li>
               </ol>
 
               <label class="btn btn-secondary btn-sm gap-2 cursor-pointer">
                 <Upload size={14} />
                 Importer un fichier audio
-                <input type="file" accept="audio/*" class="hidden" onChange={onFileChange} />
+                <input
+                  type="file"
+                  accept={AUDIO_FILE_ACCEPT}
+                  class="hidden"
+                  onChange={onFileChange}
+                />
               </label>
 
               <div class="flex flex-wrap gap-2">
                 <input
                   class="input input-bordered input-sm min-w-[220px] flex-1 bg-base-100"
-                  placeholder="https://… lien mp3 / wav"
+                  placeholder="https://… lien mp3 / wav / flac"
                   value={audioUrlInput}
                   onInput={(e) => setAudioUrlInput(e.currentTarget.value)}
                 />
@@ -1221,14 +1365,47 @@ export default function TracksStep({
 
       <StepModal
         open={modal === "once"}
-        title="Audio original ONCE (publié)"
+        title="Importer un morceau"
         onClose={closeModal}
         wide
       >
-        <div class="space-y-3">
+        <div class="space-y-4">
           <p class="text-xs text-base-content/60">
-            Une régénération MiniMax n’est jamais le même fichier que celui livré sur ONCE. Pour
-            coller au master publié, restaure le WAV de la release.
+            Importe n’importe quel fichier audio (FLAC, WAV, MP3, M4A…). Ce n’est pas forcément un
+            master ONCE.
+          </p>
+          <label class="form-control w-full">
+            <span class="label-text mb-1 text-sm text-base-content/60">Titre du morceau</span>
+            <input
+              class="input input-bordered w-full bg-base-100"
+              type="text"
+              placeholder="Ex. Dernier train"
+              value={importTitle}
+              disabled={onceBusy}
+              onInput={(e) => setImportTitle(e.currentTarget.value)}
+            />
+          </label>
+          <label class={`btn btn-secondary btn-sm gap-1 cursor-pointer ${onceBusy ? "btn-disabled" : ""}`}>
+            {onceBusy ? (
+              <span class="loading loading-spinner loading-xs" />
+            ) : (
+              <Upload size={14} />
+            )}
+            Choisir un fichier
+            <input
+              ref={importFileRef}
+              type="file"
+              accept={AUDIO_FILE_ACCEPT}
+              class="hidden"
+              disabled={onceBusy}
+              onChange={onFileChange}
+            />
+          </label>
+
+          <div class="divider my-1 text-xs text-base-content/40">optionnel · master ONCE</div>
+          <p class="text-xs text-base-content/60">
+            Si tu colles au master déjà publié, une régénération MiniMax n’est jamais le même
+            fichier. Restaure alors le WAV de la release ONCE.
           </p>
           {isOnceOriginal ? (
             <span class="badge badge-success badge-sm">Master ONCE ✓</span>
@@ -1241,7 +1418,7 @@ export default function TracksStep({
             <div class="flex flex-wrap items-center gap-2">
               <input
                 class="input input-bordered input-sm min-w-[240px] flex-1 bg-base-100 font-mono text-xs"
-                placeholder="UUID release ONCE"
+                placeholder="UUID release ONCE (optionnel)"
                 value={onceReleaseId}
                 onInput={(e) => setOnceReleaseId(e.currentTarget.value)}
               />
@@ -1258,13 +1435,13 @@ export default function TracksStep({
                 )}
                 Récupérer depuis ONCE
               </button>
-              <label class="btn btn-secondary btn-sm gap-1 cursor-pointer">
+              <label class="btn btn-ghost btn-sm gap-1 cursor-pointer">
                 <Upload size={14} />
-                Importer le WAV release
+                Fichier + UUID ONCE
                 <input
                   ref={onceFileRef}
                   type="file"
-                  accept="audio/*,.wav,.mp3,.m4a"
+                  accept={AUDIO_FILE_ACCEPT}
                   class="hidden"
                   onChange={onOnceFileChange}
                 />

@@ -222,3 +222,23 @@ export function confirmDeleteProject(label, onceMeta = {}) {
     `Supprimer définitivement « ${name} » ?\n\nLe projet (audio, paroles, album) sera effacé de Turso.`,
   );
 }
+
+const GENERIC_AUDIO_STEMS =
+  /^(stream|audio|track|untitled|sans[-_ ]?titre|download|file|song)$/i;
+
+/** Titre placeholder (Untitled / vide) — à remplacer à l’import. */
+export function isPlaceholderTitle(value) {
+  const s = String(value || "").trim();
+  return !s || /^untitled$/i.test(s);
+}
+
+/** Titre lisible depuis un nom de fichier audio (ignore stream.flac, etc.). */
+export function titleFromAudioFileName(fileName) {
+  const raw = String(fileName || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop() || "";
+  const stem = raw.replace(/\.[a-z0-9]{1,8}$/i, "").trim();
+  if (!stem || GENERIC_AUDIO_STEMS.test(stem)) return "";
+  return stem.replace(/[_]+/g, " ").replace(/\s+/g, " ").trim();
+}

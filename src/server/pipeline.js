@@ -31,6 +31,7 @@ import {
   isDefaultMusicArrange,
 } from "../lib/musicArrange.js";
 import { buildSunoPrompt } from "../lib/sunoPrompt.js";
+import { resolveArtistGender, withResolvedArtistGender } from "../lib/artistGender.js";
 
 function waveform() {
   return Array.from({ length: 40 }, () => 18 + Math.floor(Math.random() * 82));
@@ -1111,6 +1112,13 @@ function assembleTrackResult({
  * Le client poll via pollTrack.
  */
 export async function startTrack({ keys, lyrics, artist, preview = false }) {
+  const resolvedGender = resolveArtistGender(artist);
+  if (!resolvedGender) {
+    throw new Error(
+      "Sexe / présentation manquant sur l’artiste — retourne à l’étape Artiste, choisis Homme/Femme, puis régénère le profil avant le morceau.",
+    );
+  }
+  artist = withResolvedArtistGender(artist);
   const isPreview = Boolean(preview);
   const { prompt, styleLock, vocal, arrangeBpm, arrange, packed } = buildTrackMusicPrompt({
     lyrics,
@@ -1132,12 +1140,6 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
     packed,
     arrange,
   });
-
-  if (!artist?.gender) {
-    throw new Error(
-      "Sexe / présentation manquant sur l’artiste — retourne à l’étape Artiste, choisis Homme/Femme, puis régénère le profil avant le morceau.",
-    );
-  }
 
   if (isSongGenMusicProvider(keys)) {
     const started = await startSongGeneration(keys, {

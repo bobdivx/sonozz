@@ -1,5 +1,6 @@
 import { ensureSchema, getDb, uid, saveProject, getProject, getUserKeys } from "./db.js";
 import { runCareerAgent } from "./careerAgent.js";
+import { resolveArtistGender, withResolvedArtistGender } from "../lib/artistGender.js";
 
 export function slugify(input = "") {
   return String(input)
@@ -76,7 +77,7 @@ export async function upsertArtistFromProject(artist, { preferredSlug } = {}) {
     args: [slug],
   });
 
-  const profile = stripHeavyProfile({ ...artist, slug });
+  const profile = stripHeavyProfile(withResolvedArtistGender({ ...artist, slug }));
 
   if (existing.rows[0]) {
     const row = existing.rows[0];
@@ -135,6 +136,11 @@ export async function syncArtistsFromProjects() {
         json_extract(project_json, '$.artist.genre') AS artist_genre,
         json_extract(project_json, '$.artist.city') AS artist_city,
         json_extract(project_json, '$.artist.mood') AS artist_mood,
+        json_extract(project_json, '$.artist.gender') AS artist_gender,
+        json_extract(project_json, '$.artist.voice') AS artist_voice,
+        json_extract(project_json, '$.artist.age') AS artist_age,
+        json_extract(project_json, '$.artist.language') AS artist_language,
+        json_extract(project_json, '$.artist.visualIdentity.genderLock') AS artist_gender_lock,
         json_extract(project_json, '$.artist.imageUrl') AS artist_image
       FROM projects
       ORDER BY updated_at DESC
@@ -158,6 +164,13 @@ export async function syncArtistsFromProjects() {
       genre: row.artist_genre || undefined,
       city: row.artist_city || undefined,
       mood: row.artist_mood || undefined,
+      gender: row.artist_gender || undefined,
+      voice: row.artist_voice || undefined,
+      age: row.artist_age != null ? row.artist_age : undefined,
+      language: row.artist_language || undefined,
+      visualIdentity: row.artist_gender_lock
+        ? { genderLock: row.artist_gender_lock }
+        : undefined,
       imageUrl: imageUrl || undefined,
     };
 
@@ -704,6 +717,112 @@ export async function adviseArtistCareer(slug, { keys, force = false } = {}) {
 }
 
 /**
+ * Récupère sexe / voix depuis un projet studio déjà généré (hub parfois incomplet).
+ */
+async function recoverArtistGenderFromProjects(slug, name) {
+  const db = getDb();
+  const res = await db.execute({
+    sql: `
+      SELECT
+        json_extract(project_json, '$.artist.gender') AS gender,
+        json_extract(project_json, '$.artist.voice') AS voice,
+        json_extract(project_json, '$.artist.visualIdentity.gender') AS vi_gender,
+        json_extract(project_json, '$.artist.visualIdentity.genderLock') AS gender_lock
+      FROM projects
+      WHERE artist_slug = ? OR artist_name = ?
+      ORDER BY updated_at DESC
+      LIMIT 12
+    `,
+    args: [slug, name],
+  });
+
+  for (const row of res.rows) {
+    const recovered = {
+      gender: row.gender || undefined,
+      voice: row.voice || undefined,
+      visualIdentity: {
+        ...(row.vi_gender ? { gender: row.vi_gender } : {}),
+        ...(row.gender_lock ? { genderLock: row.gender_lock } : {}),
+      },
+    };
+    if (!Object.keys(recovered.visualIdentity).length) delete recovered.visualIdentity;
+    if (resolveArtistGender(recovered)) return recovered;
+  }
+  return null;
+}
+
+/**
+ * Rétablit `artist.gender` sur un projet déjà sauvé (hub / snapshot incomplet).
+ */
+export async function hydrateProjectArtistGender(saved) {
+  const project = saved?.project;
+  const original = project?.artist;
+  if (!original) return saved;
+
+  let artist = withResolvedArtistGender({ ...original });
+  const slug = artist.slug || saved.seed?.artistSlug || "";
+  const name = artist.name || saved.artistName || "";
+
+  if (!resolveArtistGender(artist) && slug) {
+    try {
+      const hub = await getArtistBySlug(slug);
+      if (hub?.profile) {
+        artist = withResolvedArtistGender({
+          ...hub.profile,
+          ...artist,
+          slug: slug || artist.slug,
+          name: name || artist.name,
+          gender: artist.gender || hub.profile.gender,
+          voice: artist.voice || hub.profile.voice,
+          visualIdentity: {
+            ...(hub.profile.visualIdentity || {}),
+            ...(artist.visualIdentity || {}),
+          },
+        });
+      }
+    } catch {
+      /* hub optionnel */
+    }
+  }
+
+  if (!resolveArtistGender(artist) && (slug || name)) {
+    const recovered = await recoverArtistGenderFromProjects(slug, name);
+    if (recovered) {
+      artist = withResolvedArtistGender({
+        ...artist,
+        ...recovered,
+        gender: recovered.gender || artist.gender,
+        voice: recovered.voice || artist.voice,
+        visualIdentity: {
+          ...(artist.visualIdentity || {}),
+          ...(recovered.visualIdentity || {}),
+        },
+      });
+    }
+  }
+
+  if (!artist.gender || artist.gender === original.gender) return saved;
+
+  const nextProject = { ...project, artist };
+  try {
+    await saveProject({
+      id: saved.id,
+      project: nextProject,
+      seed: saved.seed,
+      event: {
+        stepKey: "artist",
+        eventType: "backfill",
+        message: "Voix artiste rétablie depuis le profil",
+      },
+    });
+  } catch {
+    /* lecture toujours possible même si la persistance échoue */
+  }
+
+  return { ...saved, project: nextProject };
+}
+
+/**
  * Nouveau projet / morceau pour un artiste existant (garde le profil).
  */
 export async function createArtistRelease(slug, { theme = "", variantOf = null } = {}) {
@@ -716,9 +835,34 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
 
   const language = artist.profile?.language || "fr";
 
+  let profile = withResolvedArtistGender({
+    ...artist.profile,
+    slug: artist.slug,
+    name: artist.name,
+  });
+
+  if (!resolveArtistGender(profile)) {
+    const recovered = await recoverArtistGenderFromProjects(artist.slug, artist.name);
+    if (recovered) {
+      profile = withResolvedArtistGender({
+        ...profile,
+        ...recovered,
+        gender: recovered.gender || profile.gender,
+        voice: recovered.voice || profile.voice,
+        visualIdentity: {
+          ...(profile.visualIdentity || {}),
+          ...(recovered.visualIdentity || {}),
+        },
+      });
+      await upsertArtistFromProject(profile, { preferredSlug: artist.slug });
+    }
+  } else if (!artist.profile?.gender && profile.gender) {
+    await upsertArtistFromProject(profile, { preferredSlug: artist.slug });
+  }
+
   const project = {
     trends: null,
-    artist: { ...artist.profile, slug: artist.slug, name: artist.name },
+    artist: profile,
     // Préremplit l’étape paroles quand un thème vient de l’agent carrière
     lyrics: themeHint
       ? { theme: themeHint, language }
@@ -780,12 +924,12 @@ export async function openArtistStyleEditor(slug) {
     if (existing?.project) {
       const next = {
         ...existing.project,
-        artist: {
+        artist: withResolvedArtistGender({
           ...existing.project.artist,
           ...artist.profile,
           slug: artist.slug,
           name: artist.name,
-        },
+        }),
       };
       await saveProject({
         id: existing.id,

@@ -24,19 +24,13 @@ import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "../ArtistNameField.jsx";
 import PhotoUpload from "../PhotoUpload.jsx";
 import VoiceSampleUpload from "../VoiceSampleUpload.jsx";
+import { resolveArtistGender } from "../../lib/artistGender.js";
 
 const GENDERS = [
   { value: "male", label: "Homme" },
   { value: "female", label: "Femme" },
   { value: "nonbinary", label: "Non-binaire" },
 ];
-
-function genderLabel(code) {
-  if (code === "female") return "Femme";
-  if (code === "nonbinary") return "Non-binaire";
-  if (code === "male") return "Homme";
-  return code || "";
-}
 
 export default function ArtistStep({ artist, trends, loading, onGenerate, onPatchArtist, initialMode }) {
   const [mode, setMode] = useState(() =>
@@ -91,7 +85,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     return null;
   });
   const [age, setAge] = useState(artist?.age != null ? String(artist.age) : "");
-  const [gender, setGender] = useState(artist?.gender || "");
+  const [gender, setGender] = useState(() => resolveArtistGender(artist)?.code || "");
   const [city, setCity] = useState(artist?.city || "");
   const [photos, setPhotos] = useState(() => {
     if (Array.isArray(artist?.photos) && artist.photos.length) return artist.photos;
@@ -128,7 +122,8 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     if (artist.language) setLanguage(artist.language);
     setStyleArtist(artist.styleArtist || "");
     if (artist.age != null) setAge(String(artist.age));
-    if (artist.gender) setGender(artist.gender);
+    const savedGender = resolveArtistGender(artist)?.code;
+    if (savedGender) setGender(savedGender);
     if (artist.city) setCity(artist.city);
     if (Array.isArray(artist.photos) && artist.photos.length) {
       setPhotos(artist.photos);
@@ -301,6 +296,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
 
   const vi = artist?.visualIdentity;
   const displayGenres = parseGenres(artist?.genres || artist?.genre);
+  const savedGenderLabel = resolveArtistGender(artist)?.label;
   const favoriteNames =
     artist?.styleArtists ||
     (Array.isArray(artist?.styleLock?.refs)
@@ -783,9 +779,9 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                     Style non défini
                   </span>
                 )}
-                {artist.gender && (
+                {savedGenderLabel && (
                   <span class="inline-flex items-center border border-base-content/15 px-2.5 py-1 text-xs text-base-content/70">
-                    {genderLabel(artist.gender)}
+                    {savedGenderLabel}
                   </span>
                 )}
                 {artist.age != null && (

@@ -5,6 +5,7 @@
  */
 
 import { isS3Configured, uploadClipBuffer } from "./s3.js";
+import { extFromMime, sniffMime, mimeFromFileName } from "./audioPersist.js";
 
 const ONCE_API = "https://once.app/v1";
 
@@ -72,6 +73,7 @@ export async function restoreAudioFromOnceRelease({
   projectId,
   audioBuffer,
   mimeType = "audio/wav",
+  fileName = "",
 } = {}) {
   if (!token?.trim()) throw new Error("Token ONCE requis");
   if (!releaseId?.trim()) throw new Error("releaseId ONCE manquant");
@@ -112,7 +114,8 @@ export async function restoreAudioFromOnceRelease({
     throw new Error("Le fichier reçu est du HTML (login), pas de l’audio");
   }
 
-  const ext = /wav/i.test(mime) ? "wav" : /mp4|m4a|aac/i.test(mime) ? "m4a" : "mp3";
+  mime = sniffMime(buffer, mimeFromFileName(fileName, mime));
+  const ext = extFromMime(mime);
   const key = `audio/${String(projectId || "anon").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 60)}/once-${releaseId.slice(0, 8)}.${ext}`;
   const uploaded = await uploadClipBuffer(buffer, {
     projectId,

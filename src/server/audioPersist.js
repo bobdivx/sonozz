@@ -23,17 +23,33 @@ export function isAudioDataUrl(url = "") {
   return typeof url === "string" && /^data:audio\//i.test(url);
 }
 
-function extFromMime(mime = "") {
+export const MAX_AUDIO_UPLOAD_BYTES = 80_000_000;
+
+export function extFromMime(mime = "") {
+  if (/flac/i.test(mime)) return "flac";
   if (/mpeg|mp3/i.test(mime)) return "mp3";
   if (/wav/i.test(mime)) return "wav";
-  if (/flac/i.test(mime)) return "flac";
-  if (/ogg/i.test(mime)) return "ogg";
+  if (/ogg|opus/i.test(mime)) return "ogg";
   if (/mp4|m4a|aac/i.test(mime)) return "m4a";
   if (/webm/i.test(mime)) return "webm";
   return "mp3";
 }
 
-function sniffMime(buffer, fallback = "audio/mpeg") {
+export function mimeFromFileName(fileName = "", fallback = "") {
+  const ext = String(fileName || "")
+    .split(".")
+    .pop()
+    ?.toLowerCase();
+  if (ext === "flac") return "audio/flac";
+  if (ext === "wav") return "audio/wav";
+  if (ext === "mp3") return "audio/mpeg";
+  if (ext === "ogg" || ext === "opus") return "audio/ogg";
+  if (ext === "m4a" || ext === "aac") return "audio/mp4";
+  if (ext === "webm") return "audio/webm";
+  return fallback;
+}
+
+export function sniffMime(buffer, fallback = "audio/mpeg") {
   if (!buffer?.length) return fallback;
   // ID3 / MP3
   if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) return "audio/mpeg";
@@ -139,6 +155,39 @@ export async function loadAudioBuffer(source) {
   );
 
   return { buffer, mimeType };
+}
+
+/**
+ * Upload un fichier audio (buffer) vers S3 — import utilisateur (FLAC, WAV, MP3…).
+ * Sniffe le vrai format : sous Windows, file.type d’un .flac est souvent vide.
+ */
+export async function persistAudioFileBuffer(
+  buffer,
+  { projectId = "anon", mimeHint = "", fileName = "" } = {},
+) {
+  if (!isS3Configured()) {
+    throw new Error("S3 requis pour uploader un morceau durable");
+  }
+  if (!buffer?.length || buffer.length < 1000) {
+    throw new Error("Audio trop petit");
+  }
+  if (buffer.length > MAX_AUDIO_UPLOAD_BYTES) {
+    throw new Error("Audio trop lourd (max ~80 Mo)");
+  }
+  const hinted = mimeFromFileName(fileName, mimeHint || "audio/mpeg");
+  const mimeType = sniffMime(buffer, hinted);
+  const ext = extFromMime(mimeType);
+  const key = `audio/${String(projectId).replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 60)}/${Date.now()}.${ext}`;
+  const uploaded = await uploadClipBuffer(buffer, { projectId, mimeType, key });
+  return {
+    ok: true,
+    audioUrl: uploaded.url,
+    s3Key: uploaded.key,
+    mimeType: uploaded.mimeType,
+    byteLength: uploaded.byteLength,
+    persisted: true,
+    fileName: fileName || undefined,
+  };
 }
 
 /**

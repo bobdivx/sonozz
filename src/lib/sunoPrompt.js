@@ -4,9 +4,10 @@ import {
   musicArrangeToSongGen,
   isDefaultMusicArrange,
 } from "./musicArrange.js";
+import { resolveArtistGender } from "./artistGender.js";
 
 function voiceHintFromArtist(artist) {
-  const g = String(artist?.gender || "").toLowerCase();
+  const g = resolveArtistGender(artist)?.code;
   if (g === "female") return "female vocals, woman singer";
   if (g === "nonbinary") return "androgynous vocals";
   return "male vocals, man singer";

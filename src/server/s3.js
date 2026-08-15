@@ -77,12 +77,15 @@ export function getS3Client() {
 }
 
 function extFromMime(mime = "") {
-  if (mime.includes("mp4")) return "mp4";
-  if (mime.includes("webm")) return "webm";
-  if (mime.includes("quicktime")) return "mov";
-  if (mime.includes("wav")) return "wav";
-  if (mime.includes("mpeg") || mime.includes("mp3")) return "mp3";
-  if (mime.includes("audio")) return "wav";
+  const m = String(mime || "").toLowerCase();
+  if (m.includes("flac")) return "flac";
+  if (m.includes("mp4") || m.includes("m4a") || m.includes("aac")) return m.includes("audio") ? "m4a" : "mp4";
+  if (m.includes("webm")) return "webm";
+  if (m.includes("quicktime")) return "mov";
+  if (m.includes("wav")) return "wav";
+  if (m.includes("ogg") || m.includes("opus")) return "ogg";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("audio")) return "wav";
   return "webm";
 }
 

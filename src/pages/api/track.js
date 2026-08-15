@@ -5,6 +5,7 @@ import {
   deleteSongGenModel,
   loadSongGenModel,
   resolveSongGenBaseUrl,
+  songGenLanHint,
   startSongGenModelDownload,
   testSongGeneration,
   unloadSongGenModel,
@@ -59,15 +60,18 @@ export async function POST({ request }) {
 
     if (action === "probe-songgen") {
       const base = resolveSongGenBaseUrl(body?.keys || {});
+      const requestHost =
+        request.headers.get("x-forwarded-host") || request.headers.get("host") || "";
       try {
         const info = await testSongGeneration(body?.keys || {});
         return json(songGenProbePayload(info));
       } catch (e) {
+        const hint = songGenLanHint(base, requestHost);
         return json({
           ok: false,
           base,
           models: [],
-          message: e.message || "SongGeneration injoignable",
+          message: `${e.message || "SongGeneration injoignable"}${hint}`,
         });
       }
     }

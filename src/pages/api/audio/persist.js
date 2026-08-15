@@ -1,7 +1,8 @@
 import { json, error, readBody } from "../../../server/http.js";
-import { isS3Configured, uploadClipBuffer } from "../../../server/s3.js";
+import { isS3Configured } from "../../../server/s3.js";
 import {
   materializeAudioForStorage,
+  persistAudioFileBuffer,
   probeAudioUrl,
   loadAudioBuffer,
   isEphemeralAudioUrl,
@@ -48,20 +49,13 @@ export async function POST({ request }) {
         return error("Fichier audio manquant (champ audio)", 400);
       }
       const buffer = Buffer.from(await file.arrayBuffer());
-      if (buffer.length < 1000) return error("Audio trop petit", 400);
-      if (buffer.length > 40_000_000) return error("Audio trop lourd (max ~40 Mo)", 400);
       const projectId = String(form.get("projectId") || "anon");
-      const mimeType = String(file.type || form.get("mimeType") || "audio/mpeg");
-      const key = `audio/${projectId.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 60)}/${Date.now()}.mp3`;
-      const uploaded = await uploadClipBuffer(buffer, { projectId, mimeType, key });
-      return json({
-        ok: true,
-        audioUrl: uploaded.url,
-        s3Key: uploaded.key,
-        mimeType: uploaded.mimeType,
-        byteLength: uploaded.byteLength,
-        persisted: true,
+      const uploaded = await persistAudioFileBuffer(buffer, {
+        projectId,
+        mimeHint: String(file.type || form.get("mimeType") || ""),
+        fileName: String(file.name || form.get("fileName") || ""),
       });
+      return json(uploaded);
     }
 
     const body = await readBody(request);

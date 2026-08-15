@@ -62,9 +62,10 @@ function normalizeKind(project, kind) {
     ? next[cfg.versionsKey].filter(Boolean).map((e) => ensureEntryId(e, cfg.idPrefix)).filter(Boolean)
     : [];
 
-  // Legacy mono : uniquement si le tableau était absent (pas un [] volontaire après delete)
+  // Legacy / chargement : si le miroir existe encore, ne pas l’écraser avec un []
+  // injecté par emptyProject(). Un vrai delete met le miroir à null — pas de résurrection.
   const mirror = next[cfg.mirrorKey];
-  if (!hadArray && !versions.length && mirror && typeof mirror === "object") {
+  if (!versions.length && mirror && typeof mirror === "object") {
     versions = [
       ensureEntryId(
         {
