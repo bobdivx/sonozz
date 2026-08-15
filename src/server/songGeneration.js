@@ -7,6 +7,7 @@ import {
   isDefaultMusicArrange,
 } from "../lib/musicArrange.js";
 import { parseGenderCode } from "../lib/artistGender.js";
+import { isStudioEnabled } from "../lib/keys.js";
 
 /**
  * Client SongGeneration Studio (Pinokio / Demeter).
@@ -1524,5 +1525,5 @@ export async function generateMusicWithSongGeneration(
 }
 
 export function isSongGenMusicProvider(keys) {
-  return String(keys?.musicProvider || "").trim() === "songgen";
+  return String(keys?.musicProvider || "").trim() === "songgen" && isStudioEnabled(keys, "songgen");
 }

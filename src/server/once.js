@@ -658,7 +658,7 @@ async function resolveAudioFileUrl(token, track) {
 function isAiGeneratedTrack(track) {
   const p = String(track?.provider || "").toLowerCase();
   if (!p || p === "brief") return true; // pipeline SONOZZ = IA par défaut
-  return /minimax|songgen|replicate|suno|udio|ai/.test(p);
+  return /minimax|songgen|acestep|replicate|suno|udio|ai/.test(p);
 }
 
 /**

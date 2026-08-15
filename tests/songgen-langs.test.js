@@ -38,4 +38,13 @@ describe("SongGen language limits", () => {
   it("replicate garde le français", () => {
     assert.equal(isLanguageOkForProvider("fr", "replicate", ""), true);
   });
+
+  it("ACE-Step chante toutes les langues nativement", () => {
+    assert.equal(isLanguageOkForProvider("fr", "acestep", ""), true);
+    assert.equal(isLanguageOkForProvider("es", "acestep", ""), true);
+    assert.equal(languageEngineLabel("fr", "acestep", ""), "ACE-Step");
+    const labels = languagesForProvider("acestep", "").map((l) => l.code);
+    assert.ok(labels.includes("fr"));
+    assert.ok(labels.includes("en"));
+  });
 });

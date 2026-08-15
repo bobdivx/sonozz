@@ -10,6 +10,13 @@ import {
   testSongGeneration,
   unloadSongGenModel,
 } from "../../server/songGeneration.js";
+import {
+  aceStepLanHint,
+  resolveAceStepBaseUrl,
+  switchAceStepModel,
+  testAceStep,
+} from "../../server/aceStep.js";
+import { testReplicateToken } from "../../server/replicate.js";
 
 function songGenProbePayload(info) {
   const large = info.largeModel;
@@ -57,6 +64,82 @@ export async function POST({ request }) {
   try {
     const body = await readBody(request);
     const action = String(body?.action || "start").trim();
+
+    if (action === "probe-acestep") {
+      const base = resolveAceStepBaseUrl(body?.keys || {});
+      const requestHost =
+        request.headers.get("x-forwarded-host") || request.headers.get("host") || "";
+      try {
+        const info = await testAceStep(body?.keys || {});
+        return json({
+          ok: true,
+          base: info.base,
+          activeModel: info.activeModel || null,
+          pickedModel: info.pickedModel || null,
+          pickReason: info.pickReason || null,
+          models: info.models || [],
+          preferredModel: info.preferredModel || null,
+          gpu: info.gpu || null,
+          hasReadyModel: info.hasReadyModel,
+          message: info.message || "Joignable",
+        });
+      } catch (e) {
+        const hint = aceStepLanHint(base, requestHost);
+        return json({
+          ok: false,
+          base,
+          models: [],
+          message: `${e.message || "ACE-Step injoignable"}${hint}`,
+        });
+      }
+    }
+
+    if (action === "switch-acestep-model") {
+      const keys = body?.keys || {};
+      const modelId = String(body?.modelId || "").trim();
+      if (!modelId) return error("modelId manquant", 400);
+      try {
+        const switched = await switchAceStepModel(keys, modelId);
+        let probe = null;
+        try {
+          const info = await testAceStep(keys);
+          probe = {
+            ok: true,
+            base: info.base,
+            activeModel: info.activeModel || null,
+            pickedModel: info.pickedModel || null,
+            models: info.models || [],
+            gpu: info.gpu || null,
+            hasReadyModel: info.hasReadyModel,
+            message: info.message || "Joignable",
+          };
+        } catch (e) {
+          probe = { ok: false, message: e.message, models: [] };
+        }
+        return json({ ok: true, ...switched, probe });
+      } catch (e) {
+        return json({
+          ok: false,
+          message: e.message || "Changement de modèle impossible",
+        });
+      }
+    }
+
+    if (action === "probe-replicate") {
+      const token = String(body?.keys?.replicateApiToken || "").trim();
+      if (!token) {
+        return json({ ok: false, message: "Token Replicate absent" });
+      }
+      try {
+        const account = await testReplicateToken(token);
+        return json({
+          ok: true,
+          message: `Compte OK (${account.username || account.name || "ok"})`,
+        });
+      } catch (e) {
+        return json({ ok: false, message: e.message || "Token Replicate invalide" });
+      }
+    }
 
     if (action === "probe-songgen") {
       const base = resolveSongGenBaseUrl(body?.keys || {});

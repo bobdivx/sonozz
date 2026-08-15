@@ -56,27 +56,6 @@ export const KEY_FIELDS = [
         ],
       },
       {
-        id: "musicProvider",
-        label: "Provider audio (morceaux)",
-        help: "SongGeneration Studio = local GPU (Pinokio / Demeter). MiniMax = cloud Replicate.",
-        required: false,
-        inputType: "select",
-        options: [
-          { value: "replicate", label: "Replicate MiniMax 2.6 (cloud)" },
-          { value: "songgen", label: "SongGeneration Studio (local)" },
-        ],
-      },
-      {
-        id: "songGenBaseUrl",
-        label: "URL SongGeneration Studio",
-        placeholder: "http://10.1.0.88:42014",
-        help: "Doit être joignable depuis le serveur Astro. Ex. Home Server Pinokio sur Demeter.",
-        required: false,
-        inputType: "url",
-        when: { musicProvider: "songgen" },
-        url: "https://github.com/BazedFrog/SongGeneration-Studio",
-      },
-      {
         id: "videoProvider",
         label: "Provider vidéo (clips)",
         help: "Wan2GP = local GPU Pinokio. Veo/Seedance restent dispo dans l’étape Clip.",
@@ -97,11 +76,60 @@ export const KEY_FIELDS = [
         when: { videoProvider: "wan2gp" },
         url: "https://github.com/deepbeepmeep/Wan2GP",
       },
+    ],
+  },
+  {
+    group: "Morceaux",
+    items: [
+      {
+        id: "musicProvider",
+        label: "Générateur de morceaux",
+        help: "ACE-Step = local (voix + toutes langues). SongGen = local (EN/ZH). MiniMax = cloud Replicate.",
+        required: false,
+        inputType: "select",
+        options: [
+          { value: "acestep", label: "ACE-Step Studio (local)" },
+          { value: "replicate", label: "Replicate MiniMax 2.6 (cloud)" },
+          { value: "songgen", label: "SongGeneration Studio (local)" },
+        ],
+      },
+      {
+        id: "aceStepBaseUrl",
+        label: "URL ACE-Step Studio",
+        placeholder: "http://127.0.0.1:3001",
+        help: "Doit être joignable depuis le serveur Astro. Pinokio : souvent localhost:3001.",
+        required: false,
+        inputType: "url",
+        url: "https://github.com/timoncool/ACE-Step-Studio",
+      },
+      {
+        id: "aceStepPreferredModel",
+        label: "Modèle ACE-Step",
+        help: "Turbo = rapide. SFT = qualité max (plus de VRAM / plus lent).",
+        required: false,
+        inputType: "select",
+        options: [
+          { value: "", label: "Auto (modèle déjà chargé)" },
+          { value: "acestep-v15-xl-turbo", label: "XL Turbo (8 steps, rapide)" },
+          { value: "acestep-v15-xl-sft", label: "XL SFT (50 steps, qualité)" },
+          { value: "marcorez8/acestep-v15-xl-turbo-bf16", label: "XL Turbo BF16 (compact)" },
+          { value: "acestep-v15-xl-merge-sft-turbo", label: "XL Merge SFT+Turbo" },
+        ],
+      },
+      {
+        id: "songGenBaseUrl",
+        label: "URL SongGeneration Studio",
+        placeholder: "http://10.1.0.88:42014",
+        help: "Doit être joignable depuis le serveur Astro. Ex. Home Server Pinokio sur Demeter.",
+        required: false,
+        inputType: "url",
+        url: "https://github.com/BazedFrog/SongGeneration-Studio",
+      },
       {
         id: "replicateApiToken",
         label: "Replicate API Token",
         placeholder: "r8_...",
-        help: "Audio MiniMax (si provider = Replicate) + images Flux + Seedance. Billing recommandé.",
+        help: "MiniMax (si générateur = Replicate). Aussi images Flux et Seedance. Billing recommandé.",
         required: false,
         url: "https://replicate.com/account/api-tokens",
       },
@@ -321,7 +349,52 @@ const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "llama3.2";
 const DEFAULT_SONGGEN_BASE = "http://127.0.0.1:7860";
+const DEFAULT_ACESTEP_BASE = "http://127.0.0.1:3001";
 const DEFAULT_WAN2GP_BASE = "http://127.0.0.1:7860";
+const MUSIC_PROVIDERS = ["acestep", "replicate", "songgen"];
+export const STUDIO_ENABLE_KEYS = {
+  acestep: "aceStepEnabled",
+  songgen: "songGenEnabled",
+  replicate: "replicateEnabled",
+};
+
+export function isFlagOn(value, defaultOn = true) {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!raw) return defaultOn;
+  return raw !== "0" && raw !== "false" && raw !== "off" && raw !== "no";
+}
+
+export function isStudioEnabled(keys, id) {
+  const field = STUDIO_ENABLE_KEYS[id];
+  if (!field) return false;
+  return isFlagOn(keys?.[field], true);
+}
+
+export function enabledStudios(keys) {
+  return MUSIC_PROVIDERS.filter((id) => isStudioEnabled(keys, id));
+}
+
+/** Recalcule le moteur actif après un toggle on/off. */
+export function keysAfterStudioToggle(keys, id, enabled) {
+  const field = STUDIO_ENABLE_KEYS[id];
+  const next = { ...keys, [field]: enabled ? "1" : "0" };
+  const current = String(next.musicProvider || "").trim();
+  const on = enabledStudios(next);
+  if (enabled) {
+    if (!on.includes(current)) next.musicProvider = id;
+  } else if (current === id && on[0]) {
+    next.musicProvider = on[0];
+  }
+  return next;
+}
+const ACE_STEP_MODELS = [
+  "acestep-v15-xl-turbo",
+  "acestep-v15-xl-sft",
+  "marcorez8/acestep-v15-xl-turbo-bf16",
+  "acestep-v15-xl-merge-sft-turbo",
+];
 
 export const EMPTY_KEYS = () => {
   const base = Object.fromEntries(KEY_FIELDS.flatMap((g) => g.items.map((i) => [i.id, ""])));
@@ -330,6 +403,11 @@ export const EMPTY_KEYS = () => {
   base.ollamaBaseUrl = DEFAULT_OLLAMA_BASE;
   base.ollamaModel = DEFAULT_OLLAMA_MODEL;
   base.musicProvider = "replicate";
+  base.aceStepEnabled = "1";
+  base.songGenEnabled = "1";
+  base.replicateEnabled = "1";
+  base.aceStepBaseUrl = DEFAULT_ACESTEP_BASE;
+  base.aceStepPreferredModel = "";
   base.songGenBaseUrl = DEFAULT_SONGGEN_BASE;
   base.songGenPreferredModel = "";
   base.videoProvider = "cloud";
@@ -354,9 +432,17 @@ function migrateKeys(keys) {
   if (!next.ollamaModel?.trim()) {
     next.ollamaModel = DEFAULT_OLLAMA_MODEL;
   }
-  if (!next.musicProvider?.trim() || !["replicate", "songgen"].includes(next.musicProvider.trim())) {
+  if (!next.musicProvider?.trim() || !MUSIC_PROVIDERS.includes(next.musicProvider.trim())) {
     next.musicProvider = "replicate";
   }
+  next.aceStepEnabled = isFlagOn(next.aceStepEnabled, true) ? "1" : "0";
+  next.songGenEnabled = isFlagOn(next.songGenEnabled, true) ? "1" : "0";
+  next.replicateEnabled = isFlagOn(next.replicateEnabled, true) ? "1" : "0";
+  if (!next.aceStepBaseUrl?.trim()) {
+    next.aceStepBaseUrl = DEFAULT_ACESTEP_BASE;
+  }
+  const acePref = String(next.aceStepPreferredModel || "").trim();
+  next.aceStepPreferredModel = ACE_STEP_MODELS.includes(acePref) ? acePref : "";
   if (!next.songGenBaseUrl?.trim()) {
     next.songGenBaseUrl = DEFAULT_SONGGEN_BASE;
   }

@@ -19,6 +19,7 @@ export async function POST({ request }) {
       once: { ok: false, message: "Non testé" },
       replicate: { ok: false, message: "Non testé" },
       songgen: { ok: false, message: "Non testé" },
+      acestep: { ok: false, message: "Non testé" },
       wan2gp: { ok: false, message: "Non testé" },
       turso: { ok: false, message: "Non testé" },
     };
@@ -157,28 +158,38 @@ export async function POST({ request }) {
       results.replicate = {
         ok: false,
         message:
-          String(keys.musicProvider || "").trim() === "songgen"
-            ? "Token absent (optionnel si SongGen local)"
+          ["songgen", "acestep"].includes(String(keys.musicProvider || "").trim())
+            ? "Token absent (optionnel si provider local)"
             : "Token absent (optionnel)",
       };
     }
 
-    if (String(keys.musicProvider || "").trim() === "songgen") {
-      try {
-        const { testSongGeneration } = await import("../../server/songGeneration.js");
-        const info = await testSongGeneration(keys);
-        const modelBit = info.pickedModel || info.defaultModel || "";
-        results.songgen = {
-          ok: info.hasReadyModel !== false,
-          message: info.hasReadyModel === false
-            ? `Studio OK @ ${info.base} — aucun modèle prêt`
-            : `Studio OK @ ${info.base}${modelBit ? ` · ${modelBit}` : ""}`,
-        };
-      } catch (e) {
-        results.songgen = { ok: false, message: e.message };
-      }
-    } else {
-      results.songgen = { ok: false, message: "Provider = Replicate MiniMax" };
+    try {
+      const { testSongGeneration } = await import("../../server/songGeneration.js");
+      const info = await testSongGeneration(keys);
+      const modelBit = info.pickedModel || info.defaultModel || "";
+      results.songgen = {
+        ok: info.hasReadyModel !== false,
+        message: info.hasReadyModel === false
+          ? `Studio OK @ ${info.base} — aucun modèle prêt`
+          : `Studio OK @ ${info.base}${modelBit ? ` · ${modelBit}` : ""}`,
+      };
+    } catch (e) {
+      results.songgen = { ok: false, message: e.message };
+    }
+
+    try {
+      const { testAceStep } = await import("../../server/aceStep.js");
+      const info = await testAceStep(keys);
+      const modelBit = info.pickedModel || info.activeModel || "";
+      results.acestep = {
+        ok: info.hasReadyModel !== false,
+        message: info.hasReadyModel === false
+          ? `Studio OK @ ${info.base} — aucun modèle chargé`
+          : `Studio OK @ ${info.base}${modelBit ? ` · ${modelBit}` : ""}`,
+      };
+    } catch (e) {
+      results.acestep = { ok: false, message: e.message };
     }
 
     if (String(keys.videoProvider || "").trim() === "wan2gp") {

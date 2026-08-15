@@ -23,11 +23,12 @@ import {
   Pencil,
   X,
 } from "lucide-preact";
-import { loadKeys, saveKeysAsync, ensureKeysHydrated } from "../../lib/keys.js";
+import { loadKeys, saveKeysAsync, ensureKeysHydrated, isStudioEnabled } from "../../lib/keys.js";
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
 import { api } from "../../lib/apiClient.js";
 import MusicArrangePanel from "../MusicArrangePanel.jsx";
 import SongGenModelsPanel from "../SongGenModelsPanel.jsx";
+import AceStepModelsPanel from "../AceStepModelsPanel.jsx";
 import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import { normalizeMusicArrange, musicArrangeFromStyleLock, isDefaultMusicArrange } from "../../lib/musicArrange.js";
 import { buildSunoPrompt } from "../../lib/sunoPrompt.js";
@@ -46,6 +47,17 @@ function songGenUrlFromKeys(keys) {
   return String(keys?.songGenBaseUrl || "")
     .trim()
     .replace(/\/+$/, "") || "http://127.0.0.1:7860";
+}
+
+function aceStepUrlFromKeys(keys) {
+  return String(keys?.aceStepBaseUrl || "")
+    .trim()
+    .replace(/\/+$/, "") || "http://127.0.0.1:3001";
+}
+
+function normalizeMusicProvider(value) {
+  const v = String(value || "").trim();
+  return v === "songgen" || v === "acestep" ? v : "replicate";
 }
 
 const AUDIO_FILE_ACCEPT = "audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.webm";
@@ -110,6 +122,7 @@ export default function TracksStep({
 }) {
   const [musicProvider, setMusicProvider] = useState("replicate");
   const [songGenUrl, setSongGenUrl] = useState("http://127.0.0.1:7860");
+  const [aceStepUrl, setAceStepUrl] = useState("http://127.0.0.1:3001");
   const [hasReplicateToken, setHasReplicateToken] = useState(false);
   const [hasOnce, setHasOnce] = useState(false);
   const [providerBusy, setProviderBusy] = useState(false);
@@ -191,8 +204,13 @@ export default function TracksStep({
     onRenameTrack?.(next);
   }
 
-  const hasSongGen = musicProvider === "songgen";
-  const hasReplicate = musicProvider === "replicate" && hasReplicateToken;
+  const hasAceStep = musicProvider === "acestep" && isStudioEnabled(loadKeys(), "acestep");
+  const hasSongGen = musicProvider === "songgen" && isStudioEnabled(loadKeys(), "songgen");
+  const aceOffered = isStudioEnabled(loadKeys(), "acestep");
+  const songOffered = isStudioEnabled(loadKeys(), "songgen");
+  const miniOffered = isStudioEnabled(loadKeys(), "replicate");
+  const hasReplicate = musicProvider === "replicate" && hasReplicateToken && miniOffered;
+  const hasLocalStudio = hasAceStep || hasSongGen;
   const trackLang = String(lyrics?.language || artist?.language || "fr").slice(0, 2);
   const songGenModel = loadKeys().songGenPreferredModel || "songgeneration_large";
   const songGenLangFallback = hasSongGen && !isSongGenNativeLanguage(trackLang, songGenModel);
@@ -251,10 +269,10 @@ export default function TracksStep({
 
   function refreshFromKeys() {
     const keys = loadKeys();
-    const provider =
-      String(keys.musicProvider || "").trim() === "songgen" ? "songgen" : "replicate";
+    const provider = normalizeMusicProvider(keys.musicProvider);
     setMusicProvider(provider);
     setSongGenUrl(songGenUrlFromKeys(keys));
+    setAceStepUrl(aceStepUrlFromKeys(keys));
     setHasReplicateToken(Boolean(keys.replicateApiToken?.trim()));
     setHasOnce(Boolean(keys.onceApiToken?.trim()));
     return { keys, provider };
@@ -296,6 +314,51 @@ export default function TracksStep({
     downloadPollRef.current = setInterval(() => {
       void probeSongGen({ quiet: true });
     }, 4000);
+  }
+
+  async function probeAceStep({ quiet = false } = {}) {
+    const seq = ++probeSeq.current;
+    if (!quiet) {
+      setProbeStatus("checking");
+      setProbeMessage("Vérification ACE-Step depuis le serveur Astro…");
+      setModelActionError("");
+    }
+    try {
+      const res = await api.probeAceStep();
+      if (seq !== probeSeq.current) return;
+      applyProbeResult(res);
+      if (res?.activeModel) setPickedModelId(res.activeModel);
+      setModelBusyId(null);
+    } catch (e) {
+      if (seq !== probeSeq.current) return;
+      setProbeStatus("error");
+      setProbeMessage(e.message || "Test impossible");
+      setSongGenReadyFlag(false);
+    }
+  }
+
+  async function runAceModelAction(modelId) {
+    if (!modelId || modelBusyId || loading) return;
+    setModelBusyId(modelId);
+    setModelActionError("");
+    try {
+      await ensureKeysHydrated();
+      const keys = loadKeys();
+      await saveKeysAsync({ ...keys, aceStepPreferredModel: modelId });
+      setPreferredModelId(modelId);
+      const res = await api.switchAceStepModel(modelId);
+      if (!res?.ok) {
+        setModelActionError(res?.message || "Changement de modèle impossible");
+        setModelBusyId(null);
+        return;
+      }
+      if (res.probe) applyProbeResult(res.probe);
+      else await probeAceStep({ quiet: true });
+      setModelBusyId(null);
+    } catch (e) {
+      setModelActionError(e.message || "Changement de modèle impossible");
+      setModelBusyId(null);
+    }
   }
 
   async function probeSongGen({ quiet = false } = {}) {
@@ -366,6 +429,7 @@ export default function TracksStep({
       const { provider } = refreshFromKeys();
       setKeysHydrated(true);
       if (provider === "songgen") void probeSongGen();
+      else if (provider === "acestep") void probeAceStep();
       else {
         setProbeStatus("idle");
         setProbeMessage("");
@@ -399,6 +463,7 @@ export default function TracksStep({
 
   async function switchMusicProvider(next) {
     if (next === musicProvider || providerBusy || loading || !keysHydrated) return;
+    if (!isStudioEnabled(loadKeys(), next)) return;
     setProviderBusy(true);
     setImportError("");
     try {
@@ -407,8 +472,14 @@ export default function TracksStep({
       const { keys: saved } = await saveKeysAsync({ ...keys, musicProvider: next });
       setMusicProvider(next);
       setSongGenUrl(songGenUrlFromKeys(saved));
+      setAceStepUrl(aceStepUrlFromKeys(saved));
       setHasReplicateToken(Boolean(saved.replicateApiToken?.trim()));
+      setSongGenModels([]);
+      setPickedModelId(null);
+      setPreferredModelId(null);
+      setSongGenGpu(null);
       if (next === "songgen") await probeSongGen();
+      else if (next === "acestep") await probeAceStep();
       else {
         probeSeq.current += 1;
         setProbeStatus("idle");
@@ -661,7 +732,7 @@ export default function TracksStep({
     track?.status === "preview-ready" || Boolean(track?.isPreview && track?.audioUrl);
   const audioReady = isTrackAudioFinal(track);
   const isOnceOriginal = track?.provider === "once-original";
-  const canGenerateAudio = hasSongGen || hasReplicate;
+  const canGenerateAudio = hasAceStep || hasSongGen || hasReplicate;
   const artistSlug = artist?.slug;
   const songGenHasReady =
     songGenReadyFlag === true || songGenModels.some((m) => m.status === "ready");
@@ -671,7 +742,7 @@ export default function TracksStep({
   const genDisabled =
     loading ||
     !hasLyricsText ||
-    (hasSongGen && probeStatus === "error") ||
+    (hasLocalStudio && probeStatus === "error") ||
     modelsNotReady ||
     (hasSongGen && !voiceLabel) ||
     (songGenLangFallback && !hasReplicateToken);
@@ -681,7 +752,7 @@ export default function TracksStep({
       ? `https://beta.once.app/releases/${onceReleaseId.trim()}`
       : "https://beta.once.app/");
 
-  const providerLabel = hasSongGen ? "SongGeneration" : "MiniMax";
+  const providerLabel = hasAceStep ? "ACE-Step" : hasSongGen ? "SongGeneration" : "MiniMax";
 
   return (
     <section class="animate-rise space-y-6">
@@ -727,7 +798,7 @@ export default function TracksStep({
           <Music2 size={14} />
           Titre de référence
         </button>
-        {(hasSongGen || hasReplicate) && (
+        {(hasAceStep || hasSongGen || hasReplicate) && (
           <button
             type="button"
             class="btn btn-outline btn-sm gap-1.5"
@@ -793,12 +864,12 @@ export default function TracksStep({
         )}
       </div>
 
-      {!canGenerateAudio && !hasSongGen && keysHydrated && (
+      {!canGenerateAudio && !hasLocalStudio && keysHydrated && (
         <div class="border border-warning/40 bg-warning/10 p-4">
           <p class="font-medium text-warning">Aucun provider audio prêt</p>
           <p class="mt-1 text-sm text-base-content/70">
-            Ouvre Provider audio pour choisir SongGeneration ou un token Replicate, sinon importe un
-            fichier audio (mp3, wav, flac).
+            Ouvre Provider audio pour choisir ACE-Step, SongGeneration ou un token Replicate, sinon
+            importe un fichier audio (mp3, wav, flac).
           </p>
         </div>
       )}
@@ -816,9 +887,11 @@ export default function TracksStep({
                 ? "Voix / sexe manquant sur ce projet — ouvre Profil utilisé"
                 : modelsNotReady
                   ? "Aucun modèle SongGen prêt — ouvre Provider audio"
-                  : hasSongGen
-                    ? "Brouillon court (intro + couplet + refrain) — moins de GPU"
-                    : "Brouillon avec paroles tronquées — MiniMax reste cloud"
+                  : hasAceStep
+                    ? "Brouillon court ACE-Step (~30 s)"
+                    : hasSongGen
+                      ? "Brouillon court (intro + couplet + refrain) — moins de GPU"
+                      : "Brouillon avec paroles tronquées — MiniMax reste cloud"
           }
         >
           {loading ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={18} />}
@@ -840,13 +913,17 @@ export default function TracksStep({
                 ? "Voix / sexe manquant sur ce projet — ouvre Profil utilisé"
                 : modelsNotReady
                   ? "Aucun modèle SongGen prêt — ouvre Provider audio et télécharge Large"
-                  : hasSongGen && probeStatus === "error"
-                    ? "SongGeneration injoignable — corrige l’URL ou Retester"
-                    : hasSongGen
-                      ? `Morceau complet via SongGeneration @ ${songGenUrl}`
-                      : !hasReplicate
-                        ? "Sans provider → brief Suno uniquement"
-                        : "Morceau complet via MiniMax Music 2.6"
+                  : hasAceStep && probeStatus === "error"
+                    ? "ACE-Step injoignable — corrige l’URL ou Retester"
+                    : hasSongGen && probeStatus === "error"
+                      ? "SongGeneration injoignable — corrige l’URL ou Retester"
+                      : hasAceStep
+                        ? `Morceau complet via ACE-Step @ ${aceStepUrl}`
+                        : hasSongGen
+                          ? `Morceau complet via SongGeneration @ ${songGenUrl}`
+                          : !hasReplicate
+                            ? "Sans provider → brief Suno uniquement"
+                            : "Morceau complet via MiniMax Music 2.6"
           }
         >
           {loading ? <span class="loading loading-spinner loading-sm" /> : <Disc3 size={18} />}
@@ -907,7 +984,7 @@ export default function TracksStep({
           (~20 Go), puis clique Utiliser.
         </p>
       )}
-      {hasSongGen && probeStatus === "error" && (
+      {hasLocalStudio && probeStatus === "error" && (
         <p class="text-sm text-error">
           {probeMessage ||
             "Studio injoignable depuis Astro — lance Pinokio / vérifie l’URL (Provider audio)."}
@@ -1271,6 +1348,17 @@ export default function TracksStep({
         <div class="space-y-3">
           <div class="flex flex-wrap items-center gap-2">
             <div class="join">
+              {aceOffered && (
+              <button
+                type="button"
+                class={`btn join-item btn-sm ${hasAceStep ? "btn-primary" : "btn-ghost"}`}
+                disabled={providerBusy || loading || !keysHydrated}
+                onClick={() => switchMusicProvider("acestep")}
+              >
+                ACE-Step
+              </button>
+              )}
+              {songOffered && (
               <button
                 type="button"
                 class={`btn join-item btn-sm ${hasSongGen ? "btn-primary" : "btn-ghost"}`}
@@ -1279,24 +1367,84 @@ export default function TracksStep({
               >
                 SongGeneration
               </button>
+              )}
+              {miniOffered && (
               <button
                 type="button"
-                class={`btn join-item btn-sm ${!hasSongGen ? "btn-primary" : "btn-ghost"}`}
+                class={`btn join-item btn-sm ${musicProvider === "replicate" ? "btn-primary" : "btn-ghost"}`}
                 disabled={providerBusy || loading || !keysHydrated}
                 onClick={() => switchMusicProvider("replicate")}
               >
                 MiniMax
               </button>
+              )}
             </div>
             {(providerBusy || !keysHydrated) && (
               <span class="loading loading-spinner loading-xs" />
             )}
           </div>
+          {!aceOffered && !songOffered && !miniOffered && (
+            <p class="text-xs text-warning">
+              Tous les moteurs sont désactivés. Active-en un dans Paramètres → Morceaux.
+            </p>
+          )}
           {!keysHydrated && (
             <p class="text-xs text-base-content/50">Chargement des clés depuis Turso…</p>
           )}
 
-          {hasSongGen ? (
+          {hasAceStep ? (
+            <div class="space-y-2 text-sm">
+              <p class="text-base-content/70">
+                URL :{" "}
+                <code class="break-all rounded bg-base-300/60 px-1.5 py-0.5 text-xs">
+                  {aceStepUrl}
+                </code>
+              </p>
+              <div class="flex flex-wrap items-center gap-2">
+                {probeStatus === "checking" && (
+                  <span class="inline-flex items-center gap-1.5 text-base-content/60">
+                    <span class="loading loading-spinner loading-xs" />
+                    Test en cours…
+                  </span>
+                )}
+                {probeStatus === "ok" && (
+                  <span class="inline-flex items-center gap-1.5 text-success">
+                    <CheckCircle2 size={14} />
+                    {probeMessage}
+                  </span>
+                )}
+                {probeStatus === "error" && (
+                  <span class="inline-flex max-w-full items-start gap-1.5 text-error">
+                    <XCircle size={14} class="mt-0.5 shrink-0" />
+                    <span class="break-words">{probeMessage}</span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs gap-1"
+                  disabled={probeStatus === "checking" || loading}
+                  onClick={() => void probeAceStep()}
+                >
+                  <RefreshCw size={12} /> Retester
+                </button>
+                <button type="button" class="btn btn-ghost btn-xs" onClick={onOpenSettings}>
+                  Ajuster l’URL
+                </button>
+              </div>
+              {probeStatus === "ok" && (
+                <AceStepModelsPanel
+                  models={songGenModels}
+                  activeModelId={pickedModelId}
+                  preferredModelId={preferredModelId}
+                  gpu={songGenGpu}
+                  busyId={modelBusyId}
+                  disabled={loading || probeStatus === "checking"}
+                  error={modelActionError}
+                  onUse={(id) => void runAceModelAction(id)}
+                />
+              )}
+            </div>
+          ) : hasSongGen ? (
             <div class="space-y-2 text-sm">
               <p class="text-base-content/70">
                 URL :{" "}
@@ -1367,7 +1515,7 @@ export default function TracksStep({
           ) : keysHydrated ? (
             <div class="space-y-2">
               <p class="text-sm text-warning">
-                Token Replicate manquant — ajoute-le dans Paramètres, ou passe sur SongGeneration.
+                Token Replicate manquant — ajoute-le dans Paramètres, ou passe sur ACE-Step / SongGeneration.
               </p>
               <button type="button" class="btn btn-warning btn-sm gap-1" onClick={onOpenSettings}>
                 <KeyRound size={14} /> Paramètres audio

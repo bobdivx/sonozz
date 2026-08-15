@@ -8,6 +8,7 @@ import {
   Link2,
   Sparkles,
   Music2,
+  AudioLines,
   Radio,
   Share2,
 } from "lucide-preact";
@@ -26,6 +27,7 @@ import {
 import { formatQuotaReset, getTikTokQuota } from "../lib/tiktokQuota.js";
 import { formatYouTubeQuotaReset, getYouTubeQuota } from "../lib/youtubeQuota.js";
 import { api } from "../lib/apiClient.js";
+import MusicStudiosPanel from "./MusicStudiosPanel.jsx";
 
 const TIKTOK_STATE_KEY = "sonozz.tiktok.oauth.state";
 const TIKTOK_VERIFIER_KEY = "sonozz.tiktok.oauth.verifier";
@@ -33,7 +35,12 @@ const YOUTUBE_STATE_KEY = "sonozz.youtube.oauth.state";
 const YOUTUBE_VERIFIER_KEY = "sonozz.youtube.oauth.verifier";
 
 const SECTION_META = {
-  IA: { id: "ia", icon: Sparkles, blurb: "Gemini, Ollama local, et génération audio / image." },
+  IA: { id: "ia", icon: Sparkles, blurb: "Texte, images et clips : Gemini, Ollama, Veo / Wan2GP." },
+  Morceaux: {
+    id: "morceaux",
+    icon: AudioLines,
+    blurb: "Configure ACE-Step, SongGeneration et MiniMax, vois leur état, puis choisis le moteur actif.",
+  },
   Streaming: { id: "streaming", icon: Music2, blurb: "Spotify et Deezer pour le contexte catalogue." },
   "Distribution ONCE": {
     id: "distribution",
@@ -419,7 +426,7 @@ export default function SettingsPage() {
     <AppShell
       active="parametres"
       title="Paramètres"
-      subtitle="Clés API stockées dans ton navigateur. Sépare IA, streaming, distribution et réseaux."
+      subtitle="Clés API stockées dans ton navigateur. Sépare IA, morceaux, streaming, distribution et réseaux."
     >
       <div class="flex flex-col gap-6 lg:flex-row lg:gap-8">
         {/* Section sidebar */}
@@ -462,6 +469,13 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {section === "morceaux" ? (
+            <MusicStudiosPanel
+              keys={keys}
+              onChange={update}
+              onKeysReplace={setKeys}
+            />
+          ) : (
           <form
             class="space-y-5"
             onSubmit={(e) => {
@@ -520,6 +534,7 @@ export default function SettingsPage() {
               </label>
             ))}
           </form>
+          )}
 
           {section === "distribution" && (
             <div class="mt-8 max-w-xl space-y-3 border border-base-content/10 bg-base-200/40 p-4">

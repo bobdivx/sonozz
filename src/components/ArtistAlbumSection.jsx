@@ -3,7 +3,7 @@ import { Library } from "lucide-preact";
 import AlbumAutonomePanel from "./AlbumAutonomePanel.jsx";
 import { api } from "../lib/apiClient.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
-import { keysReady, loadKeys } from "../lib/keys.js";
+import { keysReady, loadKeys, isStudioEnabled } from "../lib/keys.js";
 import { createAlbumId, createAlbumTrackId, emptyProject, isTrackAudioFinal } from "../lib/studio.js";
 import { patchJob } from "../lib/jobStore.js";
 import { finishStepJob, trackStepJob } from "../lib/jobRunner.js";
@@ -39,9 +39,11 @@ export default function ArtistAlbumSection({ slug, releases = [] }) {
 
   useEffect(() => {
     const keys = loadKeys();
-    const provider = String(keys.musicProvider || "").trim() === "songgen" ? "songgen" : "replicate";
+    const provider = String(keys.musicProvider || "").trim();
     setCanGenerateAudio(
-      provider === "songgen" || Boolean(keys.replicateApiToken?.trim()),
+      (provider === "songgen" && isStudioEnabled(keys, "songgen")) ||
+        (provider === "acestep" && isStudioEnabled(keys, "acestep")) ||
+        (isStudioEnabled(keys, "replicate") && Boolean(keys.replicateApiToken?.trim())),
     );
   }, []);
 

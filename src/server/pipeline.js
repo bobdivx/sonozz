@@ -21,7 +21,15 @@ import {
   isSongGenMusicProvider,
   resolveVocalGender,
 } from "./songGeneration.js";
+import {
+  generateMusicWithAceStep,
+  startAceStep,
+  pollAceStep,
+  cancelAceStep,
+  isAceStepMusicProvider,
+} from "./aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
+import { isStudioEnabled } from "../lib/keys.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
 import { slugify, getArtistBySlug } from "./artists.js";
 import { llmJson, requireTextLlm } from "./llm.js";
@@ -1083,11 +1091,13 @@ function assembleTrackResult({
   });
 
   const noteReady =
-    provider === "songgeneration-studio"
-      ? "Chanson générée via SongGeneration Studio (LeVo local)."
-      : hasVocals
-        ? "Chanson générée via MiniMax Music 2.6 (voix + paroles)."
-        : "Piste instrumentale (MusicGen) — pas de chant.";
+    provider === "acestep-studio"
+      ? "Chanson générée via ACE-Step Studio (local)."
+      : provider === "songgeneration-studio"
+        ? "Chanson générée via SongGeneration Studio (LeVo local)."
+        : hasVocals
+          ? "Chanson générée via MiniMax Music 2.6 (voix + paroles)."
+          : "Piste instrumentale (MusicGen) — pas de chant.";
 
   return {
     title: lyrics?.title || "Untitled Session",
@@ -1124,9 +1134,11 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
   artist = withResolvedArtistGender(artist);
   const lang = lyrics?.language || artist?.language || "fr";
   const songGenModel = keys?.songGenPreferredModel;
+  const wantAceStep = isAceStepMusicProvider(keys);
   const wantSongGen = isSongGenMusicProvider(keys);
   const songGenNative = wantSongGen && isLanguageOkForProvider(lang, "songgen", songGenModel);
-  const hasMinimax = Boolean(keys?.replicateApiToken?.trim());
+  const hasMinimax =
+    isStudioEnabled(keys, "replicate") && Boolean(keys?.replicateApiToken?.trim());
   if (wantSongGen && !songGenNative && !hasMinimax) {
     throw new Error(
       `${songGenLanguageHint(songGenModel || "songgeneration_large")} Ajoute un token Replicate pour chanter cette langue, ou passe les paroles en anglais.`,
@@ -1153,6 +1165,39 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
     packed,
     arrange,
   });
+
+  if (wantAceStep) {
+    const started = await startAceStep(keys, {
+      prompt,
+      lyrics: lyrics?.text || "",
+      title: lyrics?.title || artist?.name || "SONOZZ",
+      language: lang,
+      bpm: bpmGuess,
+      preview: isPreview,
+    });
+    return {
+      pollNeeded: true,
+      musicKind: "acestep",
+      generationId: started.generationId,
+      provider: started.provider,
+      preview: isPreview,
+      draft: {
+        ...draft,
+        provider: started.provider,
+        bpm: bpmGuess,
+        voiceGender: vocal?.code,
+        aceStepModel: started.model || null,
+        aceStepQuality: started.quality || null,
+        isPreview,
+        status: isPreview ? "preview-ready" : "prompt-ready",
+        note: isPreview
+          ? `Extrait ACE-Step · ${started.quality || "auto"} — brouillon indicatif`
+          : started.model
+            ? `ACE-Step · ${started.quality || started.model}`
+            : draft.note,
+      },
+    };
+  }
 
   if (wantSongGen && songGenNative) {
     const started = await startSongGeneration(keys, {
@@ -1190,7 +1235,7 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
     };
   }
 
-  if (keys?.replicateApiToken?.trim()) {
+  if (hasMinimax) {
     const started = await startMinimaxMusic(keys.replicateApiToken.trim(), {
       prompt,
       lyrics: lyrics?.text || "",
@@ -1230,7 +1275,7 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
       packed,
       arrange,
       warning:
-        "Aucun provider audio — choisis SongGeneration Studio (local) ou un token Replicate dans Paramètres, ou importe un mp3.",
+        "Aucun provider audio — choisis ACE-Step / SongGeneration (local) ou un token Replicate dans Paramètres, ou importe un mp3.",
     }),
   };
 }
@@ -1239,7 +1284,9 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
 export async function pollTrack({ keys, generationId, musicKind, draft }) {
   const kind = String(musicKind || "").trim();
   let tick;
-  if (kind === "songgen") {
+  if (kind === "acestep") {
+    tick = await pollAceStep(keys, generationId);
+  } else if (kind === "songgen") {
     tick = await pollSongGeneration(keys, generationId);
   } else if (kind === "replicate") {
     const token = keys?.replicateApiToken?.trim();
@@ -1277,9 +1324,11 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
     isPreview,
     note: isPreview
       ? "Extrait prêt — brouillon indicatif (le complet sera une nouvelle génération, mêmes réglages)."
-      : tick.provider === "songgeneration-studio"
-        ? "Chanson générée via SongGeneration Studio (LeVo local)."
-        : "Chanson générée via MiniMax Music 2.6 (voix + paroles).",
+      : tick.provider === "acestep-studio"
+        ? "Chanson générée via ACE-Step Studio (local)."
+        : tick.provider === "songgeneration-studio"
+          ? "Chanson générée via SongGeneration Studio (LeVo local)."
+          : "Chanson générée via MiniMax Music 2.6 (voix + paroles).",
     warning: undefined,
   };
   return { done: true, track, generationId, musicKind: kind };
@@ -1294,6 +1343,9 @@ export async function cancelTrack({ keys, generationId, musicKind }) {
     const token = keys?.replicateApiToken?.trim();
     if (!token) return { ok: false, skipped: true };
     return cancelMinimaxMusic(token, id);
+  }
+  if (kind === "acestep") {
+    return cancelAceStep(keys, id);
   }
   return {
     ok: true,
@@ -1320,7 +1372,19 @@ export async function runTrack({ keys, lyrics, artist }) {
   let durationLabel = "3:24";
   let hasVocals = false;
 
-  if (isSongGenMusicProvider(keys)) {
+  if (isAceStepMusicProvider(keys)) {
+    const result = await generateMusicWithAceStep(keys, {
+      prompt,
+      lyrics: lyrics?.text || "",
+      title: lyrics?.title || artist?.name || "SONOZZ",
+      language: lyrics?.language || artist?.language || "fr",
+      bpm: bpmGuess,
+    });
+    audioUrl = result.url;
+    provider = result.provider;
+    durationLabel = result.durationLabel || "~2–4 min";
+    hasVocals = Boolean(result.hasVocals);
+  } else if (isSongGenMusicProvider(keys)) {
     const result = await generateMusicWithSongGeneration(keys, {
       prompt,
       lyrics: lyrics?.text || "",
@@ -1335,7 +1399,7 @@ export async function runTrack({ keys, lyrics, artist }) {
     provider = result.provider;
     durationLabel = result.durationLabel || "~2–4 min";
     hasVocals = Boolean(result.hasVocals);
-  } else if (keys?.replicateApiToken?.trim()) {
+  } else if (isStudioEnabled(keys, "replicate") && keys?.replicateApiToken?.trim()) {
     const result = await generateMusicWithReplicate(keys.replicateApiToken.trim(), {
       prompt,
       lyrics: lyrics?.text || "",
@@ -1347,7 +1411,7 @@ export async function runTrack({ keys, lyrics, artist }) {
     warning = typeof result === "string" ? undefined : result.warning;
   } else {
     warning =
-      "Aucun provider audio — choisis SongGeneration Studio (local) ou un token Replicate dans Paramètres, ou importe un mp3.";
+      "Aucun provider audio — choisis ACE-Step / SongGeneration (local) ou un token Replicate dans Paramètres, ou importe un mp3.";
   }
 
   return assembleTrackResult({

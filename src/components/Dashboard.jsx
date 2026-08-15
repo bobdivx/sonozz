@@ -1758,7 +1758,7 @@ export default function Dashboard() {
             projectId={projectId}
             distrokid={project.distrokid}
             onOpenSettings={() => {
-              window.location.href = "/parametres?section=ia";
+              window.location.href = "/parametres?section=morceaux";
             }}
             onMusicArrangeChange={(next) => {
               setProject((prev) => ({ ...prev, musicArrange: next }));

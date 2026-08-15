@@ -160,20 +160,24 @@ export function isSongGenNativeLanguage(code, songGenModel) {
  * SongGen : on affiche aussi FR/ES/… (chant via MiniMax si le modèle ne les chante pas).
  */
 export function languagesForProvider(musicProvider, songGenModel, { minimaxFallback = true } = {}) {
-  if (String(musicProvider || "").trim() !== "songgen") return MUSIC_LANGUAGES;
+  const provider = String(musicProvider || "").trim();
+  if (provider !== "songgen") return MUSIC_LANGUAGES;
   if (minimaxFallback) return MUSIC_LANGUAGES;
   const allowed = new Set(songGenLanguageCodes(songGenModel));
   return MUSIC_LANGUAGES.filter((l) => allowed.has(l.code));
 }
 
 export function isLanguageOkForProvider(code, musicProvider, songGenModel) {
-  if (String(musicProvider || "").trim() !== "songgen") return true;
+  const provider = String(musicProvider || "").trim();
+  if (provider !== "songgen") return true;
   return isSongGenNativeLanguage(code, songGenModel);
 }
 
 /** Badge UI : moteur qui chantera vraiment cette langue. */
 export function languageEngineLabel(code, musicProvider, songGenModel) {
-  if (String(musicProvider || "").trim() !== "songgen") return "";
+  const provider = String(musicProvider || "").trim();
+  if (provider === "acestep") return "ACE-Step";
+  if (provider !== "songgen") return "";
   return isSongGenNativeLanguage(code, songGenModel) ? "SongGen" : "MiniMax";
 }
 

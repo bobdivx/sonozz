@@ -127,18 +127,23 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
   onProgress?.({
     percent: 12,
     message:
-      started.musicKind === "songgen"
+      started.musicKind === "acestep"
         ? isPreview
-          ? "Extrait SongGen — attente GPU…"
-          : "SongGen démarré — attente GPU…"
-        : isPreview
-          ? "Extrait MiniMax — attente Replicate…"
-          : "MiniMax démarré — attente Replicate…",
+          ? "Extrait ACE-Step — attente GPU…"
+          : "ACE-Step démarré — attente GPU…"
+        : started.musicKind === "songgen"
+          ? isPreview
+            ? "Extrait SongGen — attente GPU…"
+            : "SongGen démarré — attente GPU…"
+          : isPreview
+            ? "Extrait MiniMax — attente Replicate…"
+            : "MiniMax démarré — attente Replicate…",
     musicKind: started.musicKind,
   });
 
-  const maxPolls = started.musicKind === "songgen" ? (isPreview ? 200 : 400) : 180;
-  const intervalMs = started.musicKind === "songgen" ? 3000 : 2500;
+  const isLocalGpu = started.musicKind === "songgen" || started.musicKind === "acestep";
+  const maxPolls = isLocalGpu ? (isPreview ? 200 : 400) : 180;
+  const intervalMs = isLocalGpu ? 3000 : 2500;
 
   try {
     for (let i = 0; i < maxPolls; i++) {
@@ -162,11 +167,15 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     }
 
     throw new Error(
-      started.musicKind === "songgen"
+      started.musicKind === "acestep"
         ? isPreview
-          ? "Timeout extrait SongGen — réessaie ou lance le complet."
-          : "Timeout SongGeneration Studio (~20 min) — modèle Large = plus long sur 3090."
-        : "Timeout MiniMax Replicate (~7 min).",
+          ? "Timeout extrait ACE-Step — réessaie ou lance le complet."
+          : "Timeout ACE-Step Studio (~20 min) — SFT = plus long."
+        : started.musicKind === "songgen"
+          ? isPreview
+            ? "Timeout extrait SongGen — réessaie ou lance le complet."
+            : "Timeout SongGeneration Studio (~20 min) — modèle Large = plus long sur 3090."
+          : "Timeout MiniMax Replicate (~7 min).",
     );
   } catch (e) {
     if (e?.name === "AbortError" && started?.generationId) {
@@ -188,6 +197,13 @@ export const api = {
   track: (payload, onProgress, opts) => trackWithPoll(payload, onProgress, opts),
   /** Planifie les thèmes des pistes restantes d’un album (hors lead). */
   albumPlan: (payload) => request("/api/album", { action: "plan", ...payload }),
+  /** Ping ACE-Step Studio (URL des clés) — ne lance pas de génération. */
+  probeAceStep: () => request("/api/track", { action: "probe-acestep" }),
+  /** Vérifie le token Replicate (MiniMax / Flux / Seedance). */
+  probeReplicate: () => request("/api/track", { action: "probe-replicate" }),
+  /** Hot-swap du DiT ACE-Step (peut télécharger le checkpoint). */
+  switchAceStepModel: (modelId) =>
+    request("/api/track", { action: "switch-acestep-model", modelId }),
   /** Ping SongGeneration Studio (URL des clés) — ne lance pas de génération. */
   probeSongGen: () => request("/api/track", { action: "probe-songgen" }),
   /** Déclenche le download d’un modèle Studio (défaut : Large ~20 Go). */
