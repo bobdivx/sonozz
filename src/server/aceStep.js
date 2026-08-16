@@ -340,9 +340,13 @@ export async function testAceStep(keys) {
     preferredModel: String(keys?.aceStepPreferredModel || "").trim() || null,
     hasReadyModel,
     gpu,
-    message: hasReadyModel
-      ? `Joignable${activeModel ? ` · ${aceStepModelLabel(activeModel)}` : ""}`
-      : "Joignable — aucun modèle chargé (ouvre ACE-Step Studio une fois)",
+    pipelineUp: health?.healthy === true && status?.connected === true,
+    message:
+      health?.healthy === false || status?.connected === false
+        ? "UI joignable, mais le moteur Python (port 8001) est down — Stop puis Start dans Pinokio"
+        : hasReadyModel
+          ? `Joignable${activeModel ? ` · ${aceStepModelLabel(activeModel)}` : ""}`
+          : "Joignable — aucun modèle chargé (ouvre ACE-Step Studio une fois)",
   };
 }
 
@@ -350,15 +354,36 @@ export async function switchAceStepModel(keys, modelId) {
   const base = resolveAceStepBaseUrl(keys);
   const id = String(modelId || "").trim();
   if (!id) throw new Error("modelId ACE-Step manquant");
-  const result = await withAuth(base, (token) =>
-    aceFetch(base, "/api/generate/switch-model", {
-      method: "POST",
-      token,
-      body: { model: id },
-      timeoutMs: 180000,
-    }),
-  );
-  return { ok: true, model: id, result };
+  try {
+    const info = await testAceStep(keys);
+    if (info.pipelineUp === false) {
+      throw new Error(
+        "Moteur ACE-Step down (Gradio :8001). Dans Pinokio : Stop, puis Start (No LM si Sonozz). Attends que l’UI soit prête avant de changer de modèle.",
+      );
+    }
+  } catch (e) {
+    if (/Moteur ACE-Step down/i.test(e.message)) throw e;
+    /* probe raté : on tente le switch quand même */
+  }
+  try {
+    const result = await withAuth(base, (token) =>
+      aceFetch(base, "/api/generate/switch-model", {
+        method: "POST",
+        token,
+        body: { model: id },
+        timeoutMs: 180000,
+      }),
+    );
+    return { ok: true, model: id, result };
+  } catch (e) {
+    const raw = String(e.message || "");
+    if (/fetch failed|ECONNREFUSED|connected.:false|healthy.:false/i.test(raw)) {
+      throw new Error(
+        "Changement de modèle impossible : le moteur Python ACE-Step ne répond plus. Pinokio → Stop → Start (No LM), puis réessaie.",
+      );
+    }
+    throw e;
+  }
 }
 
 export async function startAceStep(keys, {
@@ -383,7 +408,12 @@ export async function startAceStep(keys, {
   const active = String(catalog.activeModel || "").trim();
   if (pick.modelId && active && pick.modelId !== active) {
     try {
-      await switchAceStepModel(keys, pick.modelId);
+      const probe = await testAceStep(keys);
+      if (probe.pipelineUp === false) {
+        console.warn("[acestep] switch-model sauté — moteur Python down");
+      } else {
+        await switchAceStepModel(keys, pick.modelId);
+      }
     } catch (e) {
       console.warn("[acestep] switch-model ignoré:", e.message);
     }
