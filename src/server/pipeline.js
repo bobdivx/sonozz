@@ -29,8 +29,11 @@ import {
   isAceStepMusicProvider,
 } from "./aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
+import { normalizeArtistPhotos } from "../lib/artistPhotos.js";
 import { isStudioEnabled } from "../lib/keys.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
+import { materializeAudioForStorage } from "./audioPersist.js";
+import { isS3Configured } from "./s3.js";
 import { slugify, getArtistBySlug } from "./artists.js";
 import { llmJson, requireTextLlm } from "./llm.js";
 import {
@@ -41,9 +44,31 @@ import {
 } from "../lib/musicArrange.js";
 import { buildSunoPrompt } from "../lib/sunoPrompt.js";
 import { resolveArtistGender, withResolvedArtistGender } from "../lib/artistGender.js";
+import {
+  FREE_NAME_PER_ROUND,
+  formatNameCollisions,
+  resolveFreeGeneratedStageName,
+} from "./artistName.js";
 
 function waveform() {
   return Array.from({ length: 40 }, () => 18 + Math.floor(Math.random() * 82));
+}
+
+/** Copie l’audio ACE-Step / Replicate sur S3 pour qu’ONCE et le hub artiste aient une URL durable. */
+async function persistGeneratedAudio(audioUrl, hint = "anon") {
+  if (!audioUrl || typeof audioUrl !== "string") return { audioUrl: null };
+  if (!isS3Configured()) return { audioUrl };
+  try {
+    const saved = await materializeAudioForStorage(audioUrl, {
+      projectId: String(hint || "anon").slice(0, 60),
+    });
+    if (saved?.url) {
+      return { audioUrl: saved.url, audioS3Key: saved.s3Key };
+    }
+  } catch (e) {
+    console.warn("[pipeline] persist audio:", e.message);
+  }
+  return { audioUrl };
 }
 
 /** Gemini renvoie parfois un score 0–1 ; l'UI attend un pourcentage 0–100. */
@@ -354,11 +379,7 @@ function normalizeAge(age) {
 }
 
 function normalizeSelfPhotos(photos = []) {
-  const list = Array.isArray(photos) ? photos : [];
-  return list
-    .map((p) => (typeof p === "string" ? p.trim() : ""))
-    .filter((p) => /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(p))
-    .slice(0, 6);
+  return normalizeArtistPhotos(photos);
 }
 
 /** Extrait vocal mode MOI — URL S3 / clé (pas de data URL géante en DB). */
@@ -480,19 +501,6 @@ function withGenderInPrompt(prompt, genderEn) {
   return `${genderEn}. ${base}`.trim();
 }
 
-function formatNameCollisions(collisions = []) {
-  return collisions
-    .slice(0, 3)
-    .map((c) => {
-      const fans =
-        c.followers != null && Number.isFinite(Number(c.followers))
-          ? ` · ${Number(c.followers).toLocaleString("fr-FR")} fans`
-          : "";
-      return `${c.name} (${c.source || "?"}${fans})`;
-    })
-    .join(", ");
-}
-
 export async function runArtist({
   keys,
   name,
@@ -513,6 +521,7 @@ export async function runArtist({
   city,
   legalName,
   voiceSample = null,
+  onStatus,
 }) {
   requireTextLlm(keys);
   const isSelf = String(mode || "").toLowerCase() === "self";
@@ -684,7 +693,7 @@ ${
   forcedName
     ? `NOM DE SCÈNE OBLIGATOIRE (copie exacte) : "${forcedName}"
 "name" et "aka" = exactement "${forcedName}".`
-    : `Nom de scène : génère un nom crédible adapté au marché et au style ci-dessous (PAS le nom de la référence).`
+    : `Nom de scène : génère un nom crédible, ORIGINAL et rare sur les stores, adapté au marché et au style ci-dessous (PAS le nom de la référence). Évite les prénoms seuls et les mots trop courants : compose un nom inventé / un mononyme distinctif.`
 }
 
 ${
@@ -786,34 +795,31 @@ portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." o
     data.name = forcedName;
     data.aka = forcedName;
   } else if (data.name && !forceTaken) {
-    // Nom inventé par le LLM : refuser s'il est déjà pris sur les stores
-    let availability = await checkArtistNameAvailability(keys, data.name);
-    if (!availability.available) {
-      const blocked = formatNameCollisions(availability.collisions);
-      const alt = await llmJson(
-        keys,
-        `Le nom de scène "${data.name}" est DÉJÀ PRIS sur Spotify / Apple Music / Deezer (${blocked}).
-Propose un autre nom de scène FICTIONNEL, crédible, dans le même style musical, clairement DISTINCT.
-JSON strict: { "name": string, "aka": string }
-"name" et "aka" = le même nouveau nom. Interdit: "${data.name}" et toute variante orthographique proche.`,
-      );
-      const nextName = String(alt?.name || alt?.aka || "")
-        .trim()
-        .slice(0, 80);
-      if (!nextName || nextName.toLowerCase() === String(data.name).toLowerCase()) {
-        throw new Error(
-          `Le nom généré « ${data.name} » est déjà pris (${blocked}). Relance avec un nom de scène libre.`,
+    const styleHint = String(finalGenre || styleLock?.matchedName || "")
+      .trim()
+      .slice(0, 80);
+    const picked = await resolveFreeGeneratedStageName({
+      initialName: data.name,
+      checkAvailability: (query) => checkArtistNameAvailability(keys, query),
+      onStatus,
+      proposeNames: ({ blocked, lastName, lastCollisions }) => {
+        const taken = formatNameCollisions(lastCollisions);
+        const forbidden = blocked.map((n) => `"${n}"`).join(", ");
+        return llmJson(
+          keys,
+          `Le nom de scène "${lastName}" est DÉJÀ PRIS sur Spotify / Apple Music / Deezer${taken ? ` (${taken})` : ""}.
+Propose ${FREE_NAME_PER_ROUND} autres noms de scène FICTIONNELS, crédibles${
+            styleHint ? `, adaptés au style « ${styleHint} »` : ""
+          }, clairement DISTINCTS les uns des autres.
+Noms déjà refusés (INTERDITS, y compris variantes orthographiques proches) : ${forbidden}.
+Privilégie des noms inventés / composés rares (pas un prénom seul, pas un mot trop courant).
+JSON strict: { "names": [string, string, string, string], "name": string, "aka": string }
+"name" = le meilleur candidat. "names" = ${FREE_NAME_PER_ROUND} options distinctes. "aka" = le même que "name".`,
         );
-      }
-      data.name = nextName;
-      data.aka = String(alt?.aka || nextName).trim().slice(0, 80) || nextName;
-      availability = await checkArtistNameAvailability(keys, data.name);
-      if (!availability.available) {
-        throw new Error(
-          `Impossible de trouver un nom libre (dernier essai « ${data.name} » déjà pris : ${formatNameCollisions(availability.collisions)}). Saisis un nom de scène manuellement.`,
-        );
-      }
-    }
+      },
+    });
+    data.name = picked.name;
+    data.aka = picked.name;
   }
 
   if (legalName?.trim()) {
@@ -906,7 +912,7 @@ JSON strict: { "name": string, "aka": string }
     voice: lockedVoice,
     slug: slugify((forcedName || data.aka || data.name) || "artiste"),
     imageUrl: portrait.imageUrl,
-    photos: persistedPhotos.length > 1 ? persistedPhotos : undefined,
+    photos: persistedPhotos.length ? persistedPhotos : undefined,
     voiceSample: isSelf && selfVoiceSample ? selfVoiceSample : undefined,
     imageFallback: false,
     imageWarning: portrait.warning,
@@ -973,7 +979,7 @@ Langue obligatoire des paroles: ${langName} (code ${lang}) — aucune autre lang
 Thème/titre: ${theme || "inspire-toi des tendances"}
 Tendances: ${promptJson(lock ? {} : trends || {})}
 
-JSON strict:
+JSON strict RFC 8259:
 {
   "title": string,
   "theme": string,
@@ -982,6 +988,7 @@ JSON strict:
   "text": string
 }
 Le champ text doit contenir les tags MiniMax en anglais: [Verse], [Chorus], [Verse], [Bridge], [Chorus], [Outro] avec de vraies paroles en ${langName} sous chaque tag.
+Dans "text", apostrophes brutes (don't) — jamais \\'. Sauts de ligne = \\n uniquement.
 "language" doit être exactement "${lang}".`,
   );
   return { ...data, language: lang };
@@ -1068,6 +1075,7 @@ function assembleTrackResult({
   styleLock,
   bpmGuess,
   audioUrl = null,
+  audioS3Key = null,
   provider = "brief",
   durationLabel = "3:24",
   hasVocals = false,
@@ -1110,6 +1118,7 @@ function assembleTrackResult({
     status: audioUrl ? "audio-ready" : "prompt-ready",
     waveform: waveform(),
     audioUrl,
+    audioS3Key: audioS3Key || undefined,
     provider,
     hasVocals,
     sunoPrompt,
@@ -1312,9 +1321,14 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
 
   const base = draft && typeof draft === "object" ? draft : {};
   const isPreview = Boolean(base.isPreview);
+  const persisted = await persistGeneratedAudio(
+    tick.url,
+    base.artist || "anon",
+  );
   const track = {
     ...base,
-    audioUrl: tick.url,
+    audioUrl: persisted.audioUrl,
+    audioS3Key: persisted.audioS3Key || undefined,
     provider: tick.provider || base.provider,
     hasVocals: Boolean(tick.hasVocals),
     duration: isPreview
@@ -1414,12 +1428,18 @@ export async function runTrack({ keys, lyrics, artist }) {
       "Aucun provider audio — choisis ACE-Step / SongGeneration (local) ou un token Replicate dans Paramètres, ou importe un mp3.";
   }
 
+  const persisted = await persistGeneratedAudio(
+    audioUrl,
+    artist?.slug || artist?.name || "anon",
+  );
+
   return assembleTrackResult({
     lyrics,
     artist,
     styleLock,
     bpmGuess,
-    audioUrl,
+    audioUrl: persisted.audioUrl,
+    audioS3Key: persisted.audioS3Key,
     provider,
     durationLabel,
     hasVocals,
@@ -1430,27 +1450,33 @@ export async function runTrack({ keys, lyrics, artist }) {
   });
 }
 
-export async function runCover({ keys, prompt, artist, track }) {
+export async function runCover({ keys, prompt, artist, track, album }) {
   const portraitUrl = artist?.imageUrl;
   if (!isUsableRasterImage(portraitUrl)) {
     throw new Error(
-      "Portrait artiste manquant ou SVG. Régénère l’étape Artiste (Replicate Flux photo) avant la jaquette.",
+      "Portrait artiste manquant ou SVG. Régénère l’étape Artiste (photo Gemini ou Replicate) avant la jaquette.",
     );
   }
 
   const genderLock =
     artist?.visualIdentity?.genderLock || genderVisualLock(artist?.gender, artist?.age).en;
+  const releaseTitle = album?.title || track?.title || "Single";
   const visual =
     prompt?.trim() ||
     [
-      `Album cover for "${track?.title || "Single"}" by ${artist?.name || "artist"}`,
+      album?.title
+        ? `Square LP album cover for "${album.title}" by ${artist?.name || "artist"}`
+        : `Album cover for "${releaseTitle}" by ${artist?.name || "artist"}`,
+      album?.concept ? `album concept: ${album.concept}` : "",
       genderLock,
       `mood ${artist?.visualIdentity?.look || artist?.mood || "nocturne"}`,
       `wardrobe ${artist?.visualIdentity?.wardrobe || "contemporary"}`,
       `${artist?.genre || "pop"} aesthetic`,
       `palette ${artist?.palette?.join(", ") || "brass and moss"}`,
       "cinematic square composition, SAME PERSON and SAME GENDER as the reference portrait photo, do not change sex or age",
-    ].join(", ");
+    ]
+      .filter(Boolean)
+      .join(", ");
 
   const image = await generateVisual({
     keys,
@@ -1566,16 +1592,15 @@ Règles:
   };
 }
 
-/** Étapes du pipeline A→Z (ordre d’exécution). */
+/** Étapes du pipeline A→Z (s'arrête à ONCE : l'utilisateur valide avant Spotify). */
 export const PIPELINE_STEPS = [
   { key: "trends", label: "Tendances", message: "Analyse Deezer + Gemini…" },
   { key: "artist", label: "Artiste", message: "Génération profil artiste…" },
   { key: "lyrics", label: "Paroles", message: "Écriture des paroles…" },
   { key: "track", label: "Morceau", message: "Création morceau / brief audio…" },
   { key: "cover", label: "Jaquette", message: "Génération jaquette…" },
-  { key: "distrokid", label: "ONCE", message: "Soumission ONCE → Spotify…" },
-  { key: "social", label: "Réseaux", message: "Pack shorts réseaux…" },
-  { key: "done", label: "Terminé", message: "Pipeline terminé" },
+  { key: "distrokid", label: "ONCE", message: "En attente de ta validation…" },
+  { key: "done", label: "Terminé", message: "Prêt à publier sur ONCE" },
 ];
 
 export async function runFullPipeline({
@@ -1603,6 +1628,21 @@ export async function runFullPipeline({
 }) {
   const log = [];
   const total = PIPELINE_STEPS.length;
+  let trends = null;
+  let artist = null;
+  let lyrics = null;
+  let track = null;
+  let cover = null;
+
+  const emitSnapshot = (step) => {
+    onProgress?.({
+      type: "snapshot",
+      step,
+      at: new Date().toISOString(),
+      snapshot: { trends, artist, lyrics, track, cover, distrokid: null, social: null },
+    });
+  };
+
   const push = (step, message) => {
     const entry = { step, message, at: new Date().toISOString() };
     log.push(entry);
@@ -1614,10 +1654,11 @@ export async function runFullPipeline({
   };
 
   push("trends", "Analyse Deezer + Gemini…");
-  const trends = await runTrends({ keys, market });
+  trends = await runTrends({ keys, market });
+  emitSnapshot("trends");
 
   push("artist", "Génération profil artiste…");
-  const artist = await runArtist({
+  artist = await runArtist({
     keys,
     name,
     bioHint,
@@ -1637,29 +1678,36 @@ export async function runFullPipeline({
     city,
     legalName,
     voiceSample,
+    onStatus: (message) => {
+      if (message) push("artist", message);
+    },
   });
+  emitSnapshot("artist");
 
   push("lyrics", "Écriture des paroles…");
-  const lyrics = await runLyrics({ keys, theme, artist, trends, language: language || artist.language });
+  lyrics = await runLyrics({ keys, theme, artist, trends, language: language || artist.language });
+  emitSnapshot("lyrics");
 
   push("track", "Création morceau / brief audio…");
-  const track = await runTrack({ keys, lyrics, artist });
+  track = await runTrack({ keys, lyrics, artist });
+  emitSnapshot("track");
 
   push("cover", "Génération jaquette…");
-  const cover = await runCover({ keys, artist, track });
+  cover = await runCover({ keys, artist, track });
+  emitSnapshot("cover");
 
-  push("distrokid", "Soumission ONCE → Spotify…");
-  const distrokid = await runDistroKid({ keys, artist, track, cover, lyrics, submit: true });
+  push("distrokid", "En attente de ta validation ONCE…");
+  push("done", "Prêt à publier sur ONCE — vérifie puis clique Publier");
 
-  let social = null;
-  if (track?.audioUrl) {
-    push("social", "Pack shorts réseaux…");
-    social = await runSocial({ keys, artist, track, lyrics, cover });
-  } else {
-    push("social", "Shorts ignorés — pas d'audio. Termine le morceau d'abord.");
-  }
-
-  push("done", "Pipeline terminé");
-
-  return { trends, artist, lyrics, track, cover, distrokid, social, log };
+  return {
+    trends,
+    artist,
+    lyrics,
+    track,
+    cover,
+    distrokid: null,
+    social: null,
+    awaitingOnce: true,
+    log,
+  };
 }

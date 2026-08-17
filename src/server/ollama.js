@@ -1,3 +1,5 @@
+import { parseLlmJson } from "./parseLlmJson.js";
+
 const DEFAULT_BASE = "http://127.0.0.1:11434";
 const DEFAULT_MODEL = "llama3.2";
 
@@ -89,11 +91,9 @@ async function generate(keys, prompt, { json = false } = {}) {
 export async function ollamaJson(keys, prompt) {
   const { text, model } = await generate(keys, prompt, { json: true });
   try {
-    return { data: JSON.parse(text), model };
+    return { data: parseLlmJson(text), model };
   } catch {
-    const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-    if (!match) throw new Error(`Réponse Ollama (${model}) non JSON`);
-    return { data: JSON.parse(match[0]), model };
+    throw new Error(`Réponse Ollama (${model}) non JSON`);
   }
 }
 

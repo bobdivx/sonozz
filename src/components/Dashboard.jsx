@@ -8,6 +8,7 @@ import {
   Music2,
   Film,
   Share2,
+  ChevronLeft,
   ChevronRight,
   Waves,
   Settings2,
@@ -16,6 +17,7 @@ import {
   Save,
   Check,
   LoaderCircle,
+  Library,
 } from "lucide-preact";
 import StatsStep from "./steps/StatsStep.jsx";
 import ArtistStep from "./steps/ArtistStep.jsx";
@@ -36,8 +38,9 @@ import {
   songGenLanguageHint,
   languageEngineLabel,
   formatGenres,
-  createAlbumId,
-  createAlbumTrackId,
+  catalogGenresToStyleValues,
+  inferLanguageFromStyleRef,
+  languageLabel,
   isTrackAudioFinal,
   isPlaceholderTitle,
   titleFromAudioFileName,
@@ -47,7 +50,7 @@ import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
 import { migrateProjectClipBlobs } from "../lib/clipStore.js";
 import { musicArrangeFromStyleLock } from "../lib/musicArrange.js";
-import { withResolvedArtistGender } from "../lib/artistGender.js";
+import { withResolvedArtistGender, inferGenderFromStyleRef, ARTIST_GENDER_OPTIONS, ARTIST_GENDER_LABELS } from "../lib/artistGender.js";
 import StyleArtistPicker from "./StyleArtistPicker.jsx";
 import StyleTrackPicker from "./StyleTrackPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "./ArtistNameField.jsx";
@@ -66,12 +69,17 @@ import {
   selectVersion,
   updateVersion,
 } from "../lib/versionsModel.js";
-import { patchJob } from "../lib/jobStore.js";
+import { patchJob, subscribeJobs } from "../lib/jobStore.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
+import { cancelledAlbumState, albumStudioHref } from "../lib/albumTracks.js";
 import {
   bootJobRunner,
+  cancelAlbumJob,
+  cancelMusicTrackJob,
   finishPipelineJob,
   finishStepJob,
+  startAlbumJob,
+  startMusicTrackJob,
   trackPipelineJob,
   trackStepJob,
 } from "../lib/jobRunner.js";
@@ -109,7 +117,6 @@ const AUTO_PIPELINE_UI = [
   { key: "track", label: "Morceau" },
   { key: "cover", label: "Jaquette" },
   { key: "distrokid", label: "ONCE" },
-  { key: "social", label: "Réseaux" },
 ];
 
 function formatElapsed(ms) {
@@ -117,6 +124,28 @@ function formatElapsed(ms) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return m > 0 ? `${m}:${String(r).padStart(2, "0")}` : `${r}s`;
+}
+
+/** Langue + sexe proposés d’après l’artiste / titre de référence. */
+function styleRefInferenceInput(artistPick, trackPick) {
+  return {
+    country: artistPick?.country,
+    language: artistPick?.language,
+    genres: [...(artistPick?.genres || []), ...(trackPick?.genres || [])],
+    titles: [trackPick?.name, trackPick?.album].filter(Boolean),
+  };
+}
+
+function styleRefSeedPatch(s, { pick, trackPick } = {}) {
+  const artistPick = pick === undefined ? s.styleArtistPick : pick;
+  const track = trackPick === undefined ? s.styleTrackPick : trackPick;
+  const inferredLang =
+    !s.languageManual && inferLanguageFromStyleRef(styleRefInferenceInput(artistPick, track));
+  const inferredGender = !s.genderManual && inferGenderFromStyleRef(artistPick);
+  return {
+    ...(inferredLang ? { language: inferredLang } : {}),
+    ...(inferredGender ? { gender: inferredGender } : {}),
+  };
 }
 
 /** Clips + versions créatives (paroles / audio / jaquettes). */
@@ -160,6 +189,8 @@ export default function Dashboard() {
   const [project, setProject] = useState(emptyProject);
   const [loading, setLoading] = useState(false);
   const [stepProgress, setStepProgress] = useState(null);
+  /** Job morceau unique (Tâches) — survit à la navigation. */
+  const [trackJob, setTrackJob] = useState(null);
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoProgress, setAutoProgress] = useState({
     step: null,
@@ -181,6 +212,9 @@ export default function Dashboard() {
     genre: "",
     genres: [],
     language: "fr",
+    languageManual: false,
+    gender: "",
+    genderManual: false,
     styleArtist: "",
     styleArtistPick: null,
     styleTrackPick: null,
@@ -196,11 +230,28 @@ export default function Dashboard() {
   const [showHomePipeline, setShowHomePipeline] = useState(true);
   const [artistMode, setArtistMode] = useState(null);
   /** Génération album lancée dans cet onglet (évite d’écraser l’état live par le poll). */
-  const albumLocalRunRef = useRef(false);
-  const albumAbortRef = useRef(null);
   const albumWorkingRef = useRef(null);
   /** Annulation génération étape (morceau / extrait). */
   const stepAbortRef = useRef(null);
+  /** Id projet vivant — évite les INSERT dupliqués (fermeture périmée pendant Auto A→Z). */
+  const projectIdRef = useRef(null);
+  const persistChainRef = useRef(Promise.resolve());
+
+  function assignProjectId(id) {
+    if (!id) return id;
+    projectIdRef.current = id;
+    setProjectId(id);
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("project") !== id) {
+        url.searchParams.set("project", id);
+        window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+      }
+    } catch {
+      /* ignore */
+    }
+    return id;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -237,12 +288,14 @@ export default function Dashboard() {
       setStep(stepParam);
     }
     if (!pid) return;
+    projectIdRef.current = pid;
+    setProjectId(pid);
     setShowHomePipeline(false);
     (async () => {
       setLoading(true);
       try {
         const { project: saved } = await api.getProject(pid);
-        setProjectId(saved.id);
+        assignProjectId(saved.id);
         const loaded = normalizeProjectState({ ...emptyProject(), ...(saved.project || {}) });
         if (loaded.artist) {
           const hydrated = withResolvedArtistGender(loaded.artist);
@@ -280,14 +333,14 @@ export default function Dashboard() {
   // Sync album multi-appareils : poll Turso quand un autre client génère
   useEffect(() => {
     const running = project.album?.status === "running";
-    if (!running || !projectId || albumLocalRunRef.current) return;
+    if (!running || !projectId) return;
 
     let cancelled = false;
     const tick = async () => {
-      if (cancelled || albumLocalRunRef.current) return;
+      if (cancelled) return;
       try {
         const { project: saved } = await api.getProject(projectId);
-        if (cancelled || albumLocalRunRef.current) return;
+        if (cancelled) return;
         const remoteAlbum = saved?.project?.album;
         if (!remoteAlbum) return;
         mirrorAlbumJob(remoteAlbum, projectId);
@@ -330,7 +383,140 @@ export default function Dashboard() {
     };
   }, [project.album?.status, projectId]);
 
+  // Morceau unique : suivre le job Tâches (progress + reload à la fin)
+  useEffect(() => {
+    if (!projectId) return undefined;
+    let cancelled = false;
+    let prevStatus = null;
+    return subscribeJobs((jobs) => {
+      const job = jobs.find((j) => j.type === "track" && j.projectId === projectId) || null;
+      setTrackJob(job);
+      if (job?.status === "running") {
+        setStepProgress({
+          percent: typeof job.progress === "number" ? job.progress : undefined,
+          message: job.message || "Génération audio…",
+        });
+      }
+      const becameTerminal =
+        job &&
+        prevStatus === "running" &&
+        (job.status === "done" || job.status === "error" || job.status === "interrupted");
+      prevStatus = job?.status || null;
+      if (!becameTerminal || cancelled) return;
+      if (job.status === "error") {
+        setError(job.message || "Génération audio en erreur");
+        setStepProgress(null);
+        return;
+      }
+      if (job.status === "interrupted") {
+        setStepProgress(null);
+        return;
+      }
+      void (async () => {
+        try {
+          const { project: saved } = await api.getProject(projectId);
+          if (cancelled) return;
+          setProject(
+            normalizeProjectState({ ...emptyProject(), ...(saved.project || {}) }),
+          );
+          setSaveMsg(job.message || "Audio prêt");
+        } catch (e) {
+          if (!cancelled) setError(e.message);
+        } finally {
+          if (!cancelled) setStepProgress(null);
+        }
+      })();
+    });
+  }, [projectId]);
+
   const artistSlug = project.artist?.slug;
+  const albumCtx = (() => {
+    const album = project.album;
+    const meta = project.albumMeta;
+    if (!album && !meta?.leadProjectId && !meta?.albumTitle) return null;
+    const title = album?.title || meta?.albumTitle || "Album";
+    const leadId = meta?.leadProjectId || (album ? projectId : null);
+    const tracks = Array.isArray(album?.tracks) ? album.tracks : [];
+    const currentKey = meta?.trackId || projectId;
+    let index = Number(meta?.index) || 0;
+    let prevHref = null;
+    let nextHref = null;
+    if (tracks.length) {
+      const i = Math.max(
+        0,
+        tracks.findIndex(
+          (t) =>
+            t.projectId === projectId ||
+            t.id === currentKey ||
+            (t.role === "lead" && leadId && projectId === leadId),
+        ),
+      );
+      index = index || tracks[i]?.index || i + 1;
+      const prev = tracks[i - 1];
+      const next = tracks[i + 1];
+      if (prev) prevHref = albumStudioHref(prev, leadId || projectId);
+      if (next) nextHref = albumStudioHref(next, leadId || projectId);
+    }
+    return {
+      title,
+      index,
+      total: tracks.length || 0,
+      prevHref,
+      nextHref,
+      artistHref: artistSlug
+        ? `/artiste/${encodeURIComponent(artistSlug)}${leadId ? `#album-${leadId}` : ""}`
+        : null,
+    };
+  })();
+  const seedHasStyleRef = Boolean(seed.styleTrackPick?.id || seed.styleArtistPick?.id);
+  const seedTrackStyleValues = new Set(
+    catalogGenresToStyleValues(
+      seed.styleTrackPick?.id
+        ? seed.styleTrackPick.genres?.length
+          ? seed.styleTrackPick.genres
+          : seed.styleArtistPick?.genres
+        : [],
+    ),
+  );
+  const seedArtistStyleValues = new Set(
+    catalogGenresToStyleValues(seed.styleArtistPick?.genres).filter(
+      (v) => !seedTrackStyleValues.has(v),
+    ),
+  );
+  const seedInferredLanguage = inferLanguageFromStyleRef(
+    styleRefInferenceInput(seed.styleArtistPick, seed.styleTrackPick),
+  );
+  const seedInferredGender = inferGenderFromStyleRef(seed.styleArtistPick);
+  const seedLangOptions = languagesForProvider(
+    loadKeys().musicProvider,
+    loadKeys().songGenPreferredModel,
+  );
+  const seedEffectiveLanguage =
+    !seed.languageManual && seedInferredLanguage
+      ? seedInferredLanguage
+      : seedLangOptions.some((l) => l.code === seed.language)
+        ? seed.language
+        : seedLangOptions[0]?.code || "en";
+
+  useEffect(() => {
+    if (seed.languageManual || !seedInferredLanguage) return;
+    if (seed.language === seedInferredLanguage) return;
+    setSeed((s) =>
+      s.languageManual || s.language === seedInferredLanguage
+        ? s
+        : { ...s, language: seedInferredLanguage },
+    );
+  }, [seedInferredLanguage, seed.language, seed.languageManual]);
+
+  useEffect(() => {
+    if (seed.genderManual || !seedInferredGender) return;
+    if (seed.gender === seedInferredGender) return;
+    setSeed((s) =>
+      s.genderManual || s.gender === seedInferredGender ? s : { ...s, gender: seedInferredGender },
+    );
+  }, [seedInferredGender, seed.gender, seed.genderManual]);
+  const trackBusy = trackJob?.status === "running";
+  const trackUiLoading = loading || trackBusy;
 
   const doneMap = {
     1: Boolean(project.track || project.distrokid),
@@ -353,56 +539,69 @@ export default function Dashboard() {
 
   async function persist(nextProject, event, opts = {}) {
     const { skipLocalUpdate = false } = opts;
-    setSaving(true);
-    setSaveMsg("");
-    try {
-      const normalized = normalizeProjectState(nextProject);
-      const projectForDb = stripClipsForDb(normalized);
-      const data = await api.saveProject({
-        id: projectId,
-        project: projectForDb,
-        seed,
-        event,
-      });
-      const saved = data.project;
-      const prevId = projectId;
-      setProjectId(saved.id);
-      if (prevId !== saved.id) {
-        try {
-          const clipIds = (normalized.clips || []).map((c) => c.id).filter(Boolean);
-          await migrateProjectClipBlobs(prevId || null, saved.id, clipIds);
-        } catch {
-          /* IDB optionnel */
-        }
+    const run = async () => {
+      const latest = albumWorkingRef.current;
+      if (latest?.album?.status === "cancelled" && nextProject?.album?.status === "running") {
+        return latest;
       }
-      if (!skipLocalUpdate) {
-        if (data.artist?.slug) {
-          setProject({
-            ...normalized,
-            artist: nextProject.artist
-              ? { ...nextProject.artist, slug: data.artist.slug }
-              : nextProject.artist,
-          });
-          setSaveMsg(`Sauvé · /artiste/${data.artist.slug}`);
-        } else {
-          setProject((prev) =>
-            normalizeProjectState({
-              ...prev,
+      setSaving(true);
+      setSaveMsg("");
+      try {
+        const normalized = normalizeProjectState(nextProject);
+        const projectForDb = stripClipsForDb(normalized);
+        const prevId = projectIdRef.current;
+        const data = await api.saveProject({
+          id: prevId,
+          project: projectForDb,
+          seed,
+          event,
+        });
+        const saved = data.project;
+        assignProjectId(saved.id);
+        if (prevId && saved.id && prevId !== saved.id) {
+          try {
+            const clipIds = (normalized.clips || []).map((c) => c.id).filter(Boolean);
+            await migrateProjectClipBlobs(prevId, saved.id, clipIds);
+          } catch {
+            /* IDB optionnel */
+          }
+        }
+        if (!skipLocalUpdate) {
+          if (data.artist?.slug) {
+            setProject({
               ...normalized,
-            }),
-          );
+              artist: nextProject.artist
+                ? { ...nextProject.artist, slug: data.artist.slug }
+                : nextProject.artist,
+            });
+            setSaveMsg(`Sauvé · /artiste/${data.artist.slug}`);
+          } else {
+            setProject((prev) =>
+              normalizeProjectState({
+                ...prev,
+                ...normalized,
+              }),
+            );
+            setSaveMsg("Sauvé sur Turso");
+          }
+        } else {
           setSaveMsg("Sauvé sur Turso");
         }
-      } else {
-        setSaveMsg("Sauvé sur Turso");
+        return saved;
+      } catch (e) {
+        setSaveMsg(`DB: ${e.message}`);
+        return null;
+      } finally {
+        setSaving(false);
       }
-      return saved;
-    } catch (e) {
-      setSaveMsg(`DB: ${e.message}`);
-      return null;
-    } finally {
-      setSaving(false);
-    }
+    };
+
+    const queued = persistChainRef.current.then(run, run);
+    persistChainRef.current = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
   }
 
   async function runStep(fn, key, goTo) {
@@ -539,8 +738,50 @@ export default function Dashboard() {
   }
 
   function cancelStepGeneration() {
+    if (trackJob?.status === "running") {
+      cancelMusicTrackJob(projectId);
+      return;
+    }
     if (stepAbortRef.current) {
       stepAbortRef.current.aborted = true;
+    }
+  }
+
+  async function startTrackBackground(preview) {
+    if (!keysReady(loadKeys())) {
+      setError("Configure d'abord un LLM (Gemini ou Ollama) dans Paramètres.");
+      window.location.href = "/parametres?section=ia";
+      return;
+    }
+    setError("");
+    try {
+      const saved = await persist(project, {
+        stepKey: "track",
+        eventType: "start",
+        message: preview ? "Préparation extrait audio" : "Préparation génération audio",
+      });
+      const pid = saved?.id || projectId;
+      if (!pid) {
+        setError("Impossible d’enregistrer le projet avant la génération.");
+        return;
+      }
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get("project") !== pid) {
+          url.searchParams.set("project", pid);
+          url.searchParams.set("step", "4");
+          window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+        }
+      } catch {
+        /* ignore */
+      }
+      startMusicTrackJob({
+        projectId: pid,
+        preview: Boolean(preview),
+        href: `/?project=${pid}&step=4`,
+      });
+    } catch (e) {
+      setError(e.message || "Impossible de lancer la génération audio");
     }
   }
 
@@ -551,31 +792,15 @@ export default function Dashboard() {
   }
 
   function cancelAlbumGeneration() {
-    if (albumAbortRef.current) {
-      albumAbortRef.current.aborted = true;
-      return;
-    }
-    // Run distant / zombie (onglet fermé) : stoppe le statut en base
-    if (project.album?.status !== "running") return;
+    cancelAlbumJob(projectId);
+    const base = albumWorkingRef.current || project;
+    if (base?.album?.status !== "running") return;
     const next = {
-      ...project,
-      album: {
-        ...project.album,
-        status: "cancelled",
-        live: {
-          percent: 100,
-          message: "Album arrêté",
-          label: project.album?.live?.label || project.album?.title || "Album",
-        },
-        tracks: (project.album.tracks || []).map((t) =>
-          t.status === "lyrics" || t.status === "audio"
-            ? { ...t, status: "pending", error: undefined }
-            : t,
-        ),
-        updatedAt: new Date().toISOString(),
-      },
+      ...base,
+      album: cancelledAlbumState(base.album),
     };
     setProject(next);
+    albumWorkingRef.current = next;
     mirrorAlbumJob(next.album, projectId);
     persist(next, {
       stepKey: "album",
@@ -607,7 +832,7 @@ export default function Dashboard() {
           eventType: "album",
           message: "Album effacé",
         },
-        { skipLocalUpdate: albumLocalRunRef.current },
+        { skipLocalUpdate: false },
       );
       return;
     }
@@ -642,14 +867,12 @@ export default function Dashboard() {
         eventType: "album-track",
         message: `Album · piste retirée « ${entry.workingTitle || entry.theme || trackId} »`,
       },
-      { skipLocalUpdate: albumLocalRunRef.current },
+      { skipLocalUpdate: false },
     );
   }
 
   async function clearAlbum() {
-    if (albumLocalRunRef.current) {
-      cancelAlbumGeneration();
-    }
+    cancelAlbumGeneration();
     const base = albumWorkingRef.current || project;
     if (!base?.album) return;
     const next = { ...base, album: null };
@@ -663,10 +886,11 @@ export default function Dashboard() {
   }
 
   /**
-   * Album autonome : le lead (project.track) est gardé ; génère N-1 titres (paroles + audio).
+   * Album autonome : le lead (project.track) est gardé ; génère N-1 titres
+   * (paroles + audio) et la jaquette album.
    * @param {number} totalCount total souhaité (lead inclus)
    */
-  async function runAlbumGeneration(totalCount = 8) {
+  async function runAlbumGeneration(totalCount = 8, { resume = false } = {}) {
     if (!keysReady(loadKeys())) {
       setError("Configure d'abord un LLM (Gemini ou Ollama) dans Paramètres.");
       window.location.href = "/parametres?section=ia";
@@ -684,411 +908,30 @@ export default function Dashboard() {
       setError("Artiste et paroles du lead requis.");
       return;
     }
-    if (albumLocalRunRef.current) return;
+    if (project.album?.status === "running") return;
 
     const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
-    const extra = total - 1;
-    const abortState = { aborted: false };
-    albumAbortRef.current = abortState;
-    albumLocalRunRef.current = true;
-    setLoading(true);
-    setStepProgress({ percent: 2, message: "Planification de la tracklist…" });
     setError("");
-
-    const jobId = trackStepJob({
-      type: "step",
-      label: `Album · ${total} titres`,
+    startAlbumJob({
       projectId,
-      stepKey: "4",
-      message: "Planification tracklist…",
-      progress: 4,
+      totalCount: total,
+      resume,
       href: projectId ? `/?project=${projectId}&step=4` : "/?step=4",
+      label: `Album · ${total} titres`,
     });
-
-    let lastLivePersistAt = 0;
-
-    const setAlbumLive = (percent, message, { persistNow = false } = {}) => {
-      working = albumWorkingRef.current || working;
-      working = {
-        ...working,
-        album: {
-          ...working.album,
-          live: {
-            percent,
-            message,
-            label: working.album?.title
-              ? `Album · ${working.album.title}`
-              : `Album · ${working.album?.targetCount || total} titres`,
-          },
-          updatedAt: new Date().toISOString(),
-        },
-      };
-      syncAlbumWorking(working);
-      // Ne pas mirror ici : ce client possède déjà le job local (trackStepJob)
-      patchJob(jobId, { progress: percent, message });
-      const now = Date.now();
-      if (persistNow || now - lastLivePersistAt > 20_000) {
-        lastLivePersistAt = now;
-        return persist(working, null, { skipLocalUpdate: true });
-      }
-      return Promise.resolve(null);
-    };
-
-    let working = {
-      ...project,
+    setProject((prev) => ({
+      ...prev,
       album: {
-        id: createAlbumId(),
-        title: "",
-        concept: "",
-        targetCount: total,
+        ...(prev.album || {}),
         status: "running",
-        jobId,
         live: {
-          percent: 2,
-          message: "Planification de la tracklist…",
-          label: `Album · ${total} titres`,
+          percent: resume ? 8 : 4,
+          message: resume ? "Reprise de l’album…" : "Démarrage album…",
+          label: prev.album?.title ? `Album · ${prev.album.title}` : `Album · ${total} titres`,
         },
-        tracks: [
-          {
-            id: createAlbumTrackId(),
-            index: 1,
-            role: "lead",
-            theme: project.lyrics?.theme || project.track?.title || "",
-            workingTitle: project.lyrics?.title || project.track?.title || "Lead",
-            lyrics: project.lyrics,
-            track: project.track,
-            status: "done",
-          },
-        ],
         updatedAt: new Date().toISOString(),
       },
-    };
-    syncAlbumWorking(working);
-    // Job local via trackStepJob — les autres appareils liront album.live via Turso
-
-    const persistAlbum = (event) =>
-      persist(working, event, { skipLocalUpdate: true });
-
-    try {
-      // Persiste tout de suite pour que mobile voie la tâche
-      await persistAlbum({
-        stepKey: "album",
-        eventType: "album",
-        message: "Album · génération démarrée",
-      });
-      lastLivePersistAt = Date.now();
-
-      const plan = await api.albumPlan({
-        artist: project.artist,
-        lyrics: project.lyrics,
-        track: project.track,
-        count: extra,
-      });
-      if (abortState.aborted) throw Object.assign(new Error("Album annulé"), { name: "AbortError" });
-
-      working = {
-        ...working,
-        album: {
-          ...working.album,
-          title: plan.albumTitle || working.album.title,
-          concept: plan.concept || "",
-          jobId,
-          live: {
-            percent: 8,
-            message: "Tracklist prête — génération des titres…",
-            label: plan.albumTitle
-              ? `Album · ${plan.albumTitle}`
-              : `Album · ${total} titres`,
-          },
-          tracks: [
-            working.album.tracks[0],
-            ...(plan.tracks || []).map((t, i) => ({
-              id: `${createAlbumTrackId()}_${i}`,
-              index: i + 2,
-              role: "album",
-              theme: t.theme,
-              workingTitle: t.workingTitle || `Piste ${i + 2}`,
-              lyrics: null,
-              track: null,
-              status: "pending",
-            })),
-          ],
-          updatedAt: new Date().toISOString(),
-        },
-      };
-      syncAlbumWorking(working);
-      await persistAlbum({
-        stepKey: "album",
-        eventType: "album",
-        message: `Tracklist « ${working.album.title} » planifiée`,
-      });
-      lastLivePersistAt = Date.now();
-      patchJob(jobId, {
-        progress: 8,
-        message: "Tracklist prête — génération des titres…",
-        label: plan.albumTitle ? `Album · ${plan.albumTitle}` : `Album · ${total} titres`,
-      });
-
-      const slots = working.album.tracks.filter((t) => t.role !== "lead");
-      const lang = project.lyrics?.language || project.artist?.language || "fr";
-
-      for (let i = 0; i < slots.length; i++) {
-        if (abortState.aborted) break;
-        // Resync si l’utilisateur a retiré des pistes pendant le run
-        working = albumWorkingRef.current || working;
-
-        // Honore annulation / suppressions faites depuis un autre appareil
-        if (projectId) {
-          try {
-            const { project: saved } = await api.getProject(projectId);
-            const remote = saved?.project?.album;
-            if (remote?.status === "cancelled") {
-              abortState.aborted = true;
-              break;
-            }
-            if (Array.isArray(remote?.tracks)) {
-              const remoteIds = new Set(remote.tracks.map((t) => t.id));
-              if (working.album.tracks.some((t) => !remoteIds.has(t.id))) {
-                working = {
-                  ...working,
-                  album: {
-                    ...working.album,
-                    tracks: working.album.tracks.filter((t) => remoteIds.has(t.id)),
-                    targetCount: remote.tracks.length,
-                    updatedAt: new Date().toISOString(),
-                  },
-                };
-                syncAlbumWorking(working);
-              }
-            }
-          } catch {
-            /* ignore */
-          }
-        }
-
-        const slot = slots[i];
-        if (!working.album.tracks.some((t) => t.id === slot.id)) continue;
-
-        const basePct = Math.round(((i + 0.15) / slots.length) * 90) + 5;
-
-        const mark = (patch) => {
-          working = albumWorkingRef.current || working;
-          working = {
-            ...working,
-            album: {
-              ...working.album,
-              tracks: working.album.tracks.map((t) =>
-                t.id === slot.id ? { ...t, ...patch } : t,
-              ),
-              updatedAt: new Date().toISOString(),
-            },
-          };
-          syncAlbumWorking(working);
-        };
-
-        mark({ status: "lyrics", error: undefined });
-        await setAlbumLive(
-          basePct,
-          `Titre ${slot.index}/${total} — paroles « ${slot.workingTitle} »…`,
-          { persistNow: true },
-        );
-        setStepProgress({
-          percent: basePct,
-          message: `Titre ${slot.index}/${total} — paroles « ${slot.workingTitle} »…`,
-        });
-
-        if (abortState.aborted) break;
-
-        let lyricsI;
-        try {
-          lyricsI = await api.lyrics({
-            theme: `${slot.workingTitle} — ${slot.theme}`,
-            artist: project.artist,
-            trends: project.trends,
-            language: lang,
-          });
-        } catch (e) {
-          if (abortState.aborted) break;
-          mark({ status: "error", error: e.message || "Paroles échouées" });
-          await setAlbumLive(basePct, `Erreur paroles titre ${slot.index}`, { persistNow: true });
-          continue;
-        }
-        if (abortState.aborted) break;
-        if (!working.album.tracks.some((t) => t.id === slot.id)) continue;
-
-        mark({ lyrics: lyricsI, workingTitle: lyricsI?.title || slot.workingTitle, status: "audio" });
-        await setAlbumLive(
-          basePct + 4,
-          `Titre ${slot.index}/${total} — composition audio…`,
-          { persistNow: true },
-        );
-        setStepProgress({
-          percent: basePct + 4,
-          message: `Titre ${slot.index}/${total} — composition audio…`,
-        });
-
-        let trackI;
-        try {
-          trackI = await api.track(
-            {
-              lyrics: lyricsI,
-              artist: {
-                ...project.artist,
-                musicArrange: project.musicArrange,
-              },
-            },
-            (p) => {
-              if (abortState.aborted) return;
-              const local = Math.min(
-                96,
-                basePct + 4 + Math.round(((Number(p?.percent) || 0) / 100) * (80 / slots.length)),
-              );
-              const msg = `Titre ${slot.index}/${total} — ${p?.message || "composition…"}`;
-              setStepProgress({ percent: local, message: msg });
-              void setAlbumLive(local, `${slot.index}/${total} · ${p?.message || "audio…"}`);
-            },
-            { signal: abortState },
-          );
-        } catch (e) {
-          if (abortState.aborted || e?.name === "AbortError") break;
-          mark({ status: "error", error: e.message || "Audio échoué" });
-          await setAlbumLive(basePct + 4, `Erreur audio titre ${slot.index}`, { persistNow: true });
-          continue;
-        }
-        if (abortState.aborted) break;
-        if (!working.album.tracks.some((t) => t.id === slot.id)) continue;
-
-        let s3Warning;
-        if (trackI?.audioUrl) {
-          try {
-            const saved = await persistAudioRemote(trackI.audioUrl, projectId || "anon");
-            if (saved?.audioUrl) {
-              trackI = {
-                ...trackI,
-                audioUrl: saved.audioUrl,
-                audioS3Key: saved.s3Key,
-                audioEphemeral: false,
-                warning: undefined,
-              };
-            } else if (saved && saved.persisted === false) {
-              s3Warning = "Audio non persisté sur S3 — lien temporaire";
-              trackI = { ...trackI, audioEphemeral: true, warning: s3Warning };
-            }
-          } catch (persistErr) {
-            s3Warning = persistErr.message || "Persistance S3 échouée";
-            trackI = {
-              ...trackI,
-              audioEphemeral: true,
-              warning: s3Warning,
-            };
-          }
-        }
-
-        mark({
-          track: trackI,
-          status: trackI?.audioUrl ? "done" : "error",
-          error: trackI?.audioUrl ? undefined : "Pas d’audio",
-        });
-
-        const doneSoFar = working.album.tracks.filter((t) => t.status === "done").length;
-        await setAlbumLive(
-          Math.min(96, Math.round((doneSoFar / total) * 90) + 5),
-          `Album · titre ${slot.index} « ${lyricsI?.title || slot.workingTitle} »`,
-          { persistNow: true },
-        );
-      }
-
-      working = albumWorkingRef.current || working;
-      const doneCount = working.album.tracks.filter((t) => t.status === "done").length;
-      const failed = working.album.tracks.filter((t) => t.status === "error").length;
-      const wasCancelled = abortState.aborted;
-      // Remet en attente les pistes interrompues mid-flight
-      const tracks = working.album.tracks.map((t) => {
-        if (wasCancelled && (t.status === "lyrics" || t.status === "audio")) {
-          return { ...t, status: "pending", error: undefined };
-        }
-        return t;
-      });
-      const finalStatus = wasCancelled
-        ? "cancelled"
-        : failed && doneCount <= 1
-          ? "error"
-          : "done";
-      const finalMsg = wasCancelled
-        ? `Album annulé · ${doneCount}/${tracks.length} titres`
-        : failed > 0
-          ? `Album partiel · ${doneCount} OK, ${failed} en erreur`
-          : `Album prêt · ${doneCount} titres`;
-      working = {
-        ...working,
-        album: {
-          ...working.album,
-          tracks,
-          status: finalStatus,
-          live: {
-            percent: 100,
-            message: finalMsg,
-            label: working.album?.title
-              ? `Album · ${working.album.title}`
-              : `Album · ${tracks.length} titres`,
-          },
-          updatedAt: new Date().toISOString(),
-        },
-      };
-      syncAlbumWorking(working);
-      await persist(working, {
-        stepKey: "album",
-        eventType: "album",
-        message: finalMsg,
-      });
-      finishStepJob(jobId, {
-        ok: !wasCancelled && failed === 0,
-        message: finalMsg,
-        progress: 100,
-      });
-      setStepProgress({
-        percent: 100,
-        message: wasCancelled
-          ? `Album annulé · ${doneCount}/${tracks.length}`
-          : `Album prêt · ${doneCount}/${tracks.length}`,
-      });
-    } catch (e) {
-      const wasAbort = e?.name === "AbortError" || abortState.aborted;
-      if (!wasAbort) setError(e.message || "Album interrompu");
-      working = albumWorkingRef.current || working;
-      working = {
-        ...working,
-        album: {
-          ...(working.album || {}),
-          status: wasAbort ? "cancelled" : "error",
-          live: {
-            percent: 100,
-            message: wasAbort ? "Album annulé" : e.message || "Album en erreur",
-            label: working.album?.live?.label || `Album · ${total} titres`,
-          },
-          updatedAt: new Date().toISOString(),
-        },
-      };
-      syncAlbumWorking(working);
-      try {
-        await persist(working, {
-          stepKey: "album",
-          eventType: "album",
-          message: wasAbort ? "Album annulé" : `Album erreur · ${e.message || "?"}`,
-        });
-      } catch {
-        /* ignore */
-      }
-      finishStepJob(jobId, {
-        ok: false,
-        message: wasAbort ? "Album annulé" : e.message || "Album en erreur",
-      });
-    } finally {
-      albumLocalRunRef.current = false;
-      albumAbortRef.current = null;
-      setLoading(false);
-      setTimeout(() => setStepProgress(null), 2500);
-    }
+    }));
   }
 
   async function runFullAuto() {
@@ -1127,8 +970,26 @@ export default function Dashboard() {
       message: "Démarrage… suivi dans la sidebar (reste sur le Studio)",
       progress: 2,
     });
+    let snapshotProject = null;
     try {
-      const data = await api.pipeline(seed, (evt) => {
+      const data = await api.pipeline(seed, async (evt) => {
+        if (evt.type === "snapshot" && evt.snapshot) {
+          snapshotProject = normalizeProjectState({
+            ...emptyProject(),
+            ...evt.snapshot,
+          });
+          setProject(snapshotProject);
+          try {
+            await persist(snapshotProject, {
+              stepKey: evt.step || "pipeline",
+              eventType: "pipeline-snapshot",
+              message: `Auto A→Z · ${evt.step || "étape"}`,
+            });
+          } catch {
+            /* hub optionnel */
+          }
+          return;
+        }
         const workTotal = AUTO_PIPELINE_UI.length;
         const idx =
           typeof evt.index === "number" && evt.step !== "done"
@@ -1158,7 +1019,6 @@ export default function Dashboard() {
             return [...prev, { step: evt.step, message: evt.message, at: evt.at }];
           });
         }
-        // Suit l’étape active dans la nav
         const navMap = {
           trends: 1,
           artist: 2,
@@ -1166,7 +1026,6 @@ export default function Dashboard() {
           track: 4,
           cover: 5,
           distrokid: 6,
-          social: 8,
         };
         if (navMap[evt.step]) setStep(navMap[evt.step]);
       });
@@ -1185,28 +1044,51 @@ export default function Dashboard() {
       });
       setProject(next);
       setLog(data.log || []);
-      setAutoProgress((p) => ({ ...p, step: "done", message: "Pipeline terminé", percent: 100 }));
-      await persist(next, {
+      setAutoProgress((p) => ({
+        ...p,
+        step: "done",
+        message: "Prêt à valider ONCE",
+        percent: 100,
+      }));
+      const saved = await persist(next, {
         stepKey: "pipeline",
         eventType: "pipeline",
-        message: "Pipeline A→Z terminé",
-        payload: { log: data.log },
+        message: "Pipeline A→Z prêt — validation ONCE",
+        payload: { log: data.log, awaitingOnce: true },
       });
+      const slug =
+        saved?.project?.artist?.slug || next.artist?.slug || data.artist?.slug || "";
       finishPipelineJob(pipeJobId, {
         ok: true,
-        message: "Pipeline terminé",
-        projectId,
+        message: slug ? `Fiche artiste /${slug}` : "Prêt à valider ONCE",
+        projectId: saved?.id || projectIdRef.current,
       });
-      if (data.track?.audioUrl) {
-        setStep(7);
-      } else {
+      if (!data.track?.audioUrl) {
         setStep(4);
         setError(
-          "Pipeline OK jusqu'au morceau, mais sans fichier audio. Ajoute Replicate (ou finalise Suno) à l'étape 4 avant le clip.",
+          "Pipeline OK jusqu'au morceau, mais sans fichier audio. Ajoute Replicate (ou finalise Suno) à l'étape 4 avant ONCE.",
         );
+        return;
       }
+      if (slug) {
+        window.location.href = `/artiste/${encodeURIComponent(slug)}`;
+        return;
+      }
+      setStep(6);
+      setSaveMsg("Pipeline prêt — vérifie et publie via ONCE.");
     } catch (e) {
       setError(e.message);
+      if (snapshotProject?.artist?.name) {
+        try {
+          await persist(snapshotProject, {
+            stepKey: "pipeline",
+            eventType: "pipeline-partial",
+            message: `Pipeline interrompu : ${e.message}`,
+          });
+        } catch {
+          /* déjà tenté via snapshots */
+        }
+      }
       finishPipelineJob(pipeJobId, { ok: false, message: e.message });
     } finally {
       setAutoRunning(false);
@@ -1219,7 +1101,7 @@ export default function Dashboard() {
     setError("");
     try {
       const { project: saved } = await api.getProject(id);
-      setProjectId(saved.id);
+      assignProjectId(saved.id);
       setProject(
         normalizeProjectState({ ...emptyProject(), ...(saved.project || {}) }),
       );
@@ -1270,6 +1152,33 @@ export default function Dashboard() {
               /{artistSlug}
             </a>
           )}
+          {albumCtx && !showHomePipeline && (
+            <div class="flex flex-wrap items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs">
+              <Library size={12} class="text-primary" />
+              <span class="font-medium text-primary">{albumCtx.title}</span>
+              {albumCtx.index ? (
+                <span class="text-base-content/55">
+                  · piste {albumCtx.index}
+                  {albumCtx.total ? `/${albumCtx.total}` : ""}
+                </span>
+              ) : null}
+              {albumCtx.prevHref && (
+                <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.prevHref} title="Titre précédent">
+                  <ChevronLeft size={12} />
+                </a>
+              )}
+              {albumCtx.nextHref && (
+                <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.nextHref} title="Titre suivant">
+                  <ChevronRight size={12} />
+                </a>
+              )}
+              {albumCtx.artistHref && (
+                <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.artistHref}>
+                  Gérer l’album
+                </a>
+              )}
+            </div>
+          )}
           <button
             type="button"
             class="btn btn-ghost btn-xs gap-1"
@@ -1318,7 +1227,7 @@ export default function Dashboard() {
                   isTrackAudioFinal(project.track) ? "text-sm" : "text-base md:text-lg"
                 }`}
               >
-                Pipeline A→Z : Deezer + Gemini + ONCE → Spotify + clip + réseaux.
+                Pipeline A→Z : jusqu’à la jaquette, puis tu valides ONCE avant Spotify.
               </p>
             )}
           </div>
@@ -1393,20 +1302,34 @@ export default function Dashboard() {
               </span>
               <p class="mb-2 text-[11px] text-base-content/45">
                 {seed.styleTrackPick?.id || seed.styleArtistPick?.id
-                  ? "Inutile si tu as déjà un artiste / titre de référence — ne coche que pour forcer un genre."
+                  ? "Violet / bleu = prédit par la référence. Jaune = forçage manuel (optionnel)."
                   : "Ou choisis plutôt un artiste / titre ci-dessous pour caler le style automatiquement."}
               </p>
               <div class="flex flex-wrap gap-2">
                 {MUSIC_STYLES.map((s) => {
-                  const selected = s.value
+                  const manual = s.value
                     ? (seed.genres || []).includes(s.value)
-                    : !(seed.genres || []).length;
+                    : !(seed.genres || []).length && !seedHasStyleRef;
+                  const fromTrack = Boolean(s.value && seedTrackStyleValues.has(s.value));
+                  const fromArtist = Boolean(s.value && seedArtistStyleValues.has(s.value));
+                  let cls = "btn btn-xs btn-ghost border border-base-content/15";
+                  if (manual) cls = "btn btn-xs btn-primary";
+                  else if (fromTrack) cls = "btn btn-xs border-0 bg-info/25 text-info hover:bg-info/35";
+                  else if (fromArtist)
+                    cls = "btn btn-xs border-0 bg-secondary/25 text-secondary hover:bg-secondary/35";
                   return (
                     <button
                       key={s.label}
                       type="button"
-                      class={`btn btn-xs ${selected ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+                      class={cls}
                       disabled={autoRunning}
+                      title={
+                        fromTrack
+                          ? "Prédit par le titre de référence"
+                          : fromArtist
+                            ? "Prédit par l’artiste de référence"
+                            : undefined
+                      }
                       onClick={() => {
                         if (!s.value) {
                           setSeed((prev) => ({ ...prev, genres: [], genre: "" }));
@@ -1422,6 +1345,8 @@ export default function Dashboard() {
                       }}
                     >
                       {s.label}
+                      {fromTrack && !manual ? " · titre" : ""}
+                      {fromArtist && !manual && !fromTrack ? " · artiste" : ""}
                     </button>
                   );
                 })}
@@ -1444,15 +1369,24 @@ export default function Dashboard() {
                     ...s,
                     styleArtist: pick?.name || s.styleArtist,
                     styleArtistPick: pick,
+                    ...styleRefSeedPatch(s, { pick, trackPick: s.styleTrackPick }),
                   }))
                 }
               />
               <StyleTrackPicker
                 pick={seed.styleTrackPick}
+                artistPick={seed.styleArtistPick}
                 disabled={autoRunning}
                 compact
                 onPickChange={(pick) =>
-                  setSeed((s) => ({ ...s, styleTrackPick: pick }))
+                  setSeed((s) => ({
+                    ...s,
+                    styleTrackPick: pick,
+                    ...styleRefSeedPatch(s, {
+                      pick: s.styleArtistPick,
+                      trackPick: pick,
+                    }),
+                  }))
                 }
               />
             </div>
@@ -1465,24 +1399,17 @@ export default function Dashboard() {
               )}
               <select
                 class="select select-bordered w-full bg-base-200"
-                value={
-                  languagesForProvider(
-                    loadKeys().musicProvider,
-                    loadKeys().songGenPreferredModel,
-                  ).some((l) => l.code === seed.language)
-                    ? seed.language
-                    : languagesForProvider(
-                        loadKeys().musicProvider,
-                        loadKeys().songGenPreferredModel,
-                      )[0]?.code || "en"
-                }
+                value={seedEffectiveLanguage}
                 disabled={autoRunning}
-                onChange={(e) => setSeed((s) => ({ ...s, language: e.currentTarget.value }))}
+                onChange={(e) =>
+                  setSeed((s) => ({
+                    ...s,
+                    language: e.currentTarget.value,
+                    languageManual: true,
+                  }))
+                }
               >
-                {languagesForProvider(
-                  loadKeys().musicProvider,
-                  loadKeys().songGenPreferredModel,
-                ).map((l) => {
+                {seedLangOptions.map((l) => {
                   const engine = languageEngineLabel(
                     l.code,
                     loadKeys().musicProvider,
@@ -1495,7 +1422,45 @@ export default function Dashboard() {
                   );
                 })}
               </select>
+              {seedInferredLanguage &&
+                !seed.languageManual &&
+                seed.styleArtistPick?.name && (
+                  <p class="mt-1 text-[11px] text-base-content/45">
+                    {languageLabel(seedInferredLanguage)} proposé d’après{" "}
+                    {seed.styleTrackPick?.name
+                      ? `${seed.styleArtistPick.name} · ${seed.styleTrackPick.name}`
+                      : seed.styleArtistPick.name}{" "}
+                    — tu peux changer.
+                  </p>
+                )}
             </label>
+            <fieldset class="form-control w-full">
+              <legend class="label-text mb-1 text-xs text-base-content/55">Sexe / présentation</legend>
+              <div class="flex flex-wrap gap-2">
+                {ARTIST_GENDER_OPTIONS.map((g) => (
+                  <button
+                    key={g.value}
+                    type="button"
+                    class={`btn btn-sm ${seed.gender === g.value ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+                    disabled={autoRunning}
+                    onClick={() =>
+                      setSeed((s) => ({ ...s, gender: g.value, genderManual: true }))
+                    }
+                  >
+                    {g.label}
+                  </button>
+                ))}
+              </div>
+              {seedInferredGender &&
+                seed.gender === seedInferredGender &&
+                !seed.genderManual &&
+                seed.styleArtistPick?.name && (
+                  <p class="mt-1 text-[11px] text-base-content/45">
+                    {ARTIST_GENDER_LABELS[seedInferredGender]} proposé d’après{" "}
+                    {seed.styleArtistPick.name} — tu peux changer.
+                  </p>
+                )}
+            </fieldset>
             <input
               class="input input-bordered bg-base-200 md:col-span-2"
               placeholder="Personnalité / univers (optionnel) — pas le style musical"
@@ -1603,7 +1568,7 @@ export default function Dashboard() {
         <div class="mb-4 border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">{error}</div>
       )}
 
-      {loading && !autoRunning && (
+      {trackUiLoading && !autoRunning && (
         <div
           class="mb-4 flex items-center gap-3 border border-primary/30 bg-primary/10 px-4 py-3"
           aria-live="polite"
@@ -1615,6 +1580,11 @@ export default function Dashboard() {
                 ? stepProgress.message
                 : `Génération en cours — étape ${STEPS.find((s) => s.id === step)?.label || step}`}
             </p>
+            {trackBusy ? (
+              <p class="mt-0.5 text-xs text-base-content/55">
+                Tu peux changer de page : la génération continue dans Tâches.
+              </p>
+            ) : null}
             <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-base-300">
               {typeof stepProgress?.percent === "number" ? (
                 <div
@@ -1629,7 +1599,7 @@ export default function Dashboard() {
               <p class="mt-1 text-xs text-base-content/55">{stepProgress.percent}%</p>
             )}
           </div>
-          {step === 4 ? (
+          {step === 4 || trackBusy ? (
             <button
               type="button"
               class="btn btn-ghost btn-sm shrink-0 text-error"
@@ -1698,11 +1668,23 @@ export default function Dashboard() {
               runStep(() => api.artist({ ...payload, trends: project.trends }), "artist", 2)
             }
             onPatchArtist={(patch) => {
-              setProject((prev) =>
-                prev.artist
-                  ? { ...prev, artist: { ...prev.artist, ...patch } }
-                  : prev,
-              );
+              setProject((prev) => {
+                if (!prev.artist) return prev;
+                const next = { ...prev, artist: { ...prev.artist, ...patch } };
+                void persist(
+                  next,
+                  {
+                    stepKey: "artist",
+                    eventType: "artist-patch",
+                    message:
+                      Array.isArray(patch.photos) || "imageUrl" in patch
+                        ? "Photos artiste mises à jour"
+                        : "Profil artiste mis à jour",
+                  },
+                  { skipLocalUpdate: true },
+                );
+                return next;
+              });
             }}
           />
         )}
@@ -1753,8 +1735,8 @@ export default function Dashboard() {
             lyrics={project.lyrics}
             artist={project.artist}
             musicArrange={project.musicArrange}
-            loading={loading}
-            progress={step === 4 ? stepProgress : null}
+            loading={trackUiLoading}
+            progress={step === 4 || trackBusy ? stepProgress : null}
             projectId={projectId}
             distrokid={project.distrokid}
             onOpenSettings={() => {
@@ -1845,65 +1827,10 @@ export default function Dashboard() {
                 setLoading(false);
               }
             }}
-            onGeneratePreview={() =>
-              runStep(
-                (onProgress, signal) =>
-                  api.track(
-                    {
-                      preview: true,
-                      lyrics: project.lyrics,
-                      artist: {
-                        ...project.artist,
-                        musicArrange: project.musicArrange,
-                      },
-                    },
-                    onProgress,
-                    { signal },
-                  ),
-                "track",
-                4,
-              )
-            }
-            onGenerate={() =>
-              runStep(
-                (onProgress, signal) =>
-                  api.track(
-                    {
-                      preview: false,
-                      lyrics: project.lyrics,
-                      artist: {
-                        ...project.artist,
-                        musicArrange: project.musicArrange,
-                      },
-                    },
-                    onProgress,
-                    { signal },
-                  ),
-                "track",
-                4,
-              )
-            }
+            onGeneratePreview={() => startTrackBackground(true)}
+            onGenerate={() => startTrackBackground(false)}
             onCancelGenerate={() => cancelStepGeneration()}
-            onAcceptTrackPreview={() => {
-              // Valider le style de l’extrait → lancer la gen complète (nouvelle génération)
-              runStep(
-                (onProgress, signal) =>
-                  api.track(
-                    {
-                      preview: false,
-                      lyrics: project.lyrics,
-                      artist: {
-                        ...project.artist,
-                        musicArrange: project.musicArrange,
-                      },
-                    },
-                    onProgress,
-                    { signal },
-                  ),
-                "track",
-                4,
-              );
-            }}
+            onAcceptTrackPreview={() => startTrackBackground(false)}
             onRejectTrackPreview={() => {
               setError("");
               setProject((prev) => {

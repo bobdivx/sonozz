@@ -106,6 +106,15 @@ async function sanitizeProject(project = {}, { projectId } = {}) {
 
   if (clone.artist) {
     clone.artist = await sanitizeImageField(clone.artist, "imageUrl");
+    if (Array.isArray(clone.artist.photos)) {
+      const cleaned = [];
+      for (const url of clone.artist.photos.slice(0, 6)) {
+        const one = await sanitizeImageField({ imageUrl: url }, "imageUrl");
+        if (one?.imageUrl) cleaned.push(one.imageUrl);
+      }
+      clone.artist.photos = cleaned.length ? cleaned : undefined;
+      if (!clone.artist.imageUrl && cleaned[0]) clone.artist.imageUrl = cleaned[0];
+    }
     if (!clone.artist.slug && clone.artist.name) {
       clone.artist.slug = slugify(clone.artist.aka || clone.artist.name);
     }

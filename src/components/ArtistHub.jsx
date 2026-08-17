@@ -2,12 +2,15 @@ import { useEffect, useState } from "preact/hooks";
 import {
   AudioLines,
   BarChart3,
-  Bot,
   CalendarDays,
+  ChevronDown,
   ExternalLink,
-  Headphones,
+  Library,
   Music2,
+  Palette,
+  Pause,
   Pencil,
+  Play,
   Plus,
   RefreshCw,
   Sparkles,
@@ -18,14 +21,29 @@ import AppShell from "./AppShell.jsx";
 import ArtistAlbumSection from "./ArtistAlbumSection.jsx";
 import { api } from "../lib/apiClient.js";
 import { loadKeys } from "../lib/keys.js";
+import { listArtistImageUrl } from "../lib/artistPhotos.js";
 import { confirmDeleteProject, languageLabel } from "../lib/studio.js";
+import { organizeArtistReleases } from "../lib/albumTracks.js";
+import { playTracks } from "../lib/playEngine.js";
+import {
+  currentPlayTrack,
+  readPlaySession,
+  subscribePlaySession,
+} from "../lib/playSession.js";
+
+const TABS = [
+  { id: "titres", label: "Titres", icon: Music2 },
+  { id: "coach", label: "Coach", icon: Sparkles },
+  { id: "style", label: "Style", icon: Palette },
+  { id: "chiffres", label: "Chiffres", icon: BarChart3 },
+];
 
 const VERDICT_LABEL = {
-  produce: "Produire",
-  wait: "Attendre",
-  promote: "Promouvoir",
-  pivot: "Corriger",
-  publish: "Unison",
+  produce: "Nouveau titre",
+  wait: "On laisse mûrir",
+  promote: "On pousse le clip",
+  pivot: "On recale le son",
+  publish: "Prêt pour les stores",
 };
 
 function verdictClass(verdict) {
@@ -48,11 +66,174 @@ function formatPct(n) {
   return `${sign}${Number(n).toFixed(1)} %`;
 }
 
-function storeBadgeClass(status = "") {
-  if (/live|distributed|delivered/i.test(status)) return "text-success";
-  if (/fail|error|reject/i.test(status)) return "text-error";
-  if (/pending|queued|process/i.test(status)) return "text-warning";
-  return "text-base-content/55";
+function releasePhase(release, delivery) {
+  const live = /live|distributed|delivered/i.test(
+    delivery?.spotifyStatus || delivery?.aggregateStatus || "",
+  );
+  if (delivery?.spotifyUrl || live) {
+    return { label: "En store", cls: "bg-success/15 text-success" };
+  }
+  if (delivery?.publishing?.canSubmitUnison) {
+    return { label: "Prêt Unison", cls: "bg-primary/15 text-primary" };
+  }
+  if (release.releaseId || /submit|inspect|pending/i.test(release.onceStatus || "")) {
+    return { label: "Chez ONCE", cls: "bg-warning/15 text-warning" };
+  }
+  if (release.hasAudio) {
+    return { label: "Audio prêt", cls: "bg-info/15 text-info" };
+  }
+  return { label: "En studio", cls: "bg-base-content/10 text-base-content/55" };
+}
+
+function toPlayTracks(list, extras = {}) {
+  return (list || [])
+    .filter((r) => r.audioUrl || r.audioS3Key)
+    .map((r) => ({
+      id: r.id,
+      trackTitle: r.trackTitle || r.title,
+      artistName: extras.artistName || r.artistName,
+      audioUrl: r.audioUrl,
+      audioS3Key: r.audioS3Key,
+      coverUrl: r.coverUrl || extras.coverUrl,
+      artistImage: extras.artistImage,
+      slug: extras.slug || r.slug,
+    }));
+}
+
+function CatalogTrackCard({
+  release: r,
+  slug,
+  delivery,
+  streams,
+  phase,
+  busy,
+  onDelete,
+  index = null,
+  queue = null,
+  playMeta = {},
+  nowPlayingId = null,
+  playing = false,
+}) {
+  const playable = Boolean(r.audioUrl || r.audioS3Key);
+  const isCurrent = nowPlayingId === r.id;
+  const showPause = isCurrent && playing;
+
+  function onPlayCover() {
+    if (!playable) return;
+    playTracks(queue || toPlayTracks([r], { ...playMeta, slug }), r.id);
+  }
+
+  return (
+    <li
+      class={`group flex gap-3 rounded-2xl border bg-base-300/40 p-3 transition hover:border-primary/35 hover:bg-base-300/70 ${
+        isCurrent ? "border-primary/50" : "border-base-content/10"
+      }`}
+    >
+      {playable ? (
+        <button
+          type="button"
+          class="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-base-300 sm:h-20 sm:w-20"
+          aria-label={showPause ? "Pause" : "Lire dans le lecteur"}
+          onClick={onPlayCover}
+        >
+          {r.coverUrl ? (
+            <img src={r.coverUrl} alt="" class="h-full w-full object-cover" />
+          ) : (
+            <div class="flex h-full items-center justify-center">
+              <Music2 size={18} class="opacity-35" />
+            </div>
+          )}
+          <span
+            class={`absolute inset-0 flex items-center justify-center bg-black/35 transition ${
+              isCurrent ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+            }`}
+          >
+            {showPause ? (
+              <Pause size={16} fill="currentColor" class="text-white" />
+            ) : (
+              <Play size={16} fill="currentColor" class="text-white" />
+            )}
+          </span>
+        </button>
+      ) : (
+        <a
+          href={`/?project=${r.id}`}
+          class="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-base-300 sm:h-20 sm:w-20"
+        >
+          {r.coverUrl ? (
+            <img src={r.coverUrl} alt="" class="h-full w-full object-cover" />
+          ) : (
+            <div class="flex h-full items-center justify-center">
+              <Music2 size={18} class="opacity-35" />
+            </div>
+          )}
+        </a>
+      )}
+      <div class="min-w-0 flex-1">
+        <p class="truncate font-medium">
+          {index != null ? (
+            <span class="mr-1.5 tabular-nums text-base-content/40">{index}.</span>
+          ) : null}
+          {r.trackTitle || r.title}
+        </p>
+        <div class="mt-1 flex flex-wrap items-center gap-1.5">
+          <span class={`rounded-full px-2 py-0.5 text-[10px] font-medium ${phase.cls}`}>
+            {phase.label}
+          </span>
+          {streams?.totalStreams != null && !streams.error && (
+            <span class="text-[11px] text-base-content/45">
+              {formatStreams(streams.totalStreams)} écoutes
+            </span>
+          )}
+        </div>
+        <div class="mt-2 flex flex-wrap gap-1">
+          {delivery?.spotifyUrl && (
+            <a
+              class="btn btn-ghost btn-xs rounded-full"
+              href={delivery.spotifyUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Spotify
+            </a>
+          )}
+          {delivery?.dashboardUrl && (
+            <a
+              class="btn btn-ghost btn-xs rounded-full"
+              href={delivery.dashboardUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              ONCE
+            </a>
+          )}
+          <a class="btn btn-ghost btn-xs rounded-full" href={`/?project=${r.id}`}>
+            Studio
+          </a>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs rounded-full text-error/80"
+            disabled={busy}
+            onClick={() => onDelete(r)}
+          >
+            <Trash2 size={11} />
+          </button>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function readHashState() {
+  if (typeof window === "undefined") return { tab: "titres", albumId: "" };
+  const hash = String(window.location.hash || "").replace(/^#/, "");
+  if (hash.startsWith("album-")) {
+    return { tab: "titres", albumId: hash.slice(6) };
+  }
+  return {
+    tab: TABS.some((t) => t.id === hash) ? hash : "titres",
+    albumId: "",
+  };
 }
 
 function styleRowsFromProfile(profile = {}) {
@@ -101,6 +282,41 @@ export default function ArtistHub({ slug }) {
   const [careerBusy, setCareerBusy] = useState(false);
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const [schedulePreview, setSchedulePreview] = useState(null);
+  const initialHash = readHashState();
+  const [tab, setTab] = useState(initialHash.tab);
+  const [openAlbumId, setOpenAlbumId] = useState(initialHash.albumId);
+  const [playSession, setPlaySession] = useState(() =>
+    typeof window === "undefined" ? { queue: [], playing: false, index: 0 } : readPlaySession(),
+  );
+
+  useEffect(() => subscribePlaySession(setPlaySession), []);
+
+  useEffect(() => {
+    const onHash = () => {
+      const next = readHashState();
+      setTab(next.tab);
+      setOpenAlbumId(next.albumId);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  function selectTab(id) {
+    setTab(id);
+    if (id !== "titres") setOpenAlbumId("");
+    if (typeof history !== "undefined") {
+      history.replaceState(null, "", `#${id}`);
+    }
+  }
+
+  function selectAlbum(id) {
+    const next = openAlbumId === id ? "" : id;
+    setTab("titres");
+    setOpenAlbumId(next);
+    if (typeof history !== "undefined") {
+      history.replaceState(null, "", next ? `#album-${next}` : "#titres");
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -280,9 +496,9 @@ export default function ArtistHub({ slug }) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Exécution agenda KO");
       if (json.tiktokTokens || json.youtubeTokens) {
-        const { saveKeysAsync, loadKeys } = await import("../lib/keys.js");
+        const { saveKeysAsync, loadKeys: loadKeysNow } = await import("../lib/keys.js");
         await saveKeysAsync({
-          ...loadKeys(),
+          ...loadKeysNow(),
           ...(json.tiktokTokens || {}),
           ...(json.youtubeTokens || {}),
         });
@@ -364,6 +580,7 @@ export default function ArtistHub({ slug }) {
   const stats = data?.stats || {};
   const career = data?.career || stats.career || null;
   const releases = data?.releases || [];
+  const { albums, singles } = organizeArtistReleases(releases);
   const streams = stats.streams || {};
   const deliveryMap = stats.delivery || {};
   const releaseStreamsMap = stats.releaseStreams || {};
@@ -384,530 +601,533 @@ export default function ArtistHub({ slug }) {
   const recentRuns = Array.isArray(career?.scheduleRuns)
     ? career.scheduleRuns.slice(0, 5)
     : [];
+  const portrait = profile.imageUrl || listArtistImageUrl(data?.slug, profile);
+  const playMeta = {
+    artistName: data?.name,
+    artistImage: portrait,
+    slug: data?.slug,
+  };
+  const artistQueue = toPlayTracks(
+    [...albums.flatMap((a) => a.tracks), ...singles],
+    playMeta,
+  );
+  const hasPlayable = artistQueue.length > 0;
+  const nowPlaying = currentPlayTrack(playSession);
+  const nowPlayingId = nowPlaying?.id || null;
+  const playing = Boolean(playSession.playing);
+  const unisonHref =
+    career?.releaseFocus?.dashboardUrl ||
+    career?.actions?.find((a) => a.href)?.href ||
+    null;
+  const nextMove = !data
+    ? null
+    : !releases.length
+      ? {
+          kicker: "Premier pas",
+          title: "Pose le premier titre",
+          text: "Même voix, même univers — on enchaîne paroles puis audio dans le studio.",
+          cta: "Composer",
+          onClick: () => createTrack(),
+        }
+      : dueToday.some((i) => i.type === "promote") && schedulePreview?.canRun
+        ? {
+            kicker: "Promo du jour",
+            title: "Le clip peut partir",
+            text: "Un clic pour pousser TikTok, YouTube ou le webhook.",
+            cta: "Publier la promo",
+            onClick: runSchedulePromo,
+          }
+        : career?.verdict === "produce" && career.nextSingle?.theme
+          ? {
+              kicker: "Le coach",
+              title: career.nextSingle.titleHint || "Nouveau single",
+              text: career.nextSingle.theme,
+              cta: "Lancer dans le studio",
+              onClick: () => createTrack(career.nextSingle.theme),
+            }
+          : career?.verdict === "publish" && unisonHref
+            ? {
+                kicker: "Stores",
+                title: "Un titre est prêt à sortir",
+                text: career.summary || "Envoie-le vers Unison depuis ONCE.",
+                cta: "Ouvrir ONCE",
+                href: unisonHref,
+              }
+            : null;
 
   return (
     <AppShell active="artistes">
-    <div class="mx-auto w-full max-w-5xl">
-      <div class="mb-8 flex flex-wrap items-center gap-3">
-        <a href="/artistes" class="btn btn-ghost btn-sm">
-          Tous les artistes
-        </a>
+      <div class="mx-auto w-full max-w-5xl space-y-6">
         <a
-          class="btn btn-ghost btn-sm gap-1"
-          href={links.once}
-          target="_blank"
-          rel="noreferrer"
+          href="/artistes"
+          class="inline-flex items-center gap-1 text-sm text-base-content/55 transition hover:text-primary"
         >
-          ONCE <ExternalLink size={12} />
+          ← Tous les artistes
         </a>
-        <a
-          class="btn btn-ghost btn-sm gap-1"
-          href={links.spotifyForArtists}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Spotify for Artists <ExternalLink size={12} />
-        </a>
-      </div>
 
-      {loading && (
-        <p class="text-base-content/60">
-          <span class="loading loading-spinner loading-sm" /> Chargement…
-        </p>
-      )}
-      {error && <div class="mb-4 border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">{error}</div>}
-      {msg && <p class="mb-3 text-sm text-success">{msg}</p>}
-
-      {data && (
-        <div class="space-y-10 animate-rise">
-          <header class="grid gap-6 md:grid-cols-[200px_1fr] md:items-end">
-            <figure>
-              {profile.imageUrl ? (
-                <img
-                  src={profile.imageUrl}
-                  alt={data.name}
-                  class="aspect-square w-full object-cover shadow-2xl shadow-black/40"
-                />
-              ) : (
-                <div class="flex aspect-square items-center justify-center bg-base-300">
-                  <UserRound size={40} class="opacity-40" />
-                </div>
-              )}
-            </figure>
-            <div class="space-y-3">
-              <p class="text-xs uppercase tracking-[0.28em] text-primary">/{data.slug}</p>
-              <h1 class="font-display text-4xl font-extrabold tracking-tight md:text-6xl">{data.name}</h1>
-              {profile.aka && <p class="text-lg text-base-content/60">{profile.aka}</p>}
-              <p class="max-w-xl text-base-content/70">{profile.bio || "Profil artiste SONOZZ"}</p>
-              <div class="flex flex-wrap gap-2 text-sm text-base-content/55">
-                {profile.genre && <span>{profile.genre}</span>}
-                {profile.city && <span>· {profile.city}</span>}
-                {profile.mood && <span>· {profile.mood}</span>}
+        {loading && (
+          <div class="animate-pulse overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/40">
+            <div class="grid md:grid-cols-[260px_1fr]">
+              <div class="aspect-square bg-base-300" />
+              <div class="space-y-3 p-8">
+                <div class="h-4 w-24 rounded-full bg-base-300" />
+                <div class="h-10 w-64 rounded-lg bg-base-300" />
+                <div class="h-4 w-full max-w-md rounded bg-base-300" />
               </div>
-              {releases.some((r) => r.audioUrl) && (
-                <a
-                  class="btn btn-primary gap-2"
-                  href={`/play?artist=${encodeURIComponent(data.slug)}&play=1`}
-                >
-                  <Headphones size={16} /> Écouter dans Play
-                </a>
-              )}
             </div>
-          </header>
+          </div>
+        )}
+        {error && (
+          <div class="rounded-2xl border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">
+            {error}
+          </div>
+        )}
+        {msg && <p class="text-sm text-success">{msg}</p>}
 
-          <section class="space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <h2 class="font-display flex items-center gap-2 text-2xl font-bold">
-                <Music2 size={22} /> Style musical
-              </h2>
-              <button
-                type="button"
-                class="btn btn-outline btn-sm gap-1"
-                disabled={busy}
-                onClick={openStyleEditor}
-              >
-                <Pencil size={14} /> Modifier
-              </button>
-            </div>
-            <p class="text-sm text-base-content/65">
-              Synthèse des choix qui guident paroles, audio et jaquette. Modifie-les dans le studio
-              (étape Artiste) — le profil artiste est mis à jour pour les prochains morceaux.
-            </p>
-
-            {!style.genreSummary && !style.refs.length ? (
-              <div class="border border-dashed border-base-content/20 bg-base-200/20 px-4 py-5">
-                <p class="text-sm text-base-content/60">
-                  Aucun style défini pour cet artiste.
-                </p>
-                <button
-                  type="button"
-                  class="btn btn-primary btn-sm mt-3 gap-1"
-                  disabled={busy}
-                  onClick={openStyleEditor}
-                >
-                  <Pencil size={14} /> Définir le style
-                </button>
-              </div>
-            ) : (
-              <div class="space-y-4 border border-base-content/10 bg-base-200/30 p-4">
-                <div class="flex flex-wrap gap-2">
-                  {(style.genres.length ? style.genres : style.genreSummary ? [style.genreSummary] : []).map(
-                    (g) => (
-                      <span
-                        key={g}
-                        class="inline-flex items-center gap-1.5 border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary"
-                      >
-                        <Music2 size={12} />
-                        {g}
-                      </span>
-                    ),
-                  )}
-                  {style.language && (
-                    <span class="inline-flex items-center border border-base-content/15 px-2.5 py-1 text-xs text-base-content/70">
-                      {languageLabel(style.language)}
-                    </span>
-                  )}
-                  {style.mood && (
-                    <span class="inline-flex items-center border border-base-content/15 px-2.5 py-1 text-xs text-base-content/70">
-                      {style.mood}
-                    </span>
-                  )}
-                  {style.mode === "self" && (
-                    <span class="inline-flex items-center border border-secondary/30 bg-secondary/10 px-2.5 py-1 text-xs text-secondary">
-                      Profil « c’est moi »
-                    </span>
-                  )}
-                </div>
-
-                {style.refs.length > 0 && (
-                  <div>
-                    <p class="text-xs uppercase tracking-wider text-base-content/45">
-                      {style.mode === "self" ? "Artistes aimés" : "Artistes modèles"}
-                    </p>
-                    <p class="mt-1 text-sm text-primary">{style.refs.join(" · ")}</p>
-                    {style.lock.source && (
-                      <p class="mt-0.5 text-xs text-base-content/40">
-                        {style.lock.source}
-                        {style.lock.confidence ? ` · ${style.lock.confidence}` : ""}
-                        {style.lock.audioListened ? " · preview écouté" : ""}
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {style.topTracks.length > 0 && (
-                  <div>
-                    <p class="text-xs uppercase tracking-wider text-base-content/45">
-                      Morceaux de référence
-                    </p>
-                    <p class="mt-1 text-sm text-base-content/80">{style.topTracks.slice(0, 6).join(" · ")}</p>
-                  </div>
-                )}
-
-                {style.influences.length > 0 && (
-                  <div>
-                    <p class="text-xs uppercase tracking-wider text-base-content/45">Influences</p>
-                    <p class="mt-1 text-sm text-base-content/70">{style.influences.join(" · ")}</p>
-                  </div>
-                )}
-
-                {(style.lock.timbre ||
-                  style.lock.rhythmFeel ||
-                  style.lock.tempoFeel ||
-                  style.lock.bpm ||
-                  style.instruments.length > 0 ||
-                  style.voice) && (
-                  <div class="space-y-1 border-t border-base-content/10 pt-3 text-xs text-base-content/65">
-                    <p class="font-medium uppercase tracking-wider text-base-content/45">DNA sonore</p>
-                    {style.lock.timbre && (
-                      <p>
-                        Timbre — <span class="text-base-content/80">{style.lock.timbre}</span>
-                      </p>
-                    )}
-                    {(style.lock.rhythmFeel || style.lock.tempoFeel) && (
-                      <p>
-                        Groove —{" "}
-                        <span class="text-base-content/80">
-                          {style.lock.rhythmFeel || style.lock.tempoFeel}
-                        </span>
-                      </p>
-                    )}
-                    {style.lock.bpm ? (
-                      <p>
-                        Tempo — <span class="text-base-content/80">~{style.lock.bpm} BPM</span>
-                        {style.lock.energy ? ` · énergie ${style.lock.energy}` : ""}
-                      </p>
-                    ) : null}
-                    {style.instruments.length > 0 && (
-                      <p>
-                        Instruments —{" "}
-                        <span class="text-base-content/80">{style.instruments.slice(0, 6).join(" · ")}</span>
-                      </p>
-                    )}
-                    {style.voice && (
-                      <p>
-                        Voix —{" "}
-                        <span class="text-base-content/80">
-                          {[style.voice, style.lock.vocalRegister].filter(Boolean).join(" · ")}
-                        </span>
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {style.production && (
-                  <p class="text-xs text-base-content/45">{style.production}</p>
-                )}
-              </div>
-            )}
-          </section>
-
-          <section class="space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <h2 class="font-display flex items-center gap-2 text-2xl font-bold">
-                <BarChart3 size={22} /> Stats
-              </h2>
-              <button type="button" class="btn btn-outline btn-sm gap-1" disabled={busy} onClick={refreshStats}>
-                <RefreshCw size={14} /> Rafraîchir
-              </button>
-            </div>
-            <div class="grid gap-3 sm:grid-cols-2 md:grid-cols-5">
-              {[
-                ["Morceaux", stats.tracks ?? releases.length],
-                ["Avec audio", stats.withAudio ?? 0],
-                ["Soumis ONCE", stats.submitted ?? 0],
-                ["Live Spotify", stats.liveOnSpotify ?? "—"],
-                ["Prêt Unison", stats.unisonReady ?? 0],
-              ].map(([label, value]) => (
-                <div key={label} class="border border-base-content/10 bg-base-200/40 px-4 py-3">
-                  <p class="text-xs uppercase tracking-wider text-base-content/45">{label}</p>
-                  <p class="font-display text-3xl font-bold">{value}</p>
-                </div>
-              ))}
-            </div>
-
-            {(streams.totalStreams != null || streams.error) && (
-              <div class="space-y-3 border border-base-content/10 bg-base-200/30 p-4">
-                <div class="flex flex-wrap items-end justify-between gap-3">
-                  <div>
-                    <p class="text-xs uppercase tracking-wider text-base-content/45">
-                      Streams ONCE
-                      {streams.fromDate && streams.toDate
-                        ? ` · ${streams.fromDate} → ${streams.toDate}`
-                        : " · 30 j"}
-                    </p>
-                    {streams.error ? (
-                      <p class="mt-1 text-sm text-warning">{streams.error}</p>
-                    ) : (
-                      <p class="font-display text-4xl font-bold">{formatStreams(streams.totalStreams)}</p>
-                    )}
-                  </div>
-                  {!streams.error && (
-                    <div class="text-right text-sm text-base-content/60">
-                      {streams.avgDailyStreams != null && (
-                        <p>~{formatStreams(Math.round(streams.avgDailyStreams))} / jour</p>
-                      )}
-                      {changeLabel && <p class={streams.periodChangePct >= 0 ? "text-success" : "text-error"}>{changeLabel}</p>}
-                      {streams.topStore?.name && (
-                        <p>
-                          Top : {streams.topStore.name}
-                          {streams.topStore.share != null
-                            ? ` (${Math.round(streams.topStore.share * 100)} %)`
-                            : ""}
-                        </p>
-                      )}
+        {data && (
+          <div class="space-y-6 animate-rise">
+            <header class="overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/35 shadow-2xl shadow-black/20">
+              <div class="grid md:grid-cols-[minmax(220px,280px)_1fr]">
+                <figure class="relative aspect-square bg-base-300">
+                  {portrait ? (
+                    <img src={portrait} alt="" class="h-full w-full object-cover" />
+                  ) : (
+                    <div class="flex h-full items-center justify-center">
+                      <UserRound size={48} class="opacity-30" />
                     </div>
                   )}
-                </div>
-                {!streams.error && Array.isArray(streams.topStores) && streams.topStores.length > 0 && (
-                  <ul class="flex flex-wrap gap-2 text-xs text-base-content/60">
-                    {streams.topStores.slice(0, 6).map((s) => (
-                      <li key={s.id ?? s.name} class="border border-base-content/10 px-2 py-1">
-                        {s.name} · {formatStreams(s.total)}
-                      </li>
+                  <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-base-200/80 via-transparent to-transparent md:hidden" />
+                </figure>
+                <div class="flex flex-col justify-end gap-4 p-5 sm:p-7">
+                  <div class="flex flex-wrap gap-1.5">
+                    {(style.genres.slice(0, 3).length
+                      ? style.genres.slice(0, 3)
+                      : style.genreSummary
+                        ? [style.genreSummary]
+                        : []
+                    ).map((g) => (
+                      <span
+                        key={g}
+                        class="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary"
+                      >
+                        {g}
+                      </span>
                     ))}
-                  </ul>
-                )}
-                <p class="text-xs text-base-content/45">
-                  Les revenus restent chez ONCE (puis Spotify for Artists pour le détail). SONOZZ ne reverse pas.
-                </p>
-              </div>
-            )}
-
-            <p class="text-xs text-base-content/45">{stats.streamsNote}</p>
-          </section>
-
-          <section class="space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <h2 class="font-display flex items-center gap-2 text-2xl font-bold">
-                <Bot size={22} /> Agent carrière
-              </h2>
-              <div class="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  class="btn btn-outline btn-sm gap-1"
-                  disabled={careerBusy || busy}
-                  onClick={() => runCareerAdvice(false)}
-                >
-                  {careerBusy ? (
-                    <span class="loading loading-spinner loading-sm" />
-                  ) : (
-                    <Sparkles size={14} />
-                  )}
-                  Conseiller
-                </button>
-                {career && (
-                  <button
-                    type="button"
-                    class="btn btn-ghost btn-sm"
-                    disabled={careerBusy || busy}
-                    onClick={() => runCareerAdvice(true)}
-                  >
-                    Recalculer
-                  </button>
-                )}
-              </div>
-            </div>
-            <p class="text-sm text-base-content/65">
-              Analytics → Unison / promo / prochain single + agenda. Webhook ONCE = maj auto à chaque
-              changement de statut store.
-            </p>
-
-            {dueToday.length > 0 && (
-              <div class="space-y-2 border border-primary/30 bg-primary/5 p-4">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-primary">
-                    <CalendarDays size={12} /> À faire aujourd’hui
+                    {style.language && (
+                      <span class="rounded-full border border-base-content/12 bg-base-content/5 px-2.5 py-0.5 text-[11px] text-base-content/65">
+                        {languageLabel(style.language)}
+                      </span>
+                    )}
+                    {profile.city && (
+                      <span class="rounded-full border border-base-content/12 bg-base-content/5 px-2.5 py-0.5 text-[11px] text-base-content/65">
+                        {profile.city}
+                      </span>
+                    )}
+                    {style.mode === "self" && (
+                      <span class="rounded-full border border-secondary/30 bg-secondary/10 px-2.5 py-0.5 text-[11px] text-secondary">
+                        C’est toi
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <h1 class="font-display text-4xl font-extrabold tracking-tight sm:text-5xl">
+                      {data.name}
+                    </h1>
+                    {profile.aka && (
+                      <p class="mt-1 text-base text-base-content/55">{profile.aka}</p>
+                    )}
+                  </div>
+                  <p class="line-clamp-3 max-w-xl text-sm leading-relaxed text-base-content/70">
+                    {profile.bio || "Artiste créé dans SONOZZ — catalogue, clips et sortie stores."}
                   </p>
-                  {dueToday.some((i) => i.type === "promote") && (
+                  <div class="flex flex-wrap gap-2">
+                    {hasPlayable && (
+                      <button
+                        type="button"
+                        class="btn btn-primary gap-2 rounded-full"
+                        onClick={() =>
+                          playTracks(
+                            artistQueue,
+                            artistQueue.some((t) => t.id === nowPlayingId)
+                              ? nowPlayingId
+                              : null,
+                          )
+                        }
+                      >
+                        {nowPlayingId &&
+                        artistQueue.some((t) => t.id === nowPlayingId) &&
+                        playing ? (
+                          <Pause size={16} fill="currentColor" />
+                        ) : (
+                          <Play size={16} fill="currentColor" />
+                        )}
+                        Écouter
+                      </button>
+                    )}
                     <button
                       type="button"
-                      class="btn btn-primary btn-xs gap-1"
-                      disabled={scheduleBusy || busy}
-                      onClick={runSchedulePromo}
-                      title={
-                        schedulePreview?.blockers?.length
-                          ? schedulePreview.blockers.join(" · ")
-                          : "Publier le clip focus sur TikTok / YouTube / webhook"
-                      }
+                      class={`btn gap-2 rounded-full ${hasPlayable ? "btn-ghost border border-base-content/15" : "btn-primary"}`}
+                      disabled={busy}
+                      onClick={() => createTrack()}
                     >
-                      {scheduleBusy ? (
-                        <span class="loading loading-spinner loading-xs" />
+                      {busy ? (
+                        <span class="loading loading-spinner loading-sm" />
                       ) : (
-                        <Sparkles size={12} />
+                        <Plus size={16} />
                       )}
-                      Publier promo
+                      Nouveau titre
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost rounded-full border border-base-content/15 gap-2"
+                      disabled={busy}
+                      onClick={openStyleEditor}
+                    >
+                      <Pencil size={14} /> Style
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            {nextMove && (
+              <div class="relative overflow-hidden rounded-3xl border border-primary/25 bg-gradient-to-br from-primary/20 via-accent/10 to-secondary/15 p-5 sm:p-6">
+                <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">
+                  {nextMove.kicker}
+                </p>
+                <p class="font-display mt-1 text-2xl font-bold">{nextMove.title}</p>
+                <p class="mt-1 max-w-xl text-sm text-base-content/70">{nextMove.text}</p>
+                <div class="mt-4">
+                  {nextMove.href ? (
+                    <a
+                      class="btn btn-primary btn-sm gap-1 rounded-full"
+                      href={nextMove.href}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {nextMove.cta} <ExternalLink size={12} />
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-sm gap-1 rounded-full"
+                      disabled={busy || scheduleBusy}
+                      onClick={nextMove.onClick}
+                    >
+                      {(busy || scheduleBusy) && (
+                        <span class="loading loading-spinner loading-xs" />
+                      )}
+                      {nextMove.cta}
                     </button>
                   )}
                 </div>
-                {schedulePreview?.blockers?.length > 0 && (
-                  <p class="text-xs text-warning">{schedulePreview.blockers.join(" · ")}</p>
-                )}
-                {schedulePreview?.canRun && (
-                  <p class="text-xs text-success">
-                    Clip MP4 prêt — la promo peut partir maintenant.
-                  </p>
-                )}
-                <ul class="space-y-2">
-                  {dueToday.map((item) => (
-                    <li
-                      key={`due-${item.date}-${item.type}-${item.title}`}
-                      class="flex flex-wrap items-center gap-2 text-sm"
-                    >
-                      <span class="font-medium">{item.title}</span>
-                      {item.detail && (
-                        <span class="text-base-content/55">— {item.detail}</span>
-                      )}
-                      {item.href && (
-                        <a
-                          class="btn btn-primary btn-xs gap-1"
-                          href={item.href}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Ouvrir <ExternalLink size={10} />
-                        </a>
-                      )}
-                      {item.type === "produce" && career?.nextSingle?.theme && (
-                        <button
-                          type="button"
-                          class="btn btn-outline btn-xs gap-1"
-                          disabled={busy}
-                          onClick={() => createTrack(career.nextSingle.theme)}
-                        >
-                          Studio
-                        </button>
-                      )}
-                      {item.type === "promote" && career?.releaseFocus?.id && (
-                        <a
-                          class="btn btn-outline btn-xs"
-                          href={`/?project=${career.releaseFocus.id}&step=7`}
-                        >
-                          Clip
-                        </a>
-                      )}
-                    </li>
-                  ))}
-                </ul>
               </div>
             )}
 
-            {!career ? (
-              <p class="text-sm text-base-content/50">
-                Lance l’agent (ou Rafraîchir les stats) pour analyser le catalogue ONCE.
-              </p>
-            ) : (
-              <div class="space-y-4 border border-base-content/10 bg-base-200/30 p-4">
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class={`badge ${verdictClass(career.verdict)}`}>
-                    {VERDICT_LABEL[career.verdict] || career.verdict}
-                  </span>
-                  {career.source && (
-                    <span class="text-xs text-base-content/45">{career.source}</span>
-                  )}
-                  {career.updatedAt && (
-                    <span class="text-xs text-base-content/40">
-                      {new Date(career.updatedAt).toLocaleString("fr-FR")}
-                    </span>
-                  )}
-                </div>
-                <p class="text-sm text-base-content/80">{career.summary}</p>
+            <div
+              class="flex gap-1 overflow-x-auto rounded-full border border-base-content/10 bg-base-300/50 p-1"
+              role="tablist"
+              aria-label="Sections de la fiche"
+            >
+              {TABS.map((t) => {
+                const Icon = t.icon;
+                const on = tab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    class={`flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-sm transition ${
+                      on
+                        ? "bg-primary font-semibold text-primary-content shadow-md shadow-black/20"
+                        : "text-base-content/55 hover:text-base-content"
+                    }`}
+                    onClick={() => selectTab(t.id)}
+                  >
+                    <Icon size={14} />
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
 
-                {(career.releaseFocus?.isrc ||
-                  career.releaseFocus?.upc ||
-                  career.releaseFocus?.publishingStatus) && (
-                  <p class="text-xs text-base-content/55">
-                    {career.releaseFocus.upc
-                      ? `UPC ${career.releaseFocus.upc}`
-                      : "UPC pending"}
-                    {" · "}
-                    {career.releaseFocus.isrc
-                      ? `ISRC ${career.releaseFocus.isrc}`
-                      : "ISRC pending"}
-                  </p>
-                )}
-
-                {career.nextSingle && (
-                  <div class="space-y-1">
-                    <p class="text-xs uppercase tracking-wider text-base-content/45">
-                      Prochain single
-                    </p>
-                    {career.nextSingle.titleHint && (
-                      <p class="font-display text-lg font-semibold">{career.nextSingle.titleHint}</p>
-                    )}
-                    <p class="text-sm">{career.nextSingle.theme}</p>
-                    {career.nextSingle.angle && (
-                      <p class="text-xs text-base-content/55">{career.nextSingle.angle}</p>
-                    )}
-                    {career.nextSingle.why && (
-                      <p class="text-xs text-base-content/45">{career.nextSingle.why}</p>
-                    )}
+            {tab === "titres" && (
+              <div class="space-y-8">
+                <section class="space-y-4">
+                  <div class="flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <h2 class="font-display text-2xl font-bold">Le catalogue</h2>
+                      <p class="text-sm text-base-content/55">
+                        {releases.length
+                          ? `${albums.length ? `${albums.length} album${albums.length > 1 ? "s" : ""}` : ""}${
+                              albums.length && singles.length ? " · " : ""
+                            }${singles.length ? `${singles.length} single${singles.length > 1 ? "s" : ""}` : ""}`
+                          : "Rien pour l’instant. Le premier titre lance vraiment l’artiste."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-sm gap-1 rounded-full"
+                      disabled={busy}
+                      onClick={() => createTrack()}
+                    >
+                      <Plus size={14} /> Ajouter
+                    </button>
                   </div>
-                )}
 
-                {Array.isArray(career.actions) && career.actions.length > 0 && (
-                  <ol class="space-y-2 text-sm">
-                    {career.actions.map((a) => (
-                      <li key={`${a.priority}-${a.label}`} class="flex flex-wrap items-baseline gap-2">
-                        <span class="text-base-content/40">{a.priority}.</span>
-                        <span class="min-w-0 flex-1">
-                          <span class="font-medium">{a.label}</span>
-                          {a.detail ? (
-                            <span class="text-base-content/55"> — {a.detail}</span>
-                          ) : null}
-                        </span>
-                        {a.href && (
-                          <a
-                            class="btn btn-ghost btn-xs gap-1"
-                            href={a.href}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            ONCE <ExternalLink size={10} />
-                          </a>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
-                )}
+                  {releases.length === 0 ? (
+                    <button
+                      type="button"
+                      class="flex w-full flex-col items-center gap-3 rounded-3xl border border-dashed border-primary/35 bg-primary/5 px-6 py-14 text-center transition hover:border-primary/60 hover:bg-primary/10"
+                      disabled={busy}
+                      onClick={() => createTrack()}
+                    >
+                      <span class="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/20 text-primary">
+                        <AudioLines size={26} />
+                      </span>
+                      <span class="font-display text-xl font-bold">Composer le premier titre</span>
+                      <span class="max-w-sm text-sm text-base-content/55">
+                        Paroles, voix, pochette — tout reste calé sur cet artiste.
+                      </span>
+                    </button>
+                  ) : (
+                    <div class="space-y-8">
+                      {albums.length > 0 && (
+                        <div class="space-y-3">
+                          <h3 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-base-content/45">
+                            <Library size={14} /> Albums
+                          </h3>
+                          <ul class="space-y-3">
+                            {albums.map((album) => {
+                              const open = openAlbumId === album.id;
+                              const firstPlayable = album.tracks.find(
+                                (t) => t.audioUrl || t.audioS3Key,
+                              );
+                              return (
+                                <li
+                                  key={album.id}
+                                  class="overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/40"
+                                >
+                                  <div class="flex flex-wrap items-center gap-3 p-3 sm:p-4">
+                                    <button
+                                      type="button"
+                                      class="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-base-300"
+                                      onClick={() => selectAlbum(album.id)}
+                                    >
+                                      {album.coverUrl ? (
+                                        <img
+                                          src={album.coverUrl}
+                                          alt=""
+                                          class="h-full w-full object-cover"
+                                        />
+                                      ) : (
+                                        <div class="flex h-full items-center justify-center">
+                                          <Library size={22} class="opacity-35" />
+                                        </div>
+                                      )}
+                                    </button>
+                                    <div class="min-w-0 flex-1">
+                                      <p class="font-display text-lg font-bold">{album.title}</p>
+                                      <p class="text-xs text-base-content/55">
+                                        {album.tracks.length} titre
+                                        {album.tracks.length > 1 ? "s" : ""}
+                                        {album.status ? ` · ${album.status}` : ""}
+                                      </p>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2">
+                                      {firstPlayable && (
+                                        <button
+                                          type="button"
+                                          class="btn btn-primary btn-sm gap-1 rounded-full"
+                                          onClick={() =>
+                                            playTracks(
+                                              toPlayTracks(album.tracks, playMeta),
+                                              firstPlayable.id,
+                                            )
+                                          }
+                                        >
+                                          <Play size={12} fill="currentColor" /> Écouter
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        class="btn btn-ghost btn-sm gap-1 rounded-full border border-base-content/15"
+                                        onClick={() => selectAlbum(album.id)}
+                                      >
+                                        <ChevronDown
+                                          size={14}
+                                          class={`transition ${open ? "rotate-180" : ""}`}
+                                        />
+                                        {open ? "Fermer" : "Gérer"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                  {open && (
+                                    <div class="space-y-4 border-t border-base-content/10 p-3 sm:p-4">
+                                      <ul class="space-y-2">
+                                        {album.tracks.map((r, i) => {
+                                          const delivery = r.releaseId
+                                            ? deliveryMap[r.releaseId] ||
+                                              stats.releases?.find((x) => x.id === r.id)
+                                                ?.delivery
+                                            : null;
+                                          const rStreams = r.releaseId
+                                            ? releaseStreamsMap[r.releaseId] ||
+                                              stats.releases?.find((x) => x.id === r.id)?.streams
+                                            : null;
+                                          return (
+                                            <CatalogTrackCard
+                                              key={r.id}
+                                              release={r}
+                                              slug={data.slug}
+                                              delivery={delivery}
+                                              streams={rStreams}
+                                              phase={releasePhase(r, delivery)}
+                                              busy={busy}
+                                              onDelete={deleteRelease}
+                                              index={r.albumIndex || i + 1}
+                                              queue={toPlayTracks(album.tracks, playMeta)}
+                                              playMeta={playMeta}
+                                              nowPlayingId={nowPlayingId}
+                                              playing={playing}
+                                            />
+                                          );
+                                        })}
+                                      </ul>
+                                      <ArtistAlbumSection
+                                        slug={data.slug}
+                                        releases={releases}
+                                        pinnedLeadId={album.lead?.id || album.id}
+                                        embedded
+                                      />
+                                    </div>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      )}
 
-                {Array.isArray(career.schedule) && career.schedule.length > 0 && (
-                  <div class="space-y-2">
-                    <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-base-content/45">
-                      <CalendarDays size={12} /> Agenda
+                      {singles.length > 0 && (
+                        <div class="space-y-3">
+                          <h3 class="text-sm font-semibold uppercase tracking-wider text-base-content/45">
+                            Singles
+                          </h3>
+                          <ul class="grid gap-3 sm:grid-cols-2">
+                            {singles.map((r) => {
+                              const delivery = r.releaseId
+                                ? deliveryMap[r.releaseId] ||
+                                  stats.releases?.find((x) => x.id === r.id)?.delivery
+                                : null;
+                              const rStreams = r.releaseId
+                                ? releaseStreamsMap[r.releaseId] ||
+                                  stats.releases?.find((x) => x.id === r.id)?.streams
+                                : null;
+                              return (
+                                <CatalogTrackCard
+                                  key={r.id}
+                                  release={r}
+                                  slug={data.slug}
+                                  delivery={delivery}
+                                  streams={rStreams}
+                                  phase={releasePhase(r, delivery)}
+                                  busy={busy}
+                                  onDelete={deleteRelease}
+                                  queue={toPlayTracks(singles, playMeta)}
+                                  playMeta={playMeta}
+                                  nowPlayingId={nowPlayingId}
+                                  playing={playing}
+                                />
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+
+                <ArtistAlbumSection slug={data.slug} releases={releases} createOnly />
+              </div>
+            )}
+
+            {tab === "coach" && (
+              <section class="space-y-4">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 class="font-display text-2xl font-bold">Coach carrière</h2>
+                    <p class="text-sm text-base-content/55">
+                      Quoi faire ensuite : un titre, un clip, ou laisser les streams travailler.
                     </p>
-                    <ul class="space-y-1.5">
-                      {career.schedule.map((item) => (
-                        <li
-                          key={`${item.date}-${item.type}-${item.title}`}
-                          class={`flex flex-wrap gap-2 border-l-2 py-1 pl-3 text-sm ${
-                            item.status === "done"
-                              ? "border-success/50 text-base-content/45 line-through"
-                              : item.status === "active"
-                                ? "border-primary text-base-content"
-                                : "border-base-content/15 text-base-content/65"
-                          }`}
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-outline btn-sm gap-1 rounded-full"
+                    disabled={careerBusy || busy}
+                    onClick={() => runCareerAdvice(Boolean(career))}
+                  >
+                    {careerBusy ? (
+                      <span class="loading loading-spinner loading-sm" />
+                    ) : (
+                      <Sparkles size={14} />
+                    )}
+                    {career ? "Recalculer" : "Conseiller"}
+                  </button>
+                </div>
+
+                {dueToday.length > 0 && (
+                  <div class="space-y-2 rounded-2xl border border-primary/30 bg-primary/10 p-4">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <p class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-primary">
+                        <CalendarDays size={12} /> Aujourd’hui
+                      </p>
+                      {dueToday.some((i) => i.type === "promote") && (
+                        <button
+                          type="button"
+                          class="btn btn-primary btn-xs gap-1 rounded-full"
+                          disabled={scheduleBusy || busy}
+                          onClick={runSchedulePromo}
                         >
-                          <span class="w-24 shrink-0 text-xs tabular-nums text-base-content/45 no-underline">
-                            {item.date}
-                          </span>
-                          <span class="min-w-0 flex-1">
-                            <span class="font-medium">{item.title}</span>
-                            {item.status === "done" && (
-                              <span class="ml-1 text-xs text-success no-underline">fait</span>
-                            )}
-                            {item.detail ? (
-                              <span class="text-base-content/50"> — {item.detail}</span>
-                            ) : null}
-                          </span>
-                          {item.href && item.status !== "done" && (
-                            <a
-                              class="btn btn-ghost btn-xs gap-1"
-                              href={item.href}
-                              target="_blank"
-                              rel="noreferrer"
+                          {scheduleBusy ? (
+                            <span class="loading loading-spinner loading-xs" />
+                          ) : (
+                            <Sparkles size={12} />
+                          )}
+                          Publier promo
+                        </button>
+                      )}
+                    </div>
+                    {schedulePreview?.blockers?.length > 0 && (
+                      <p class="text-xs text-warning">{schedulePreview.blockers.join(" · ")}</p>
+                    )}
+                    <ul class="space-y-2">
+                      {dueToday.map((item) => (
+                        <li
+                          key={`due-${item.date}-${item.type}-${item.title}`}
+                          class="flex flex-wrap items-center gap-2 text-sm"
+                        >
+                          <span class="font-medium">{item.title}</span>
+                          {item.detail && (
+                            <span class="text-base-content/55">— {item.detail}</span>
+                          )}
+                          {item.type === "produce" && career?.nextSingle?.theme && (
+                            <button
+                              type="button"
+                              class="btn btn-outline btn-xs rounded-full"
+                              disabled={busy}
+                              onClick={() => createTrack(career.nextSingle.theme)}
                             >
-                              Ouvrir <ExternalLink size={10} />
+                              Studio
+                            </button>
+                          )}
+                          {item.type === "promote" && career?.releaseFocus?.id && (
+                            <a
+                              class="btn btn-outline btn-xs rounded-full"
+                              href={`/?project=${career.releaseFocus.id}&step=7`}
+                            >
+                              Clip
                             </a>
                           )}
                         </li>
@@ -916,229 +1136,364 @@ export default function ArtistHub({ slug }) {
                   </div>
                 )}
 
-                {recentRuns.length > 0 && (
-                  <div class="space-y-1">
-                    <p class="text-xs uppercase tracking-wider text-base-content/45">
-                      Dernières publications agenda
-                    </p>
-                    <ul class="space-y-1 text-xs text-base-content/55">
-                      {recentRuns.map((run) => (
-                        <li key={`${run.key}-${run.at}`}>
-                          {run.at ? new Date(run.at).toLocaleString("fr-FR") : "—"}
-                          {" · "}
-                          {run.title || run.type}
-                          {" · "}
-                          <span class={run.ok ? "text-success" : "text-warning"}>
-                            {run.status || (run.ok ? "ok" : "ko")}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {career.cadence?.note && (
-                  <p class="text-xs text-base-content/45">{career.cadence.note}</p>
-                )}
-                {career.releaseFocus?.title && (
-                  <p class="text-xs text-base-content/50">
-                    Focus : {career.releaseFocus.title}
-                    {career.releaseFocus.reason ? ` (${career.releaseFocus.reason})` : ""}
-                  </p>
-                )}
-
-                <div class="flex flex-wrap gap-2">
-                  {(career.verdict === "publish" ||
-                    career.actions?.some((a) => a.type === "publish_unison" && a.href)) &&
-                    (career.releaseFocus?.dashboardUrl ||
-                      career.actions?.find((a) => a.href)?.href) && (
-                      <a
-                        class="btn btn-primary btn-sm gap-2"
-                        href={
-                          career.releaseFocus?.dashboardUrl ||
-                          career.actions.find((a) => a.href)?.href
-                        }
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Soumettre Unison sur ONCE <ExternalLink size={12} />
-                      </a>
-                    )}
-                  {career.verdict === "produce" && career.nextSingle?.theme && (
-                    <button
-                      type="button"
-                      class="btn btn-primary btn-sm gap-2"
-                      disabled={busy}
-                      onClick={() => createTrack(career.nextSingle.theme)}
-                    >
-                      <AudioLines size={14} /> Lancer ce single dans le studio
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </section>
-
-          <section class="space-y-4">
-            <h2 class="font-display flex items-center gap-2 text-2xl font-bold">
-              <Plus size={22} /> Nouveau morceau
-            </h2>
-            <p class="text-sm text-base-content/65">
-              Garde le même artiste et lance un nouveau single (paroles → audio → jaquette → ONCE → short).
-              Le thème se choisit à l’étape paroles dans le studio.
-            </p>
-            <button
-              type="button"
-              class="btn btn-primary gap-2"
-              disabled={busy}
-              onClick={() => createTrack()}
-            >
-              {busy ? <span class="loading loading-spinner loading-sm" /> : <AudioLines size={16} />}
-              Créer morceau
-            </button>
-          </section>
-
-          <ArtistAlbumSection slug={data.slug} releases={releases} />
-
-          <section class="space-y-4">
-            <h2 class="font-display flex items-center gap-2 text-2xl font-bold">
-              <Music2 size={22} /> Catalogue
-            </h2>
-            {releases.length === 0 ? (
-              <p class="text-sm text-base-content/55">Aucun morceau encore — crée le premier ci-dessus.</p>
-            ) : (
-              <ul class="space-y-3">
-                {releases.map((r) => {
-                  const delivery = r.releaseId
-                    ? deliveryMap[r.releaseId] || stats.releases?.find((x) => x.id === r.id)?.delivery
-                    : null;
-                  const rStreams = r.releaseId
-                    ? releaseStreamsMap[r.releaseId] ||
-                      stats.releases?.find((x) => x.id === r.id)?.streams
-                    : null;
-                  return (
-                  <li
-                    key={r.id}
-                    class="flex flex-wrap items-center gap-4 border border-base-content/10 bg-base-200/30 p-3"
+                {!career ? (
+                  <button
+                    type="button"
+                    class="flex w-full flex-col items-center gap-2 rounded-3xl border border-dashed border-base-content/20 px-6 py-12 text-center"
+                    disabled={careerBusy || busy}
+                    onClick={() => runCareerAdvice(false)}
                   >
-                    {r.coverUrl ? (
-                      <img src={r.coverUrl} alt="" class="h-14 w-14 object-cover" />
-                    ) : (
-                      <div class="flex h-14 w-14 items-center justify-center bg-base-300">
-                        <Music2 size={18} class="opacity-40" />
+                    <Sparkles size={22} class="text-primary" />
+                    <span class="font-display text-lg font-bold">Demander un conseil</span>
+                    <span class="max-w-sm text-sm text-base-content/55">
+                      L’agent lit le catalogue et propose le prochain geste.
+                    </span>
+                  </button>
+                ) : (
+                  <div class="space-y-4 rounded-3xl border border-base-content/10 bg-base-300/40 p-5">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class={`badge ${verdictClass(career.verdict)}`}>
+                        {VERDICT_LABEL[career.verdict] || career.verdict}
+                      </span>
+                      {career.updatedAt && (
+                        <span class="text-xs text-base-content/40">
+                          {new Date(career.updatedAt).toLocaleString("fr-FR")}
+                        </span>
+                      )}
+                    </div>
+                    <p class="text-sm leading-relaxed text-base-content/80">{career.summary}</p>
+
+                    {career.nextSingle && (
+                      <div class="rounded-2xl bg-base-200/60 p-4">
+                        <p class="text-[11px] uppercase tracking-wider text-base-content/45">
+                          Prochain single
+                        </p>
+                        {career.nextSingle.titleHint && (
+                          <p class="font-display text-lg font-semibold">
+                            {career.nextSingle.titleHint}
+                          </p>
+                        )}
+                        <p class="text-sm">{career.nextSingle.theme}</p>
+                        {career.nextSingle.why && (
+                          <p class="mt-1 text-xs text-base-content/45">{career.nextSingle.why}</p>
+                        )}
                       </div>
                     )}
-                    <div class="min-w-0 flex-1">
-                      <p class="font-medium">{r.trackTitle || r.title}</p>
-                      <p class="text-xs text-base-content/50">
-                        {r.onceStatus || r.status}
-                        {r.releaseId ? ` · ONCE ${r.releaseId}` : ""}
-                        {r.hasAudio ? " · audio" : ""}
+
+                    {Array.isArray(career.actions) && career.actions.length > 0 && (
+                      <ol class="space-y-2 text-sm">
+                        {career.actions.map((a) => (
+                          <li
+                            key={`${a.priority}-${a.label}`}
+                            class="flex flex-wrap items-baseline gap-2"
+                          >
+                            <span class="text-primary/70">{a.priority}.</span>
+                            <span class="min-w-0 flex-1">
+                              <span class="font-medium">{a.label}</span>
+                              {a.detail ? (
+                                <span class="text-base-content/55"> — {a.detail}</span>
+                              ) : null}
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+
+                    {Array.isArray(career.schedule) && career.schedule.length > 0 && (
+                      <div class="space-y-2">
+                        <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-base-content/45">
+                          <CalendarDays size={12} /> Agenda
+                        </p>
+                        <ul class="space-y-1.5">
+                          {career.schedule.map((item) => (
+                            <li
+                              key={`${item.date}-${item.type}-${item.title}`}
+                              class={`flex flex-wrap gap-2 border-l-2 py-1 pl-3 text-sm ${
+                                item.status === "done"
+                                  ? "border-success/50 text-base-content/45 line-through"
+                                  : item.status === "active"
+                                    ? "border-primary text-base-content"
+                                    : "border-base-content/15 text-base-content/65"
+                              }`}
+                            >
+                              <span class="w-24 shrink-0 text-xs tabular-nums text-base-content/45 no-underline">
+                                {item.date}
+                              </span>
+                              <span class="min-w-0 flex-1">
+                                <span class="font-medium">{item.title}</span>
+                                {item.detail ? (
+                                  <span class="text-base-content/50"> — {item.detail}</span>
+                                ) : null}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {recentRuns.length > 0 && (
+                      <p class="text-xs text-base-content/45">
+                        Dernière promo :{" "}
+                        {recentRuns[0].title || recentRuns[0].type} ·{" "}
+                        {recentRuns[0].ok ? "ok" : recentRuns[0].status || "ko"}
                       </p>
-                      {delivery?.identifiers && (
-                        <p class="mt-1 text-xs text-base-content/45">
-                          UPC {delivery.identifiers.upcPending ? "pending" : delivery.identifiers.upc || "—"}
-                          {" · "}
-                          ISRC{" "}
-                          {delivery.identifiers.isrcPending
-                            ? "pending"
-                            : delivery.identifiers.isrc || "—"}
-                          {delivery.publishing?.label
-                            ? ` · ${delivery.publishing.label}`
-                            : ""}
+                    )}
+
+                    <div class="flex flex-wrap gap-2">
+                      {(career.verdict === "publish" ||
+                        career.actions?.some((a) => a.type === "publish_unison" && a.href)) &&
+                        unisonHref && (
+                          <a
+                            class="btn btn-primary btn-sm gap-2 rounded-full"
+                            href={unisonHref}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Ouvrir ONCE <ExternalLink size={12} />
+                          </a>
+                        )}
+                      {career.verdict === "produce" && career.nextSingle?.theme && (
+                        <button
+                          type="button"
+                          class="btn btn-primary btn-sm gap-2 rounded-full"
+                          disabled={busy}
+                          onClick={() => createTrack(career.nextSingle.theme)}
+                        >
+                          <AudioLines size={14} /> Lancer ce single
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {tab === "style" && (
+              <section class="space-y-4">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 class="font-display text-2xl font-bold">Identité sonore</h2>
+                    <p class="text-sm text-base-content/55">
+                      Ce qui guide paroles, voix et pochettes des prochains titres.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-outline btn-sm gap-1 rounded-full"
+                    disabled={busy}
+                    onClick={openStyleEditor}
+                  >
+                    <Pencil size={14} /> Modifier
+                  </button>
+                </div>
+
+                {!style.genreSummary && !style.refs.length ? (
+                  <button
+                    type="button"
+                    class="w-full rounded-3xl border border-dashed border-base-content/20 px-6 py-12 text-center"
+                    disabled={busy}
+                    onClick={openStyleEditor}
+                  >
+                    <Palette size={22} class="mx-auto mb-2 text-primary" />
+                    <p class="font-display text-lg font-bold">Définir le style</p>
+                    <p class="mx-auto mt-1 max-w-sm text-sm text-base-content/55">
+                      Choisis un artiste ou un titre de référence dans le studio.
+                    </p>
+                  </button>
+                ) : (
+                  <div class="space-y-5 rounded-3xl border border-base-content/10 bg-base-300/40 p-5">
+                    <div class="flex flex-wrap gap-2">
+                      {(style.genres.length
+                        ? style.genres
+                        : style.genreSummary
+                          ? [style.genreSummary]
+                          : []
+                      ).map((g) => (
+                        <span
+                          key={g}
+                          class="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary"
+                        >
+                          <Music2 size={12} />
+                          {g}
+                        </span>
+                      ))}
+                      {style.language && (
+                        <span class="rounded-full border border-base-content/12 px-3 py-1 text-xs text-base-content/70">
+                          {languageLabel(style.language)}
+                        </span>
+                      )}
+                      {style.mood && (
+                        <span class="rounded-full border border-base-content/12 px-3 py-1 text-xs text-base-content/70">
+                          {style.mood}
+                        </span>
+                      )}
+                    </div>
+
+                    {style.refs.length > 0 && (
+                      <div>
+                        <p class="text-[11px] uppercase tracking-wider text-base-content/45">
+                          {style.mode === "self" ? "Artistes aimés" : "Modèles"}
                         </p>
-                      )}
-                      {delivery && !delivery.error && (
-                        <p class={`mt-1 text-xs ${storeBadgeClass(delivery.spotifyStatus || delivery.aggregateStatus)}`}>
-                          {delivery.aggregateStatus ? `${delivery.aggregateStatus}` : ""}
-                          {delivery.spotifyStatus ? ` · Spotify: ${delivery.spotifyStatus}` : ""}
-                          {rStreams?.totalStreams != null && !rStreams.error
-                            ? ` · ${formatStreams(rStreams.totalStreams)} streams`
-                            : ""}
+                        <p class="mt-1 text-lg text-primary">{style.refs.join(" · ")}</p>
+                      </div>
+                    )}
+
+                    {style.topTracks.length > 0 && (
+                      <div>
+                        <p class="text-[11px] uppercase tracking-wider text-base-content/45">
+                          Titres phares
                         </p>
-                      )}
-                      {delivery?.error && (
-                        <p class="mt-1 text-xs text-warning">{delivery.error}</p>
-                      )}
-                      {delivery?.stores?.length > 0 && (
-                        <ul class="mt-1 flex flex-wrap gap-1.5 text-[11px] text-base-content/50">
-                          {delivery.stores.slice(0, 5).map((s) => (
-                            <li key={`${s.name}-${s.status}`}>
-                              {s.url ? (
-                                <a href={s.url} target="_blank" rel="noreferrer" class="underline-offset-2 hover:underline">
-                                  {s.name}: {s.status}
-                                </a>
-                              ) : (
-                                <span>
-                                  {s.name}: {s.status}
-                                </span>
-                              )}
+                        <p class="mt-1 text-sm text-base-content/80">
+                          {style.topTracks.slice(0, 6).join(" · ")}
+                        </p>
+                      </div>
+                    )}
+
+                    {(style.lock.timbre ||
+                      style.lock.rhythmFeel ||
+                      style.lock.bpm ||
+                      style.voice) && (
+                      <div class="grid gap-2 sm:grid-cols-2">
+                        {style.lock.bpm ? (
+                          <p class="rounded-2xl bg-base-200/70 px-3 py-2 text-sm">
+                            <span class="text-base-content/45">Tempo</span>
+                            <br />~{style.lock.bpm} BPM
+                          </p>
+                        ) : null}
+                        {(style.lock.rhythmFeel || style.lock.tempoFeel) && (
+                          <p class="rounded-2xl bg-base-200/70 px-3 py-2 text-sm">
+                            <span class="text-base-content/45">Groove</span>
+                            <br />
+                            {style.lock.rhythmFeel || style.lock.tempoFeel}
+                          </p>
+                        )}
+                        {style.voice && (
+                          <p class="rounded-2xl bg-base-200/70 px-3 py-2 text-sm">
+                            <span class="text-base-content/45">Voix</span>
+                            <br />
+                            {[style.voice, style.lock.vocalRegister].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
+                        {style.lock.timbre && (
+                          <p class="rounded-2xl bg-base-200/70 px-3 py-2 text-sm">
+                            <span class="text-base-content/45">Timbre</span>
+                            <br />
+                            {style.lock.timbre}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {tab === "chiffres" && (
+              <section class="space-y-4">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 class="font-display text-2xl font-bold">Les chiffres</h2>
+                    <p class="text-sm text-base-content/55">
+                      Catalogue SONOZZ et streams ONCE — les revenus restent chez le distributeur.
+                    </p>
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      class="btn btn-outline btn-sm gap-1 rounded-full"
+                      disabled={busy}
+                      onClick={refreshStats}
+                    >
+                      <RefreshCw size={14} /> Actualiser
+                    </button>
+                    <a
+                      class="btn btn-ghost btn-sm gap-1 rounded-full"
+                      href={links.once}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      ONCE <ExternalLink size={12} />
+                    </a>
+                    <a
+                      class="btn btn-ghost btn-sm gap-1 rounded-full"
+                      href={links.spotifyForArtists}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Spotify <ExternalLink size={12} />
+                    </a>
+                  </div>
+                </div>
+
+                <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {[
+                    ["Titres", stats.tracks ?? releases.length],
+                    ["Avec audio", stats.withAudio ?? 0],
+                    ["Chez ONCE", stats.submitted ?? 0],
+                    ["En store", stats.liveOnSpotify ?? "—"],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      class="rounded-2xl border border-base-content/10 bg-base-300/40 px-4 py-4"
+                    >
+                      <p class="text-[11px] uppercase tracking-wider text-base-content/45">
+                        {label}
+                      </p>
+                      <p class="font-display text-3xl font-bold">{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {(streams.totalStreams != null || streams.error) && (
+                  <div class="space-y-3 rounded-3xl border border-base-content/10 bg-base-300/40 p-5">
+                    <p class="text-[11px] uppercase tracking-wider text-base-content/45">
+                      Écoutes · 30 jours
+                    </p>
+                    {streams.error ? (
+                      <p class="text-sm text-warning">{streams.error}</p>
+                    ) : (
+                      <p class="font-display text-4xl font-bold">
+                        {formatStreams(streams.totalStreams)}
+                      </p>
+                    )}
+                    {!streams.error && (
+                      <div class="flex flex-wrap gap-3 text-sm text-base-content/60">
+                        {streams.avgDailyStreams != null && (
+                          <span>~{formatStreams(Math.round(streams.avgDailyStreams))} / jour</span>
+                        )}
+                        {changeLabel && (
+                          <span
+                            class={streams.periodChangePct >= 0 ? "text-success" : "text-error"}
+                          >
+                            {changeLabel}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {!streams.error &&
+                      Array.isArray(streams.topStores) &&
+                      streams.topStores.length > 0 && (
+                        <ul class="flex flex-wrap gap-2 text-xs">
+                          {streams.topStores.slice(0, 6).map((s) => (
+                            <li
+                              key={s.id ?? s.name}
+                              class="rounded-full border border-base-content/10 px-2.5 py-1 text-base-content/60"
+                            >
+                              {s.name} · {formatStreams(s.total)}
                             </li>
                           ))}
                         </ul>
                       )}
-                    </div>
-                    <div class="flex flex-wrap gap-2">
-                      {delivery?.publishing?.canSubmitUnison && delivery?.dashboardUrl && (
-                        <a
-                          class="btn btn-primary btn-sm gap-1"
-                          href={delivery.dashboardUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Unison <ExternalLink size={12} />
-                        </a>
-                      )}
-                      {delivery?.spotifyUrl && (
-                        <a
-                          class="btn btn-ghost btn-sm gap-1"
-                          href={delivery.spotifyUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Spotify <ExternalLink size={12} />
-                        </a>
-                      )}
-                      {delivery?.dashboardUrl && !delivery?.publishing?.canSubmitUnison && (
-                        <a
-                          class="btn btn-ghost btn-sm gap-1"
-                          href={delivery.dashboardUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          ONCE <ExternalLink size={12} />
-                        </a>
-                      )}
-                      <a class="btn btn-ghost btn-sm" href={`/?project=${r.id}`}>
-                        Ouvrir
-                      </a>
-                      {r.audioUrl && (
-                        <a
-                          class="btn btn-primary btn-sm gap-1"
-                          href={`/play?artist=${encodeURIComponent(data.slug)}&track=${encodeURIComponent(r.id)}&play=1`}
-                        >
-                          <Headphones size={12} /> Lire
-                        </a>
-                      )}
-                      <button
-                        type="button"
-                        class="btn btn-ghost btn-sm gap-1 text-error"
-                        disabled={busy}
-                        title="Supprimer ce morceau"
-                        onClick={() => deleteRelease(r)}
-                      >
-                        <Trash2 size={12} /> Supprimer
-                      </button>
-                    </div>
-                  </li>
-                  );
-                })}
-              </ul>
+                  </div>
+                )}
+                {stats.streamsNote && (
+                  <p class="text-xs text-base-content/45">{stats.streamsNote}</p>
+                )}
+              </section>
             )}
-          </section>
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+      </div>
     </AppShell>
   );
 }

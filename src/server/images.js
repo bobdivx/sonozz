@@ -21,20 +21,19 @@ export async function generateVisual({
   const errors = [];
 
   let refUrl = referenceImageUrl;
-  if (kind === "cover") {
-    if (!isUsableRasterImage(refUrl)) {
+  const usesRef = Boolean(refUrl) && (kind === "cover" || kind === "portrait");
+  if (kind === "cover" && !isUsableRasterImage(refUrl)) {
+    throw new Error(
+      "Jaquette impossible sans portrait photo. Régénère l’étape Artiste (Gemini Image ou Replicate).",
+    );
+  }
+  if (usesRef && isEphemeralImageUrl(refUrl)) {
+    try {
+      refUrl = await materializeImageForStorage(refUrl);
+    } catch {
       throw new Error(
-        "Jaquette impossible sans portrait photo. Régénère l’étape Artiste (Replicate Flux).",
+        "Portrait Replicate expiré — régénère l’étape Artiste, puis la jaquette.",
       );
-    }
-    if (isEphemeralImageUrl(refUrl)) {
-      try {
-        refUrl = await materializeImageForStorage(refUrl);
-      } catch {
-        throw new Error(
-          "Portrait Replicate expiré — régénère l’étape Artiste, puis la jaquette.",
-        );
-      }
     }
   }
 
@@ -63,9 +62,12 @@ export async function generateVisual({
       const url = await generateImageWithReplicate(replicateToken, {
         prompt,
         kind,
-        referenceImageUrl: kind === "cover" ? refUrl : undefined,
+        referenceImageUrl: usesRef ? refUrl : undefined,
       });
-      return await finish(url, kind === "cover" && refUrl ? "replicate-kontext" : "replicate-flux");
+      return await finish(
+        url,
+        usesRef ? "replicate-kontext" : "replicate-flux",
+      );
     } catch (e) {
       errors.push(`Replicate: ${e.message}`);
     }
@@ -75,7 +77,7 @@ export async function generateVisual({
     try {
       const raw = await geminiImage(geminiKey, prompt, {
         kind,
-        referenceImageUrl: kind === "cover" ? refUrl : undefined,
+        referenceImageUrl: usesRef ? refUrl : undefined,
       });
       const image = normalizeGeminiImage(raw);
       if (image.imageUrl && !image.fallback && isUsableRasterImage(image.imageUrl)) {
@@ -94,23 +96,25 @@ export async function generateVisual({
       const url = await generateImageWithReplicate(replicateToken, {
         prompt,
         kind,
-        referenceImageUrl: kind === "cover" ? refUrl : undefined,
+        referenceImageUrl: usesRef ? refUrl : undefined,
       });
-      return await finish(url, "replicate-flux");
+      return await finish(url, usesRef ? "replicate-kontext" : "replicate-flux");
     } catch (e) {
       errors.push(`Replicate: ${e.message}`);
     }
   }
 
-  if (!replicateToken) {
-    errors.push("Token Replicate manquant — requis pour les portraits/jaquettes photo");
+  if (!geminiKey && !replicateToken) {
+    errors.push("Ajoute une clé Gemini (Image) ou un token Replicate dans Paramètres.");
   }
 
   throw new Error(
     [
       kind === "cover" ? "Jaquette photo impossible." : "Portrait photo impossible.",
       ...errors.slice(0, 3),
-      "Vérifie le billing Replicate (https://replicate.com/account/billing) et/ou Gemini Image.",
+      geminiKey
+        ? "Replicate n’est pas obligatoire : active Gemini Image (pay-as-you-go) sur le projet de ta clé."
+        : "Ajoute Gemini Image, ou un crédit Replicate si tu préfères Flux.",
     ].join(" "),
   );
 }

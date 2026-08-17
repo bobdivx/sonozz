@@ -9,10 +9,12 @@ export function isEphemeralAudioUrl(url = "") {
   if (!url || typeof url !== "string") return false;
   if (!/^https?:\/\//i.test(url)) return false;
   if (/replicate\.delivery|pb\.replicate\.com|fal\.media|cdn\.replicate/i.test(url)) return true;
-  // SongGeneration Studio local (Pinokio) — fichiers volatils tant que non persistés S3
   try {
     const u = new URL(url);
+    // SongGeneration Studio local (Pinokio)
     if (/\/api\/audio\//i.test(u.pathname)) return true;
+    // ACE-Step (et tout /audio/… qui n'est pas notre bucket)
+    if (/\/audio\//i.test(u.pathname) && !tryParseS3ObjectKey(url)) return true;
   } catch {
     /* ignore */
   }

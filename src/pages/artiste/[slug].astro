@@ -7,6 +7,6 @@ export const prerender = false;
 const { slug } = Astro.params;
 ---
 
-<Layout title={`SONOZZ — ${slug}`} description={`Fiche artiste ${slug} : catalogue, stats, nouveaux morceaux.`}>
+<Layout title={`SONOZZ — ${slug}`} description={`Fiche artiste ${slug} : titres, style, coach et stats.`}>
   <ArtistHub client:load slug={slug} />
 </Layout>

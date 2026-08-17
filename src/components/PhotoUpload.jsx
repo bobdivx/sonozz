@@ -8,36 +8,44 @@ import { filesToJpegDataUrls } from "../lib/photoUpload.js";
  *   photos?: string[],
  *   max?: number,
  *   disabled?: boolean,
- *   onChange?: (photos: string[]) => void,
+ *   onPhotosChange?: (photos: string[]) => void,
  * }} props
  */
-export default function PhotoUpload({ photos = [], max = 4, disabled = false, onChange }) {
+export default function PhotoUpload({
+  photos = [],
+  max = 4,
+  disabled = false,
+  onPhotosChange,
+}) {
   const inputRef = useRef(null);
+  const pickingRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   async function onFiles(fileList) {
-    if (!fileList?.length || disabled) return;
+    if (!fileList?.length || disabled || pickingRef.current) return;
     const room = Math.max(0, max - photos.length);
     if (!room) {
       setError(`Maximum ${max} photos.`);
       return;
     }
+    pickingRef.current = true;
     setBusy(true);
     setError("");
     try {
       const next = await filesToJpegDataUrls(Array.from(fileList).slice(0, room));
-      onChange?.([...photos, ...next].slice(0, max));
+      onPhotosChange?.([...photos, ...next].slice(0, max));
     } catch (e) {
       setError(e.message || "Import photo impossible");
     } finally {
+      pickingRef.current = false;
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
     }
   }
 
   function removeAt(index) {
-    onChange?.(photos.filter((_, i) => i !== index));
+    onPhotosChange?.(photos.filter((_, i) => i !== index));
   }
 
   return (
@@ -52,7 +60,7 @@ export default function PhotoUpload({ photos = [], max = 4, disabled = false, on
 
       <div class="flex flex-wrap gap-2">
         {photos.map((src, i) => (
-          <div key={`${i}-${src.slice(0, 24)}`} class="relative">
+          <div key={`photo-${i}-${src.length}-${src.slice(-16)}`} class="relative">
             <img
               src={src}
               alt={`Photo ${i + 1}`}
@@ -97,10 +105,11 @@ export default function PhotoUpload({ photos = [], max = 4, disabled = false, on
       <input
         ref={inputRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp"
+        accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
         multiple
         class="hidden"
         disabled={disabled || busy}
+        onInput={(e) => onFiles(e.currentTarget.files)}
         onChange={(e) => onFiles(e.currentTarget.files)}
       />
 

@@ -1,6 +1,7 @@
 /**
- * Runner d’arrière-plan : reprend les polls Veo/Seedance/Wan2GP après navigation.
- * Ne stocke PAS les bytes vidéo dans localStorage (trop gros) — mémoire session + IDB.
+ * Runner d’arrière-plan : reprend les polls Veo/Seedance/Wan2GP / album / morceau
+ * après navigation. Ne stocke PAS les bytes vidéo dans localStorage (trop gros)
+ * — mémoire session + IDB.
  */
 
 import { api } from "./apiClient.js";
@@ -24,11 +25,16 @@ import {
   createClipId,
   upsertProjectClip,
   normalizeProjectClips,
+  stripClipsForDb,
 } from "./clipsModel.js";
 import { assemblePromoShort, PROMO_SHORT_SECONDS } from "./assemblePromoShort.js";
 import { detectBeatsFromUrl, pickCutPoints } from "./beatDetect.js";
 import { resolveVideoBlobUrl, resolveVideoBlobUrls } from "./videoResolve.js";
 import { extractTrackExcerpt } from "./audioExcerpt.js";
+import { persistAudioRemote } from "./audioResolve.js";
+import { emptyProject } from "./studio.js";
+import { runAlbumJob } from "./runAlbumJob.js";
+import { appendVersion, normalizeProjectVersions } from "./versionsModel.js";
 
 /** @type {Map<string, Promise<void>>} */
 const inflight = new Map();
@@ -41,6 +47,10 @@ const SEEDANCE_MAX_POLLS = 90;
 const WAN2GP_MAX_POLLS = 1350; // ~3 h @ 8s — gen locale GPU (chargement modèle + 2 plans)
 
 const HTTP_BOUND_TYPES = new Set(["pipeline", "step", "publish"]);
+/** Aborts album in-flight (même onglet). */
+const albumAborts = new Map();
+/** Aborts morceau unique in-flight. */
+const trackAborts = new Map();
 
 function slimContext(ctx = {}) {
   return {
@@ -570,6 +580,339 @@ export function interruptPipelineJob(jobId, message) {
   );
 }
 
+export function albumJobId(projectId) {
+  return `album-${projectId || "unknown"}`;
+}
+
+/**
+ * Lance (ou reprend) la génération album en arrière-plan.
+ * Survivt à la navigation MPA via localStorage + Turso.
+ */
+export function startAlbumJob({
+  projectId,
+  totalCount = 8,
+  resume = false,
+  href,
+  label,
+} = {}) {
+  if (!projectId) throw new Error("projectId manquant pour l’album");
+  const id = albumJobId(projectId);
+  upsertJob({
+    id,
+    type: "album",
+    status: "running",
+    phase: "running",
+    label: label || `Album · ${totalCount} titres`,
+    message: resume ? "Reprise album…" : "Démarrage album…",
+    progress: resume ? 8 : 4,
+    projectId,
+    totalCount,
+    resume: Boolean(resume),
+    href: href || `/?project=${projectId}&step=4`,
+  });
+  ensureRunning(id);
+  return id;
+}
+
+export function cancelAlbumJob(projectId) {
+  if (!projectId) return;
+  const id = albumJobId(projectId);
+  const abort = albumAborts.get(id);
+  if (abort) abort.aborted = true;
+}
+
+async function runAlbumBackgroundJob(job) {
+  const id = job.id;
+  const projectId = job.projectId;
+  if (!projectId) throw new Error("Album sans projectId");
+
+  const abortState = { aborted: false };
+  albumAborts.set(id, abortState);
+
+  const { project: saved } = await api.getProject(projectId);
+  if (!saved?.id) throw new Error("Projet album introuvable");
+  if (abortState.aborted) return;
+
+  const project = { ...emptyProject(), ...(saved.project || {}) };
+  const seed = saved.seed || {};
+  const workingRef = { current: project };
+  const resume =
+    Boolean(job.resume) ||
+    (project.album?.status === "running" && (project.album.tracks || []).length > 0);
+
+  patchJob(id, {
+    message: resume ? "Reprise album…" : "Album en arrière-plan…",
+  });
+
+  try {
+    const result = await runAlbumJob({
+      project,
+      projectId,
+      seed,
+      totalCount: job.totalCount || project.album?.targetCount || 8,
+      resume,
+      abortState,
+      persist: async (next, event) => {
+        workingRef.current = next;
+        await api.saveProject({
+          id: projectId,
+          project: next,
+          seed,
+          event,
+        });
+      },
+      syncWorking: (next) => {
+        workingRef.current = next;
+      },
+      getWorking: () => workingRef.current,
+      jobId: id,
+      onProgress: ({ percent, message, label }) => {
+        patchJob(id, {
+          progress: percent,
+          message,
+          ...(label ? { label } : {}),
+        });
+      },
+    });
+    patchJob(id, {
+      status: result?.ok ? "done" : result?.providerDown ? "error" : "done",
+      phase: result?.ok ? "done" : "error",
+      progress: 100,
+      message: result?.message || "Album terminé",
+    });
+  } catch (e) {
+    const wasAbort = e?.name === "AbortError" || abortState.aborted;
+    patchJob(id, {
+      status: wasAbort ? "interrupted" : "error",
+      phase: wasAbort ? "interrupted" : "error",
+      message: wasAbort ? "Album annulé" : e?.message || "Album en erreur",
+    });
+    if (!wasAbort) throw e;
+  } finally {
+    albumAborts.delete(id);
+  }
+}
+
+export function musicTrackJobId(projectId) {
+  return `track-${projectId || "unknown"}`;
+}
+
+/** Évite de saturer localStorage avec le draft ACE/SongGen. */
+function slimTrackDraft(draft) {
+  if (!draft || typeof draft !== "object") return null;
+  const { waveform: _w, audioUrl: _a, audioS3Key: _k, ...rest } = draft;
+  try {
+    const json = JSON.stringify(rest);
+    if (json.length > 80_000) {
+      return {
+        isPreview: Boolean(rest.isPreview),
+        status: rest.status,
+        provider: rest.provider,
+        bpm: rest.bpm,
+        note: rest.note,
+        title: rest.title,
+        voiceGender: rest.voiceGender,
+      };
+    }
+    return JSON.parse(json);
+  } catch {
+    return { isPreview: Boolean(draft.isPreview), status: draft.status };
+  }
+}
+
+/**
+ * Lance (ou reprend) un morceau unique / extrait en arrière-plan.
+ * Survivt à la navigation MPA via localStorage + poll ACE/SongGen/Replicate.
+ */
+export function startMusicTrackJob({
+  projectId,
+  preview = false,
+  href,
+  label,
+} = {}) {
+  if (!projectId) throw new Error("projectId manquant pour le morceau");
+  const id = musicTrackJobId(projectId);
+  const existing = getJob(id);
+  if (existing?.status === "running") {
+    throw new Error("Une génération de morceau est déjà en cours — suis-la dans Tâches.");
+  }
+  upsertJob({
+    id,
+    type: "track",
+    status: "running",
+    phase: "running",
+    label: label || (preview ? "Extrait audio" : "Morceau"),
+    message: preview ? "Démarrage extrait…" : "Démarrage génération audio…",
+    progress: 4,
+    projectId,
+    preview: Boolean(preview),
+    generationId: null,
+    musicKind: null,
+    draft: null,
+    href: href || `/?project=${projectId}&step=4`,
+  });
+  ensureRunning(id);
+  return id;
+}
+
+export function cancelMusicTrackJob(projectId) {
+  if (!projectId) return;
+  const id = musicTrackJobId(projectId);
+  const abort = trackAborts.get(id);
+  if (abort) abort.aborted = true;
+}
+
+async function runTrackBackgroundJob(job) {
+  const id = job.id;
+  const projectId = job.projectId;
+  if (!projectId) throw new Error("Morceau sans projectId");
+
+  const abortState = { aborted: false };
+  trackAborts.set(id, abortState);
+
+  const { project: saved } = await api.getProject(projectId);
+  if (!saved?.id) throw new Error("Projet introuvable pour le morceau");
+  if (abortState.aborted) return;
+
+  const project = { ...emptyProject(), ...(saved.project || {}) };
+  const seed = saved.seed || {};
+  const preview = Boolean(job.preview);
+  const live = getJob(id) || job;
+
+  patchJob(id, {
+    message: live.generationId
+      ? preview
+        ? "Reprise extrait…"
+        : "Reprise génération audio…"
+      : preview
+        ? "Extrait en arrière-plan…"
+        : "Morceau en arrière-plan…",
+  });
+
+  try {
+    let result = await api.track(
+      {
+        preview,
+        lyrics: project.lyrics,
+        artist: {
+          ...project.artist,
+          musicArrange: project.musicArrange,
+        },
+      },
+      (p) => {
+        if (!p || abortState.aborted) return;
+        patchJob(id, {
+          progress: Math.max(8, Math.min(96, Number(p.percent) || 12)),
+          message: p.message || (preview ? "Extrait…" : "Génération audio…"),
+        });
+      },
+      {
+        signal: abortState,
+        onStarted: (started) => {
+          if (!started?.generationId) return;
+          try {
+            patchJob(id, {
+              generationId: started.generationId,
+              musicKind: started.musicKind || null,
+              draft: slimTrackDraft(started.draft),
+            });
+          } catch {
+            patchJob(id, {
+              generationId: started.generationId,
+              musicKind: started.musicKind || null,
+              draft: null,
+            });
+          }
+        },
+        generationId: live.generationId || undefined,
+        musicKind: live.musicKind || undefined,
+        draft: live.draft || undefined,
+      },
+    );
+
+    if (abortState.aborted) {
+      patchJob(id, {
+        status: "interrupted",
+        phase: "interrupted",
+        message: "Génération audio annulée",
+      });
+      return;
+    }
+
+    if (result?.audioUrl) {
+      patchJob(id, { progress: 88, message: "Persistance audio S3…" });
+      try {
+        const persisted = await persistAudioRemote(result.audioUrl, projectId);
+        if (persisted?.audioUrl) {
+          result = {
+            ...result,
+            audioUrl: persisted.audioUrl,
+            audioS3Key: persisted.s3Key,
+            audioEphemeral: false,
+            warning: persisted.persisted ? undefined : result.warning,
+            note: persisted.persisted
+              ? `${result.note || "Audio OK"} · sauvé sur S3`
+              : result.note,
+          };
+        }
+      } catch (persistErr) {
+        result = {
+          ...result,
+          audioEphemeral: true,
+          warning:
+            persistErr.message ||
+            "Audio non persisté (expire ~1 h) — configure S3 ou réimporte bientôt.",
+        };
+      }
+    }
+
+    if (result?.isPreview || result?.status === "preview-ready") {
+      result = { ...result, status: "preview-ready", isPreview: true };
+    } else if (result?.audioUrl) {
+      result = { ...result, status: "audio-ready", isPreview: false };
+    }
+
+    const next = stripClipsForDb(
+      normalizeProjectVersions(normalizeProjectClips(appendVersion(project, "track", result))),
+    );
+    await api.saveProject({
+      id: projectId,
+      project: next,
+      seed,
+      event: {
+        stepKey: "track",
+        eventType: "step",
+        message:
+          result?.isPreview || result?.status === "preview-ready"
+            ? "Extrait prêt — écoute le brouillon"
+            : "Étape Morceau générée",
+      },
+    });
+
+    patchJob(id, {
+      status: "done",
+      phase: "done",
+      progress: 100,
+      message:
+        result?.isPreview || result?.status === "preview-ready"
+          ? "Extrait prêt — écoute le brouillon"
+          : "Morceau terminé",
+      generationId: null,
+      draft: null,
+    });
+  } catch (e) {
+    const wasAbort = e?.name === "AbortError" || abortState.aborted;
+    patchJob(id, {
+      status: wasAbort ? "interrupted" : "error",
+      phase: wasAbort ? "interrupted" : "error",
+      message: wasAbort ? "Génération audio annulée" : e?.message || "Morceau en erreur",
+    });
+    if (!wasAbort) throw e;
+  } finally {
+    trackAborts.delete(id);
+  }
+}
+
 function ensureRunning(jobId) {
   if (!jobId || inflight.has(jobId)) return;
   const p = runJob(jobId).finally(() => inflight.delete(jobId));
@@ -584,6 +927,8 @@ async function runJob(jobId) {
     if (job.type === "veo") await runVeoJob(job);
     else if (job.type === "seedance") await runSeedanceJob(job);
     else if (job.type === "wan2gp") await runWan2gpJob(job);
+    else if (job.type === "album") await runAlbumBackgroundJob(job);
+    else if (job.type === "track") await runTrackBackgroundJob(job);
   } catch (e) {
     patchJob(jobId, {
       status: "error",
@@ -932,6 +1277,15 @@ export function resumeAllJobs() {
     }
     if (job.type === "seedance" || job.type === "wan2gp") {
       ensureRunning(job.id);
+      continue;
+    }
+    if (job.type === "album") {
+      if (job.projectId) ensureRunning(job.id);
+      continue;
+    }
+    if (job.type === "track") {
+      if (job.projectId) ensureRunning(job.id);
+      continue;
     }
   }
 }
@@ -944,6 +1298,7 @@ export function bootJobRunner() {
   window.addEventListener("pagehide", () => {
     for (const job of listActiveJobs()) {
       if (HTTP_BOUND_TYPES.has(job.type)) interruptHttpBoundJob(job.id);
+      // album / morceau / clips : le runner reprend au prochain chargement
     }
   });
 }

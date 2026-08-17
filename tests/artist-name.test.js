@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { classifyArtistNameAvailability } from "../src/server/styleReference.js";
+import {
+  collectAlternateStageNames,
+  resolveFreeGeneratedStageName,
+} from "../src/server/artistName.js";
 
 describe("classifyArtistNameAvailability", () => {
   it("marque un match exact comme collision", () => {
@@ -48,5 +52,71 @@ describe("classifyArtistNameAvailability", () => {
     assert.equal(result.available, true);
     assert.equal(result.collisions.length, 0);
     assert.equal(result.warnings.length, 0);
+  });
+});
+
+describe("collectAlternateStageNames", () => {
+  it("déduplique et saute les noms déjà refusés", () => {
+    const names = collectAlternateStageNames(
+      { name: "Nova", aka: "Nova", names: ["Lumen", "Nova", "Ascendia", "  "] },
+      new Set(["ascendia"]),
+    );
+    assert.deepEqual(names, ["Nova", "Lumen"]);
+  });
+});
+
+describe("resolveFreeGeneratedStageName", () => {
+  it("accepte le premier nom s'il est libre", async () => {
+    const result = await resolveFreeGeneratedStageName({
+      initialName: "Virelia",
+      checkAvailability: async () => ({ available: true, collisions: [] }),
+      proposeNames: async () => {
+        throw new Error("ne doit pas redemander de noms");
+      },
+    });
+    assert.equal(result.name, "Virelia");
+    assert.deepEqual(result.tried, []);
+  });
+
+  it("enchaîne les essais jusqu'à un nom libre au lieu de s'arrêter au 2e", async () => {
+    const checks = [];
+    const statuses = [];
+    let rounds = 0;
+    const result = await resolveFreeGeneratedStageName({
+      initialName: "Ascendia",
+      checkAvailability: async (name) => {
+        checks.push(name);
+        return {
+          available: name === "Virelia",
+          collisions: name === "Virelia" ? [] : [{ name, source: "itunes" }],
+        };
+      },
+      proposeNames: async () => {
+        rounds += 1;
+        if (rounds === 1) return { names: ["Heliora", "Lumenox"] };
+        return { names: ["Virelia"] };
+      },
+      onStatus: (message) => statuses.push(message),
+    });
+    assert.equal(result.name, "Virelia");
+    assert.deepEqual(checks, ["Ascendia", "Heliora", "Lumenox", "Virelia"]);
+    assert.equal(rounds, 2);
+    assert.ok(statuses.some((m) => m.includes("Ascendia") && m.includes("déjà pris")));
+  });
+
+  it("n'abandonne qu'après épuisement des essais", async () => {
+    await assert.rejects(
+      () =>
+        resolveFreeGeneratedStageName({
+          initialName: "Taken",
+          maxChecks: 3,
+          checkAvailability: async (name) => ({
+            available: false,
+            collisions: [{ name, source: "itunes" }],
+          }),
+          proposeNames: async () => ({ names: ["Alt1", "Alt2", "Alt3"] }),
+        }),
+      /Impossible de trouver un nom libre après 3 essais/,
+    );
   });
 });

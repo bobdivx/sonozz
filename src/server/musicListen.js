@@ -1,4 +1,5 @@
 import { DEFAULT_GEMINI_TEXT_MODEL, resolveGeminiTextModel } from "./gemini.js";
+import { parseLlmJson } from "./parseLlmJson.js";
 
 const MAX_AUDIO_BYTES = 12_000_000;
 
@@ -41,13 +42,7 @@ export async function resolveTrackAudioBytes({ audioUrl, audioExcerptBase64, mim
 }
 
 function parseJsonLoose(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = String(text || "").match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("Réponse écoute audio non JSON");
-    return JSON.parse(match[0]);
-  }
+  return parseLlmJson(text);
 }
 
 /**

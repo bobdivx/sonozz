@@ -92,7 +92,7 @@ if (Astro.request.method === "POST") {
       <span class="h-px flex-1 bg-base-content/15"></span>
     </div>
 
-    <form class="space-y-4" method="POST" action={`/login?next=${encodeURIComponent(next)}`}>
+    <form class="space-y-4" method="POST" action={`/login?next=${encodeURIComponent(next)}`} data-astro-reload>
       <p class="text-center text-sm text-base-content/55">Connexion réservée à l’équipe</p>
       <input type="hidden" name="next" value={next} />
 

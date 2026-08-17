@@ -1,5 +1,7 @@
-import { Ban, Library, Trash2 } from "lucide-preact";
+import { Ban, Library, RotateCcw, Trash2 } from "lucide-preact";
+import { useEffect, useState } from "preact/hooks";
 import { ALBUM_SIZES } from "../lib/studio.js";
+import { albumHasWorkLeft, albumNeedsCover, isAlbumStale } from "../lib/albumTracks.js";
 
 function albumStatusLabel(st) {
   if (st === "done") return "OK";
@@ -25,32 +27,58 @@ export default function AlbumAutonomePanel({
   leadTitle = "",
   onGenerate,
   onCancel,
+  onResume,
   onClear,
   onRemoveTrack,
   onOpenTrack,
   studioHref = null,
+  manageMode = false,
 }) {
   const albumRunning = album?.status === "running";
   const albumTracks = Array.isArray(album?.tracks) ? album.tracks : [];
   const albumDoneCount = albumTracks.filter((t) => t.status === "done").length;
+  const canResume =
+    Boolean(onResume) &&
+    !albumRunning &&
+    (albumHasWorkLeft(album) || albumNeedsCover(album));
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!albumRunning) return undefined;
+    const id = window.setInterval(() => setTick((n) => n + 1), 15000);
+    return () => window.clearInterval(id);
+  }, [albumRunning]);
+  const stale = isAlbumStale(album);
 
   return (
-    <div class="space-y-4 border border-primary/25 bg-primary/5 p-4">
+    <div class="space-y-4 rounded-2xl border border-primary/25 bg-primary/5 p-4">
       <div class="flex flex-wrap items-start justify-between gap-3">
+        {album?.cover?.imageUrl ? (
+          <img
+            src={album.cover.imageUrl}
+            alt=""
+            class="h-16 w-16 shrink-0 rounded-xl object-cover"
+          />
+        ) : null}
         <div class="min-w-0 flex-1">
           <p class="flex items-center gap-2 text-sm font-medium">
             <Library size={16} class="text-primary" />
-            Album autonome
+            {manageMode && album?.title ? album.title : manageMode ? "Gérer l’album" : "Nouvel album"}
           </p>
           <p class="mt-1 text-xs text-base-content/60">
-            À partir du single lead
-            {leadTitle ? (
-              <>
-                {" "}
-                « <span class="text-base-content/80">{leadTitle}</span> »
-              </>
-            ) : null}{" "}
-            — génère le reste de l’album (paroles + audio), même style / provider.
+            {manageMode
+              ? "Ajoute, retire, reprends une génération ou ouvre chaque piste dans le studio."
+              : (
+                <>
+                  À partir du single lead
+                  {leadTitle ? (
+                    <>
+                      {" "}
+                      « <span class="text-base-content/80">{leadTitle}</span> »
+                    </>
+                  ) : null}{" "}
+                  — génère le reste (paroles, audio et jaquette), même style.
+                </>
+              )}
           </p>
         </div>
         <select
@@ -92,7 +120,20 @@ export default function AlbumAutonomePanel({
             onClick={() => onCancel?.()}
           >
             <Ban size={14} />
-            Annuler
+            {stale ? "Forcer l’arrêt" : "Annuler"}
+          </button>
+        )}
+        {canResume && (
+          <button
+            type="button"
+            class="btn btn-outline btn-sm gap-2"
+            disabled={loading}
+            onClick={() => onResume?.()}
+          >
+            <RotateCcw size={14} />
+            {albumHasWorkLeft(album)
+              ? `Reprendre (${albumDoneCount} OK)`
+              : "Générer la jaquette"}
           </button>
         )}
         {album && !albumRunning && (
@@ -129,6 +170,9 @@ export default function AlbumAutonomePanel({
           <span class="font-medium text-base-content/80">{album.title}</span>
           {album.concept ? ` — ${album.concept}` : ""}
         </p>
+      )}
+      {album?.coverError && !album?.cover?.imageUrl && (
+        <p class="text-xs text-warning">{album.coverError}</p>
       )}
 
       {albumTracks.length > 0 && (
@@ -170,7 +214,6 @@ export default function AlbumAutonomePanel({
                   <button
                     type="button"
                     class="btn btn-ghost btn-xs"
-                    disabled={loading && albumRunning}
                     onClick={() => onOpenTrack(entry)}
                   >
                     Ouvrir
@@ -195,9 +238,10 @@ export default function AlbumAutonomePanel({
       )}
 
       {albumRunning && (
-        <p class="text-xs text-base-content/50">
-          Laisse cet onglet ouvert pendant la génération. Les autres appareils voient la
-          progression dans Tâches (~4 s).
+        <p class={`text-xs ${stale ? "text-warning" : "text-base-content/50"}`}>
+          {stale
+            ? "Plus de progression depuis ~1 min — ACE est peut-être saturé ou injoignable. Force l’arrêt, puis Reprendre."
+            : "Tu peux changer de page : la génération continue dans Tâches."}
         </p>
       )}
     </div>

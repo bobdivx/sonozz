@@ -2,6 +2,7 @@ import { json, error, readBody } from "../../server/http.js";
 import {
   searchStyleTrackCandidates,
   resolveStyleTrackReference,
+  listArtistTopTrackCandidates,
 } from "../../server/styleReference.js";
 
 function lightStyleLock(styleLock) {
@@ -50,6 +51,15 @@ export async function POST({ request }) {
       }
       const styleLock = await resolveStyleTrackReference(keys, pick);
       return json({ ok: true, styleLock: lightStyleLock(styleLock) });
+    }
+
+    if (action === "top-for-artist") {
+      const artistPick = body.artistPick || body.pick;
+      if (!artistPick?.id && String(artistPick?.name || "").trim().length < 2) {
+        return error("Artiste de référence manquant.", 400);
+      }
+      const data = await listArtistTopTrackCandidates(keys, artistPick);
+      return json(data);
     }
 
     const query = String(body.query || body.q || body.styleTrack || "").trim();

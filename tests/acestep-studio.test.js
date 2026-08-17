@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildAceStepBody,
+  interpretAceProbe,
   lyricsForAceStepPreview,
   pickAceStepModel,
   resolveAceAudioUrl,
@@ -89,6 +90,22 @@ describe("ACE-Step Studio client", () => {
     assert.equal(sft.inferenceSteps, 50);
     assert.equal(sft.guidanceScale, 7);
     assert.equal(sft.duration, 180);
+  });
+
+  it("détecte ACE totalement injoignable vs moteur Python down", () => {
+    const down = interpretAceProbe({
+      base: "http://127.0.0.1:3001",
+      health: { healthy: false, error: "ACE-Step Studio injoignable (http://127.0.0.1:3001) — délai dépassé" },
+      status: {},
+    });
+    assert.equal(down.unreachable, true);
+
+    const python = interpretAceProbe({
+      health: { healthy: false },
+      status: { connected: false, activeModel: "" },
+    });
+    assert.equal(python.unreachable, false);
+    assert.equal(python.pipelineUp, false);
   });
 
   it("toggle active/désactive un studio et bascule le moteur actif", () => {

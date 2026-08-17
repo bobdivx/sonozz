@@ -298,6 +298,48 @@ export function buildAceStepBody({
   };
 }
 
+const ACE_UNREACHABLE_RE =
+  /injoignable|fetch failed|ECONNREFUSED|délai dépassé|TimeoutError|ENOTFOUND|EHOSTUNREACH/i;
+
+/**
+ * Distingue « ACE carrément injoignable » de « UI up / moteur Python down ».
+ * @param {{ health?: object, status?: object, base?: string }} input
+ */
+export function interpretAceProbe({ health, status, base } = {}) {
+  const healthError = String(health?.error || "");
+  const healthUnreachable = ACE_UNREACHABLE_RE.test(healthError);
+  const statusMissing =
+    !status ||
+    (typeof status === "object" &&
+      status.connected == null &&
+      !status.activeModel &&
+      !status.state &&
+      !status.model);
+
+  if (healthUnreachable && statusMissing) {
+    return {
+      unreachable: true,
+      healthy: false,
+      connected: false,
+      pipelineUp: false,
+      message: healthError || `ACE-Step Studio injoignable (${base})`,
+    };
+  }
+
+  const healthy = health?.healthy === true;
+  const connected = status?.connected === true;
+  return {
+    unreachable: false,
+    healthy,
+    connected,
+    pipelineUp: healthy && connected,
+    message:
+      !healthy || !connected
+        ? "UI joignable, mais le moteur Python (port 8001) est down — Stop puis Start dans Pinokio"
+        : null,
+  };
+}
+
 export async function testAceStep(keys) {
   const base = resolveAceStepBaseUrl(keys);
   const [health, modelsRaw, status, sys] = await Promise.all([
@@ -306,6 +348,10 @@ export async function testAceStep(keys) {
     aceFetch(base, "/api/generate/model-status").catch(() => ({})),
     aceFetch(base, "/api/generate/system-info").catch(() => null),
   ]);
+  const interpreted = interpretAceProbe({ health, status, base });
+  if (interpreted.unreachable) {
+    throw new Error(interpreted.message);
+  }
   const models = normalizeModels(modelsRaw);
   const activeModel = String(status?.activeModel || status?.model || "").trim() || null;
   const pick = pickAceStepModel(
@@ -331,8 +377,8 @@ export async function testAceStep(keys) {
 
   return {
     base,
-    healthy: health?.healthy !== false,
-    connected: status?.connected !== false,
+    healthy: interpreted.healthy,
+    connected: interpreted.connected,
     activeModel,
     models,
     pickedModel: pick.modelId,
@@ -340,13 +386,12 @@ export async function testAceStep(keys) {
     preferredModel: String(keys?.aceStepPreferredModel || "").trim() || null,
     hasReadyModel,
     gpu,
-    pipelineUp: health?.healthy === true && status?.connected === true,
+    pipelineUp: interpreted.pipelineUp,
     message:
-      health?.healthy === false || status?.connected === false
-        ? "UI joignable, mais le moteur Python (port 8001) est down — Stop puis Start dans Pinokio"
-        : hasReadyModel
-          ? `Joignable${activeModel ? ` · ${aceStepModelLabel(activeModel)}` : ""}`
-          : "Joignable — aucun modèle chargé (ouvre ACE-Step Studio une fois)",
+      interpreted.message ||
+      (hasReadyModel
+        ? `Joignable${activeModel ? ` · ${aceStepModelLabel(activeModel)}` : ""}`
+        : "Joignable — aucun modèle chargé (ouvre ACE-Step Studio une fois)"),
   };
 }
 
@@ -395,13 +440,14 @@ export async function startAceStep(keys, {
   preview = false,
 } = {}) {
   const base = resolveAceStepBaseUrl(keys);
-  let catalog = { models: [], activeModel: null };
-  try {
-    const info = await testAceStep(keys);
-    catalog = { models: info.models, activeModel: info.activeModel };
-  } catch (e) {
-    console.warn("[acestep] probe:", e.message);
+  const info = await testAceStep(keys);
+  if (info.pipelineUp === false) {
+    throw new Error(
+      info.message ||
+        `Moteur ACE-Step down (${base}). Pinokio : Stop puis Start (No LM si Sonozz).`,
+    );
   }
+  const catalog = { models: info.models, activeModel: info.activeModel };
   const pick = pickAceStepModel(catalog, {
     preferredId: String(keys?.aceStepPreferredModel || "").trim() || null,
   });

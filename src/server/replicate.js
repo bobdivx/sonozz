@@ -29,7 +29,14 @@ function errorText(data, status) {
 
 function isThrottle(res, data) {
   const msg = errorText(data, res.status);
+  if (isNoCredit(res, data, msg)) return false;
   return res.status === 429 || /throttled|rate limit/i.test(msg);
+}
+
+/** Compte Replicate à sec : inutile d’enchaîner d’autres modèles. */
+function isNoCredit(res, data, message = "") {
+  const msg = `${errorText(data, res?.status)} ${message}`;
+  return res?.status === 402 || /insufficient credit|less than \$5/i.test(msg);
 }
 
 function isNotFound(res, data) {
@@ -417,6 +424,10 @@ export async function createModelPrediction(token, modelPath, input) {
     return { res, data };
   }
 
+  if (isNoCredit(res, data, msg)) {
+    return { res, data };
+  }
+
   // Secours : résoudre latest_version puis POST /v1/predictions (sans Prefer:wait)
   if (isAdapterError(msg) || isNotFound(res, data) || (!res.ok && !data?.id)) {
     try {
@@ -474,7 +485,9 @@ export async function generateImageWithReplicate(
 ) {
   const enhanced =
     kind === "portrait"
-      ? `photorealistic portrait photo, square crop, music artist, ${prompt}, sharp focus, no text, no watermark, do not change the stated sex or gender of the person`
+      ? referenceImageUrl
+        ? `Restyle this exact same person (keep face, age, hair, skin tone, identity). Photorealistic square music-artist portrait. ${prompt}. Sharp focus, no text, no watermark, do not change sex, age or identity`
+        : `photorealistic portrait photo, square crop, music artist, ${prompt}, sharp focus, no text, no watermark, do not change the stated sex or gender of the person`
       : kind === "cover"
         ? referenceImageUrl
           ? `Transform this artist into a square cinematic album cover, same person clearly recognizable, same sex/gender as reference, ${prompt}, high detail, no watermark, no text`
@@ -485,7 +498,7 @@ export async function generateImageWithReplicate(
   const errors = [];
 
   const models =
-    referenceImageUrl && kind === "cover"
+    referenceImageUrl && (kind === "cover" || kind === "portrait")
       ? [
           ...KONTEXT_MODELS.map((m) => ({
             path: m.path,
@@ -503,9 +516,15 @@ export async function generateImageWithReplicate(
       const { res, data } = await createModelPrediction(token, model.path, input);
 
       if (!res.ok && !data?.id) {
-        const msg = billingHint(errorText(data, res.status));
+        const raw = errorText(data, res.status);
+        const msg = billingHint(raw);
         console.error(`[replicate] ${model.path} create failed`, res.status, msg);
         errors.push(`${model.path}: ${msg}`);
+        if (isNoCredit(res, data, raw)) {
+          throw new Error(
+            "Replicate sans crédit — portraits/jaquettes via Gemini Image (pas besoin de payer Replicate).",
+          );
+        }
         continue;
       }
 
@@ -514,6 +533,7 @@ export async function generateImageWithReplicate(
       return url;
     } catch (e) {
       console.error(`[replicate] ${model.path} échec:`, e.message);
+      if (/sans crédit|insufficient credit/i.test(e.message)) throw e;
       errors.push(`${model.path}: ${e.message}`);
     }
   }

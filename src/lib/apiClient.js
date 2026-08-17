@@ -1,12 +1,43 @@
 import { loadKeys } from "./keys.js";
 
-async function request(path, body = {}) {
+function toAbortSignal(signal) {
+  if (!signal) return undefined;
+  if (typeof AbortSignal !== "undefined" && signal instanceof AbortSignal) return signal;
+  if (typeof signal.aborted !== "boolean") return undefined;
+  const ac = new AbortController();
+  if (signal.aborted) {
+    ac.abort();
+    return ac.signal;
+  }
+  const iv = setInterval(() => {
+    if (signal.aborted) {
+      clearInterval(iv);
+      ac.abort();
+    }
+  }, 200);
+  ac.signal.addEventListener("abort", () => clearInterval(iv), { once: true });
+  return ac.signal;
+}
+
+async function request(path, body = {}, opts = {}) {
   const keys = loadKeys();
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ keys, ...body }),
-  });
+  const signal = toAbortSignal(opts.signal);
+  let res;
+  try {
+    res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys, ...body }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError" || opts.signal?.aborted) {
+      const err = new Error("Génération audio annulée");
+      err.name = "AbortError";
+      throw err;
+    }
+    throw e;
+  }
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -98,7 +129,7 @@ function formatTrackProgress(tick = {}) {
  * Start + poll court (évite Cloudflare 524 — gen audio 2–10 min).
  * @param {object} payload
  * @param {(p: { percent: number, message: string }) => void} [onProgress]
- * @param {{ signal?: AbortSignal | { aborted?: boolean } }} [opts]
+ * @param {{ signal?: AbortSignal | { aborted?: boolean }, onStarted?: Function, generationId?: string, musicKind?: string, draft?: object }} [opts]
  */
 async function trackWithPoll(payload = {}, onProgress, opts = {}) {
   const signal = opts.signal;
@@ -116,7 +147,20 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     percent: 5,
     message: isPreview ? "Démarrage extrait audio…" : "Démarrage génération audio…",
   });
-  const started = await request("/api/track", { ...payload, action: "start" });
+
+  let started;
+  if (opts.generationId && opts.musicKind) {
+    started = {
+      pollNeeded: true,
+      generationId: opts.generationId,
+      musicKind: opts.musicKind,
+      draft: opts.draft,
+    };
+  } else {
+    started = await request("/api/track", { ...payload, action: "start" }, { signal });
+    throwIfAborted();
+    opts.onStarted?.(started);
+  }
   throwIfAborted();
   if (!started?.pollNeeded) {
     const { pollNeeded: _p, musicKind: _m, generationId: _g, draft, ...rest } = started || {};
@@ -150,12 +194,16 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
       throwIfAborted();
       await sleep(intervalMs, signal);
       throwIfAborted();
-      const tick = await request("/api/track", {
-        action: "poll",
-        generationId: started.generationId,
-        musicKind: started.musicKind,
-        draft: started.draft,
-      });
+      const tick = await request(
+        "/api/track",
+        {
+          action: "poll",
+          generationId: started.generationId,
+          musicKind: started.musicKind,
+          draft: started.draft,
+        },
+        { signal },
+      );
       if (tick?.done && tick.track) {
         onProgress?.({
           percent: 100,
@@ -334,9 +382,11 @@ export const api = {
           continue;
         }
         if (evt.type === "progress") {
-          onProgress?.(evt);
+          await onProgress?.(evt);
+        } else if (evt.type === "snapshot") {
+          await onProgress?.(evt);
         } else if (evt.type === "meta") {
-          onProgress?.({ step: "start", message: "Démarrage…", index: -1, total: evt.total, meta: evt });
+          await onProgress?.({ step: "start", message: "Démarrage…", index: -1, total: evt.total, meta: evt });
         } else if (evt.type === "result") {
           const { type: _t, ...data } = evt;
           result = data;
@@ -373,6 +423,8 @@ export const api = {
   saveKeysRemote: (keys) => request("/api/keys", { keys }),
   searchStyleArtists: (query) => request("/api/style-artists", { query }),
   searchStyleTracks: (query) => request("/api/style-tracks", { query }),
+  artistTopTracks: (artistPick) =>
+    request("/api/style-tracks", { action: "top-for-artist", artistPick }),
   resolveStyleTrack: (pick) =>
     request("/api/style-tracks", { action: "resolve", pick }),
   checkArtistName: (query) => request("/api/artist-name-check", { query }),

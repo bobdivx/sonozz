@@ -60,10 +60,57 @@ export default function StyleArtistPicker({
   const [error, setError] = useState("");
   const [searched, setSearched] = useState(false);
   const lastQueryRef = useRef("");
+  const genreEnrichKeyRef = useRef("");
 
   useEffect(() => {
     if (!multiple && single?.name && !query) setQuery(single.name);
   }, [single?.id]);
+
+  useEffect(() => {
+    if (multiple || !single?.id) return;
+    const hasGenres = Array.isArray(single.genres) && single.genres.length;
+    const hasLang = Boolean(single.language || single.country);
+    const hasGender = Boolean(single.gender);
+    if (hasGenres && hasLang && hasGender) return;
+    const key = pickKey(single);
+    if (genreEnrichKeyRef.current === key) return;
+    genreEnrichKeyRef.current = key;
+    const name = String(single.name || query || "").trim();
+    if (name.length < 2) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.searchStyleArtists(name);
+        if (cancelled) return;
+        const list = data.candidates || [];
+        const hit =
+          list.find((c) => pickKey(c) === key) ||
+          list.find((c) => String(c.name || "").toLowerCase() === name.toLowerCase());
+        if (!hit) return;
+        const next = {
+          ...single,
+          genres: hit.genres?.length ? hit.genres : single.genres,
+          country: hit.country || single.country || null,
+          language: hit.language || single.language || null,
+          gender: hit.gender || single.gender || null,
+        };
+        if (
+          (next.genres || []).join("|") === (single.genres || []).join("|") &&
+          next.country === (single.country || null) &&
+          next.language === (single.language || null) &&
+          next.gender === (single.gender || null)
+        ) {
+          return;
+        }
+        onPickChange?.(next);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [single?.id, single?.source]);
 
   function updateQuery(next) {
     setQuery(next);
@@ -112,6 +159,9 @@ export default function StyleArtistPicker({
       followers: c.followers ?? null,
       popularity: c.popularity ?? null,
       url: c.url || null,
+      country: c.country || null,
+      language: c.language || null,
+      gender: c.gender || null,
     };
 
     if (multiple) {

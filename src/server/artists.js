@@ -1,6 +1,8 @@
 import { ensureSchema, getDb, uid, saveProject, getProject, getUserKeys } from "./db.js";
 import { runCareerAgent } from "./careerAgent.js";
 import { resolveArtistGender, withResolvedArtistGender } from "../lib/artistGender.js";
+import { applyArtistPhotoPatch, listArtistImageUrl, normalizeArtistPhotos } from "../lib/artistPhotos.js";
+import { generateVisual } from "./images.js";
 
 export function slugify(input = "") {
   return String(input)
@@ -95,10 +97,12 @@ function profileRichness(artist = {}) {
 
 function mergeArtistProfile(prev = {}, incoming = {}) {
   const profile = omitUndefined(incoming);
+  const photos = applyArtistPhotoPatch(prev, incoming);
   const merged = {
     ...prev,
     ...profile,
-    imageUrl: profile.imageUrl || prev.imageUrl || null,
+    imageUrl: photos.imageUrl,
+    photos: photos.photos,
     slug: profile.slug || prev.slug,
     name: profile.name || prev.name,
   };
@@ -304,11 +308,7 @@ export async function listArtists(limit = 50) {
 
   return res.rows.map((row) => {
     const profile = row.profile_json ? JSON.parse(row.profile_json) : {};
-    // Index : pas de data URL lourdes (thumb http ou rien)
-    if (profile.imageUrl && String(profile.imageUrl).startsWith("data:")) {
-      profile.imageUrl =
-        String(profile.imageUrl).length <= 200_000 ? profile.imageUrl : null;
-    }
+    profile.imageUrl = listArtistImageUrl(row.slug, profile, row.updated_at);
     return {
       id: row.id,
       slug: row.slug,
@@ -367,12 +367,17 @@ export async function listArtistReleases(slug, limit = 40) {
         json_extract(project_json, '$.track.audioUrl') AS audio_url,
         json_extract(project_json, '$.track.status') AS track_status,
         json_extract(project_json, '$.cover.imageUrl') AS cover_url,
+        json_extract(project_json, '$.album.cover.imageUrl') AS album_cover_url,
         json_extract(project_json, '$.distrokid.status') AS once_status,
         json_extract(project_json, '$.distrokid.provider') AS once_provider,
         json_extract(project_json, '$.distrokid.releaseId') AS release_id,
         json_extract(project_json, '$.album.status') AS album_status,
         json_extract(project_json, '$.album.title') AS album_title,
-        json_extract(project_json, '$.album.targetCount') AS album_target
+        json_extract(project_json, '$.album.id') AS album_id,
+        json_extract(project_json, '$.album.targetCount') AS album_target,
+        json_extract(project_json, '$.albumMeta.leadProjectId') AS album_lead_id,
+        json_extract(project_json, '$.albumMeta.albumTitle') AS album_meta_title,
+        json_extract(project_json, '$.albumMeta.index') AS album_index
       FROM projects
       WHERE artist_slug = ? OR artist_name = ?
       ORDER BY updated_at DESC
@@ -386,7 +391,7 @@ export async function listArtistReleases(slug, limit = 40) {
       String(row.track_status || "") === "pending-review" ||
       String(row.track_status || "") === "preview-ready";
     const audioUrl = pendingReview ? null : lightAssetUrl(row.audio_url);
-    const coverUrl = lightAssetUrl(row.cover_url);
+    const coverUrl = lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url);
     const onceStatus = row.once_status || null;
     const hasLyrics = Boolean(row.lyrics_title || row.lyrics_theme);
     return {
@@ -399,10 +404,13 @@ export async function listArtistReleases(slug, limit = 40) {
       slug: row.artist_slug || slug,
       hasAudio: Boolean(audioUrl),
       hasLyrics,
-      hasCover: Boolean(row.cover_url),
+      hasCover: Boolean(row.cover_url || row.album_cover_url),
       albumStatus: row.album_status || null,
-      albumTitle: row.album_title || null,
+      albumTitle: row.album_title || row.album_meta_title || null,
       albumTargetCount: row.album_target ? Number(row.album_target) : null,
+      albumId: row.album_id || null,
+      albumLeadId: row.album_lead_id || (row.album_status ? row.id : null),
+      albumIndex: row.album_index != null ? Number(row.album_index) : row.album_status ? 1 : null,
       distributed: Boolean(
         onceStatus === "submitted" ||
           onceStatus === "live" ||
@@ -1223,6 +1231,75 @@ export async function backfillAllArtistProfiles() {
   }
 
   return report;
+}
+
+/**
+ * Recadre les photos d’un artiste « c’est moi » sur son identity visuelle actuelle
+ * (garde le visage, change garde-robe / lumière / décor).
+ */
+export async function restyleArtistPortraits(slug, { keys, prompt } = {}) {
+  const artist = await getArtistBySlug(slug);
+  if (!artist) throw new Error("Artiste introuvable");
+  const storedKeys = keys && typeof keys === "object" ? keys : (await getUserKeys()) || {};
+  const photos = normalizeArtistPhotos(artist.profile?.photos, artist.profile?.imageUrl);
+  if (!photos.length) {
+    throw new Error("Aucune photo à restyler — ajoute un portrait d’abord.");
+  }
+
+  const vi = artist.profile?.visualIdentity || {};
+  const restylePrompt =
+    String(prompt || "").trim() ||
+    [
+      `39-year-old adult man, clearly masculine face, same person as the reference photo`,
+      `hardcore hip hop artist portrait`,
+      vi.wardrobe || "dark hoodie, baggy streetwear, utilitarian jacket",
+      vi.photographyStyle || "gritty urban high-contrast industrial photography",
+      `${artist.profile?.mood || "tense, determined"} mood`,
+      "photorealistic, square, no text",
+    ].join(", ");
+
+  const restyled = [];
+  let provider = null;
+  for (let i = 0; i < photos.length; i += 1) {
+    const visual = await generateVisual({
+      keys: storedKeys,
+      prompt: restylePrompt,
+      kind: "portrait",
+      referenceImageUrl: photos[i],
+    });
+    restyled.push(visual.imageUrl);
+    provider = visual.provider || provider;
+  }
+
+  const now = new Date().toISOString();
+  const profile = stripHeavyProfile({
+    ...artist.profile,
+    imageUrl: restyled[0],
+    photos: restyled,
+    imageProvider: provider || "restyle",
+    imageFallback: false,
+    imageWarning: undefined,
+    portraitPrompt: restylePrompt,
+    visualIdentity: {
+      ...vi,
+      portraitPrompt: restylePrompt,
+    },
+    slug: artist.slug,
+    name: artist.name,
+  });
+
+  const db = getDb();
+  await db.execute({
+    sql: `UPDATE artists SET profile_json = ?, updated_at = ? WHERE slug = ?`,
+    args: [JSON.stringify(profile), now, slug],
+  });
+
+  return {
+    slug,
+    count: restyled.length,
+    provider,
+    profile,
+  };
 }
 
 /**

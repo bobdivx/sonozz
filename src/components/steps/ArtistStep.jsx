@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
   UserRound,
   MapPin,
@@ -18,7 +18,8 @@ import {
   languagesForProvider,
   songGenLanguageHint,
   languageEngineLabel,
-  matchMusicStyleFromGenre,
+  catalogGenresToStyleValues,
+  inferLanguageFromStyleRef,
   parseGenres,
 } from "../../lib/studio.js";
 import { loadKeys } from "../../lib/keys.js";
@@ -27,13 +28,8 @@ import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "../ArtistNameField.jsx";
 import PhotoUpload from "../PhotoUpload.jsx";
 import VoiceSampleUpload from "../VoiceSampleUpload.jsx";
-import { resolveArtistGender } from "../../lib/artistGender.js";
-
-const GENDERS = [
-  { value: "male", label: "Homme" },
-  { value: "female", label: "Femme" },
-  { value: "nonbinary", label: "Non-binaire" },
-];
+import { resolveArtistGender, inferGenderFromStyleRef, ARTIST_GENDER_OPTIONS, ARTIST_GENDER_LABELS } from "../../lib/artistGender.js";
+import { artistPhotoSyncKey, normalizeArtistPhotos } from "../../lib/artistPhotos.js";
 
 export default function ArtistStep({ artist, trends, loading, onGenerate, onPatchArtist, initialMode }) {
   const [mode, setMode] = useState(() =>
@@ -90,13 +86,11 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
   const [age, setAge] = useState(artist?.age != null ? String(artist.age) : "");
   const [gender, setGender] = useState(() => resolveArtistGender(artist)?.code || "");
   const [city, setCity] = useState(artist?.city || "");
-  const [photos, setPhotos] = useState(() => {
-    if (Array.isArray(artist?.photos) && artist.photos.length) return artist.photos;
-    if (artist?.mode === "self" && artist?.imageUrl) return [artist.imageUrl];
-    return [];
-  });
+  const [photos, setPhotos] = useState(() => normalizeArtistPhotos(artist?.photos, artist?.imageUrl));
   const [voiceSample, setVoiceSample] = useState(() => artist?.voiceSample || null);
   const [pickError, setPickError] = useState("");
+  const languageManualRef = useRef(false);
+  const genderManualRef = useRef(Boolean(resolveArtistGender(artist)?.code));
   const keysSnap = loadKeys();
   const langOptions = languagesForProvider(
     keysSnap.musicProvider,
@@ -138,13 +132,11 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     setStyleArtist(artist.styleArtist || "");
     if (artist.age != null) setAge(String(artist.age));
     const savedGender = resolveArtistGender(artist)?.code;
-    if (savedGender) setGender(savedGender);
-    if (artist.city) setCity(artist.city);
-    if (Array.isArray(artist.photos) && artist.photos.length) {
-      setPhotos(artist.photos);
-    } else if (artist.mode === "self" && artist.imageUrl) {
-      setPhotos([artist.imageUrl]);
+    if (savedGender) {
+      setGender(savedGender);
+      genderManualRef.current = true;
     }
+    if (artist.city) setCity(artist.city);
     setVoiceSample(artist.voiceSample || null);
     if (Array.isArray(artist.styleLock?.refs) && artist.styleLock.refs.length) {
       setStyleArtistPicks(
@@ -167,6 +159,30 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
       });
     }
   }, [artist?.name, artist?.genre, artist?.genres, artist?.language, artist?.styleArtist, artist?.mode]);
+
+  const photoSyncKey = artistPhotoSyncKey(artist);
+  useEffect(() => {
+    if (!artist) return;
+    const incoming = normalizeArtistPhotos(artist.photos, artist.imageUrl);
+    setPhotos((prev) => {
+      if (prev.length === incoming.length && prev.every((p, i) => p === incoming[i])) return prev;
+      return incoming;
+    });
+  }, [photoSyncKey]);
+
+  function applyPhotos(next) {
+    const list = normalizeArtistPhotos(next);
+    setPhotos(list);
+    setPickError("");
+    if (!artist) return;
+    onPatchArtist?.({
+      photos: list,
+      imageUrl: list[0] || null,
+      imageProvider: list[0] ? "user-upload" : null,
+      imageFallback: false,
+      imageWarning: null,
+    });
+  }
 
   function toggleStyle(value) {
     if (!value) {
@@ -217,18 +233,43 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     return [];
   })();
 
-  const trackStyleHits = trackRefGenres
-    .map((g) => ({ raw: g, hit: matchMusicStyleFromGenre(g) }))
-    .filter((x) => x.hit);
-  const artistStyleHits = artistRefGenres
-    .map((g) => ({ raw: g, hit: matchMusicStyleFromGenre(g) }))
-    .filter((x) => x.hit);
-
-  const trackStyleValues = new Set(trackStyleHits.map((x) => x.hit.value));
+  const trackStyleValues = new Set(catalogGenresToStyleValues(trackRefGenres));
   const artistOnlyStyleValues = new Set(
-    [...artistStyleHits.map((x) => x.hit.value)].filter((v) => !trackStyleValues.has(v)),
+    catalogGenresToStyleValues(artistRefGenres).filter((v) => !trackStyleValues.has(v)),
   );
   const nameBlocked = isArtistNameBlocked(name, nameStatus, allowTakenName);
+
+  useEffect(() => {
+    if (languageManualRef.current) return;
+    const pick = isSelf ? styleArtistPicks[0] : styleArtistPick;
+    const inferred = inferLanguageFromStyleRef({
+      country: pick?.country,
+      language: pick?.language,
+      genres: [
+        ...(Array.isArray(pick?.genres) ? pick.genres : []),
+        ...(Array.isArray(styleTrackPick?.genres) ? styleTrackPick.genres : []),
+      ],
+      titles: [styleTrackPick?.name, styleTrackPick?.album].filter(Boolean),
+    });
+    if (inferred && inferred !== language) setLanguage(inferred);
+  }, [
+    isSelf,
+    styleArtistPick?.id,
+    styleArtistPick?.country,
+    styleArtistPick?.language,
+    styleArtistPicks,
+    styleTrackPick?.id,
+    styleTrackPick?.genres,
+    styleTrackPick?.name,
+    language,
+  ]);
+
+  useEffect(() => {
+    if (genderManualRef.current) return;
+    const pick = isSelf ? styleArtistPicks[0] : styleArtistPick;
+    const inferred = inferGenderFromStyleRef(pick);
+    if (inferred && inferred !== gender) setGender(inferred);
+  }, [isSelf, styleArtistPick?.id, styleArtistPick?.gender, styleArtistPicks, gender]);
 
   function handleGenerate() {
     if (isSelf) {
@@ -374,7 +415,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
 
         {isSelf && (
           <>
-            <PhotoUpload photos={photos} disabled={loading} onChange={setPhotos} max={4} />
+            <PhotoUpload photos={photos} disabled={loading} onPhotosChange={applyPhotos} max={4} />
 
             <VoiceSampleUpload
               value={voiceSample}
@@ -418,23 +459,6 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                 />
               </label>
             </div>
-
-            <fieldset class="space-y-2">
-              <legend class="mb-1 text-sm text-base-content/60">Sexe / présentation</legend>
-              <div class="flex flex-wrap gap-2">
-                {GENDERS.map((g) => (
-                  <button
-                    key={g.value}
-                    type="button"
-                    class={`btn btn-sm ${gender === g.value ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-                    disabled={loading}
-                    onClick={() => setGender(g.value)}
-                  >
-                    {g.label}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
           </>
         )}
 
@@ -482,6 +506,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
             )}
             <StyleTrackPicker
               pick={styleTrackPick}
+              artistPick={mode === "self" ? styleArtistPicks[0] || null : styleArtistPick}
               disabled={loading}
               onPickChange={(p) => {
                 if (!p) {
@@ -653,7 +678,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                   key={l.code}
                   type="button"
                   class={`btn btn-sm ${active ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-                  onClick={() => setLanguage(l.code)}
+                  onClick={() => {
+                    languageManualRef.current = true;
+                    setLanguage(l.code);
+                  }}
                 >
                   {l.label}
                   {engine === "MiniMax" ? (
@@ -663,6 +691,61 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
               );
             })}
           </div>
+          {(() => {
+            const pick = isSelf ? styleArtistPicks[0] : styleArtistPick;
+            const inferred = inferLanguageFromStyleRef({
+              country: pick?.country,
+              language: pick?.language,
+              genres: [
+                ...(Array.isArray(pick?.genres) ? pick.genres : []),
+                ...(Array.isArray(styleTrackPick?.genres) ? styleTrackPick.genres : []),
+              ],
+              titles: [styleTrackPick?.name, styleTrackPick?.album].filter(Boolean),
+            });
+            if (!inferred || inferred !== language || languageManualRef.current || !pick?.name) {
+              return null;
+            }
+            return (
+              <p class="text-xs text-base-content/45">
+                {languageLabel(inferred)} proposé d’après {pick.name} — tu peux changer.
+              </p>
+            );
+          })()}
+        </fieldset>
+
+        <fieldset class="space-y-2">
+          <legend class="mb-1 text-sm text-base-content/60">Sexe / présentation</legend>
+          <p class="text-xs text-base-content/45">
+            Voix, portrait et bio collent à ce choix — ce n’est pas le style musical.
+          </p>
+          <div class="flex flex-wrap gap-2">
+            {ARTIST_GENDER_OPTIONS.map((g) => (
+              <button
+                key={g.value}
+                type="button"
+                class={`btn btn-sm ${gender === g.value ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+                disabled={loading}
+                onClick={() => {
+                  genderManualRef.current = true;
+                  setGender(g.value);
+                }}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+          {(() => {
+            const pick = isSelf ? styleArtistPicks[0] : styleArtistPick;
+            const inferred = inferGenderFromStyleRef(pick);
+            if (!inferred || inferred !== gender || genderManualRef.current || !pick?.name) {
+              return null;
+            }
+            return (
+              <p class="text-xs text-base-content/45">
+                {ARTIST_GENDER_LABELS[inferred]} proposé d’après {pick.name} — tu peux changer.
+              </p>
+            );
+          })()}
         </fieldset>
 
         <label class="form-control w-full">
@@ -716,17 +799,24 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
         <article class="animate-rise space-y-5 border-t border-base-content/10 pt-5">
           <div class="grid gap-6 md:grid-cols-[240px_1fr] md:items-start">
             <figure class="space-y-2">
-              {artist.imageUrl && !/^data:image\/svg/i.test(artist.imageUrl) ? (
+              {(() => {
+                const portraitSrc =
+                  photos[0] ||
+                  (artist.imageUrl && !/^data:image\/svg/i.test(artist.imageUrl)
+                    ? artist.imageUrl
+                    : "");
+                return portraitSrc ? (
                 <img
-                  src={artist.imageUrl}
+                  src={portraitSrc}
                   alt={`Portrait de ${artist.name}`}
                   class="aspect-square w-full object-cover shadow-2xl shadow-black/40"
                 />
-              ) : (
+                ) : (
                 <div class="flex aspect-square w-full items-center justify-center border border-warning/30 bg-warning/10 p-3 text-center text-sm text-warning">
-                  Portrait photo manquant. Clique « Générer le profil » (Replicate Flux requis).
+                  Portrait photo manquant. Clique « Générer le profil » (Gemini Image ou Replicate).
                 </div>
-              )}
+                );
+              })()}
               <figcaption class="text-xs text-base-content/45">
                 {artist.mode === "self"
                   ? "Identité visuelle · ta photo"
@@ -738,11 +828,11 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
               {artist.imageWarning && (
                 <p class="text-xs text-warning">{artist.imageWarning}</p>
               )}
-              {Array.isArray(artist.photos) && artist.photos.length > 1 && (
+              {photos.length > 1 && (
                 <div class="flex flex-wrap gap-1.5 pt-1">
-                  {artist.photos.slice(0, 4).map((src, i) => (
+                  {photos.slice(0, 4).map((src, i) => (
                     <img
-                      key={i}
+                      key={`thumb-${i}-${src.length}`}
                       src={src}
                       alt=""
                       class="h-12 w-12 object-cover border border-base-content/10"
@@ -750,7 +840,8 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                   ))}
                 </div>
               )}
-              {(!artist.imageUrl || /^data:image\/svg/i.test(artist.imageUrl)) && (
+              {(!photos[0] &&
+                (!artist.imageUrl || /^data:image\/svg/i.test(artist.imageUrl))) && (
                 <p class="text-xs text-warning">
                   Sans photo réelle, la jaquette et ONCE resteront bloqués. Billing Replicate :{" "}
                   <a

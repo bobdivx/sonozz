@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { parseLlmJson } from "./parseLlmJson.js";
 
 /** Modèles free-tier courants (1.5 / 2.0 retirés par Google). */
 export const GEMINI_TEXT_MODELS = [
@@ -113,13 +114,7 @@ export async function geminiJson(apiKey, prompt, { model } = {}) {
     preferredModel: model,
     json: true,
   });
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-    if (!match) throw new Error("Réponse Gemini non JSON");
-    return JSON.parse(match[0]);
-  }
+  return parseLlmJson(text);
 }
 
 export async function geminiText(apiKey, prompt, { model } = {}) {
@@ -304,7 +299,15 @@ export async function geminiImage(apiKey, prompt, { kind = "image", referenceIma
   }
 
   const lead =
-    kind === "portrait"
+    kind === "portrait" && referenceImage
+      ? [
+          "Using the provided photo as the ONLY identity reference,",
+          "restyle the SAME person (keep face, age, hair, skin tone, identity).",
+          "Photorealistic square music-artist portrait.",
+          "Do not change sex, age or who they are.",
+          "No text, no watermark, no logo:",
+        ].join(" ")
+      : kind === "portrait"
       ? "Generate a realistic photographic portrait of a music artist (square, no text, no watermark, no logo):"
       : kind === "cover" && referenceImage
         ? [

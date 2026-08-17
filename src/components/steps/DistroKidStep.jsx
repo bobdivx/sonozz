@@ -131,8 +131,8 @@ export default function DistroKidStep({
       <header class="space-y-2">
         <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">ONCE → Spotify</h2>
         <p class="max-w-xl text-base-content/70">
-          Soumission automatique via l’API ONCE. Une nouvelle release consomme 1–2 crédits ; republier
-          la même release ne re-débite pas.
+          Auto A→Z s’arrête ici : vérifie le morceau, la jaquette et le nom, puis publie. Une
+          nouvelle release consomme 1–2 crédits ; republier la même release ne re-débite pas.
         </p>
       </header>
 
@@ -177,6 +177,12 @@ export default function DistroKidStep({
       )}
 
       {!track && <p class="text-sm text-warning">Morceau requis avant distribution.</p>}
+      {track && !showResult && (
+        <p class="text-sm text-primary">
+          Rien n’est encore envoyé à Spotify. Vérifie le morceau et l’artwork, puis clique « Publier
+          via ONCE ».
+        </p>
+      )}
       {track && artworkExpired && (
         <p class="text-sm text-warning">
           Artwork Replicate expiré (URL temporaire). Régénère la jaquette à l’étape Jaquettes, puis republie sur ONCE.

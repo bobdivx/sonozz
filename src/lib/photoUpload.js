@@ -2,9 +2,18 @@
  * Compresse une image fichier en data URL JPEG (côté navigateur).
  * Cible ~900px / qualité 0.78 pour rester sous la limite Turso.
  */
+function looksLikeRasterImageFile(file) {
+  if (!file) return false;
+  const type = String(file.type || "").toLowerCase();
+  const name = String(file.name || "").toLowerCase();
+  if (/heic|heif|svg/.test(type) || /\.(heic|heif|svg)$/i.test(name)) return false;
+  if (/^image\/(jpeg|jpg|png|webp|gif|bmp)$/i.test(type)) return true;
+  return /\.(jpe?g|png|webp|gif|bmp)$/i.test(name);
+}
+
 export function fileToJpegDataUrl(file, { maxSize = 900, quality = 0.78 } = {}) {
   return new Promise((resolve, reject) => {
-    if (!file || !/^image\//i.test(file.type)) {
+    if (!looksLikeRasterImageFile(file)) {
       reject(new Error("Fichier image requis (JPEG, PNG, WebP)"));
       return;
     }

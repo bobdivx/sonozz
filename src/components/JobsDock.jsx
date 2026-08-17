@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
   Loader2,
   CheckCircle2,
@@ -11,6 +11,7 @@ import {
   Share2,
   ChevronUp,
   ChevronDown,
+  Music2,
 } from "lucide-preact";
 import {
   clearFinishedJobs,
@@ -32,6 +33,8 @@ function StatusIcon({ status }) {
 function TypeIcon({ type }) {
   if (type === "pipeline") return <Zap size={12} />;
   if (type === "step") return <Layers size={12} />;
+  if (type === "album") return <Layers size={12} />;
+  if (type === "track") return <Music2 size={12} />;
   if (type === "publish") return <Share2 size={12} />;
   return <Film size={12} />;
 }
@@ -88,8 +91,8 @@ function JobsList({ visible, active, recent }) {
       </ul>
       {active.length > 0 && (
         <p class="mt-2 px-1 text-[10px] text-base-content/40">
-          Clips (Veo / Seedance / Wan2GP) : tu peux naviguer. Étapes Studio / Auto :
-          reste sur le Studio. Album : visible sur tous les appareils du même projet.
+          Album, morceau unique, clips (Veo / Seedance / Wan2GP) : tu peux changer de page.
+          Pipeline Auto A→Z : reste sur le Studio.
         </p>
       )}
       {recent.length > 0 && (
@@ -177,20 +180,43 @@ export function JobsDockSidebar() {
 }
 
 /**
- * Tiroir Tâches en bas d’écran (mobile) — barre compacte, déroulable.
+ * Tiroir Tâches collé en bas d’écran (mobile) — barre compacte, déroulable.
+ * Le padding du contenu est géré via --sonozz-jobs-dock (hauteur réelle de la barre).
  */
 export function JobsDockMobile() {
   const { active, recent, visible } = useJobs();
   const [open, setOpen] = useState(false);
+  const barRef = useRef(null);
 
   useEffect(() => {
     if (!visible.length) setOpen(false);
   }, [visible.length]);
 
-  // Auto-ouvrir quand une tâche démarre
   useEffect(() => {
-    if (active.length > 0) setOpen(true);
-  }, [active.length > 0 ? active[0]?.id : null]);
+    const root = document.documentElement;
+    if (!visible.length) {
+      root.style.setProperty("--sonozz-jobs-dock", "0px");
+      return undefined;
+    }
+    root.style.setProperty("--sonozz-jobs-dock", "6.5rem");
+    const el = barRef.current;
+    if (!el) return undefined;
+    const apply = () => {
+      if (open) return;
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      root.style.setProperty("--sonozz-jobs-dock", `${Math.max(72, h)}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open, visible.length, active.length]);
+
+  useEffect(() => {
+    return () => {
+      document.documentElement.style.setProperty("--sonozz-jobs-dock", "0px");
+    };
+  }, []);
 
   if (!visible.length) return null;
 
@@ -200,68 +226,62 @@ export function JobsDockMobile() {
     : `${visible.length} récente${visible.length > 1 ? "s" : ""}`;
 
   return (
-    <>
-      {/* Espace pour ne pas masquer le contenu sous la barre fixe */}
-      <div class="h-[4.75rem] shrink-0 md:hidden" aria-hidden="true" />
+    <div class="pointer-events-none fixed inset-x-0 bottom-[var(--sonozz-now-playing,0px)] z-50 md:hidden">
+      {open && (
+        <button
+          type="button"
+          class="pointer-events-auto absolute inset-x-0 bottom-0 h-[100dvh] w-full bg-black/50"
+          aria-label="Fermer les tâches"
+          onClick={() => setOpen(false)}
+        />
+      )}
 
-      <div class="pointer-events-none fixed inset-x-0 bottom-0 z-50 md:hidden">
-        {open && (
-          <button
-            type="button"
-            class="pointer-events-auto absolute inset-0 h-[100dvh] w-full bg-black/50"
-            aria-label="Fermer les tâches"
-            onClick={() => setOpen(false)}
-          />
-        )}
-
-        <div
-          class={`pointer-events-auto relative border-t border-base-content/15 bg-base-200/95 shadow-[0_-8px_32px_rgba(0,0,0,0.45)] backdrop-blur-md safe-bottom transition-[max-height] duration-300 ease-out ${
-            open ? "max-h-[70dvh]" : "max-h-none"
-          }`}
+      <div
+        ref={barRef}
+        class="pointer-events-auto relative border-t border-base-content/15 bg-base-200 shadow-[0_-8px_32px_rgba(0,0,0,0.45)] safe-bottom"
+      >
+        <button
+          type="button"
+          class="flex w-full items-center gap-3 px-4 py-2.5 text-left touch-manipulation active:bg-base-content/5"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
         >
-          <button
-            type="button"
-            class="flex w-full items-center gap-3 px-4 py-3 text-left touch-manipulation active:bg-base-content/5"
-            aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
-          >
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-base-300">
-              {active.length ? (
-                <Loader2 size={16} class="animate-spin text-primary" />
-              ) : (
-                <CheckCircle2 size={16} class="text-success" />
-              )}
-            </span>
-            <div class="min-w-0 flex-1">
-              <p class="text-[11px] font-semibold uppercase tracking-wider text-base-content/50">
-                Tâches · {label}
-              </p>
-              <p class="truncate text-sm font-medium">{head?.label}</p>
-              {!open && head?.message ? (
-                <p class="truncate text-[11px] text-base-content/50">{head.message}</p>
-              ) : null}
-              {!open && active.length > 0 ? (
-                <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-base-300">
-                  <div
-                    class="h-full bg-primary transition-all"
-                    style={{ width: `${Math.max(4, head?.progress || 0)}%` }}
-                  />
-                </div>
-              ) : null}
-            </div>
-            <span class="text-base-content/50">
-              {open ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
-            </span>
-          </button>
+          <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-base-300">
+            {active.length ? (
+              <Loader2 size={16} class="animate-spin text-primary" />
+            ) : (
+              <CheckCircle2 size={16} class="text-success" />
+            )}
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-base-content/50">
+              Tâches · {label}
+            </p>
+            <p class="truncate text-sm font-medium">{head?.label}</p>
+            {!open && head?.message ? (
+              <p class="truncate text-[11px] text-base-content/50">{head.message}</p>
+            ) : null}
+            {!open && active.length > 0 ? (
+              <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-base-300">
+                <div
+                  class="h-full bg-primary transition-all"
+                  style={{ width: `${Math.max(4, head?.progress || 0)}%` }}
+                />
+              </div>
+            ) : null}
+          </div>
+          <span class="text-base-content/50">
+            {open ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
+          </span>
+        </button>
 
-          {open && (
-            <div class="max-h-[min(55dvh,420px)] overflow-y-auto border-t border-base-content/10 px-3 pb-3 pt-2">
-              <JobsList visible={visible} active={active} recent={recent} />
-            </div>
-          )}
-        </div>
+        {open && (
+          <div class="max-h-[min(55dvh,420px)] overflow-y-auto border-t border-base-content/10 px-3 pb-3 pt-2">
+            <JobsList visible={visible} active={active} recent={recent} />
+          </div>
+        )}
       </div>
-    </>
+    </div>
   );
 }
 

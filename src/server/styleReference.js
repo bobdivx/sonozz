@@ -1,6 +1,8 @@
 import { getSpotifyAccess, spotifySearchContext } from "./spotify.js";
 import { llmJson, requireTextLlm } from "./llm.js";
 import { listenArtistPreviewDna } from "./musicListen.js";
+import { inferLanguageFromStyleRef, normalizeCatalogCountry } from "../lib/studio.js";
+import { parseGenderCode } from "../lib/artistGender.js";
 
 function norm(s) {
   return String(s || "")
@@ -19,6 +21,61 @@ function titleCaseGenre(g) {
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(" ");
+}
+
+function uniqGenres(list = []) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(list) ? list : [list]) {
+    const g = String(raw || "").trim();
+    if (!g) continue;
+    const key = norm(g);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(g);
+  }
+  return out;
+}
+
+const ARTIST_SOURCE_RANK = { spotify: 4, itunes: 3, deezer: 2, musicbrainz: 1 };
+
+/**
+ * Déduplique par nom : garde la meilleure source, mais fusionne les genres
+ * (Deezer gagne souvent au score fans tout en ayant genres vides).
+ */
+export function mergeArtistCandidatesByName(list = []) {
+  const byName = new Map();
+  for (const c of list) {
+    const key = norm(c?.name);
+    if (!key) continue;
+    const prev = byName.get(key);
+    if (!prev) {
+      byName.set(key, { ...c, genres: uniqGenres(c.genres) });
+      continue;
+    }
+    const betterScore = c.matchScore > prev.matchScore + 5;
+    const betterSource =
+      Math.abs(c.matchScore - prev.matchScore) <= 5 &&
+      (ARTIST_SOURCE_RANK[c.source] || 0) > (ARTIST_SOURCE_RANK[prev.source] || 0);
+    const winner = betterScore || betterSource ? c : prev;
+    const other = winner === c ? prev : c;
+    byName.set(key, {
+      ...winner,
+      genres: uniqGenres([...(winner.genres || []), ...(other.genres || [])]),
+      followers: winner.followers ?? other.followers ?? null,
+      image: winner.image || other.image || null,
+      url: winner.url || other.url || null,
+      country:
+        normalizeCatalogCountry(winner.country) ||
+        normalizeCatalogCountry(other.country) ||
+        winner.country ||
+        other.country ||
+        null,
+      language: winner.language || other.language || null,
+      gender: winner.gender || other.gender || null,
+    });
+  }
+  return [...byName.values()];
 }
 
 /** Score de matching nom artiste (exact > préfixe > inclusion > fuzzy). */
@@ -433,7 +490,8 @@ async function hydrateDeezerCatalog(hit, matchScore = 1000) {
 }
 
 async function listMusicBrainzCandidates(query) {
-  const q = encodeURIComponent(query);
+  const raw = String(query || "").trim();
+  const q = encodeURIComponent(`artist:"${raw}" OR ${raw}`);
   const res = await fetch(
     `https://musicbrainz.org/ws/2/artist/?query=${q}&fmt=json&limit=8`,
     {
@@ -461,7 +519,12 @@ async function listMusicBrainzCandidates(query) {
       url: `https://musicbrainz.org/artist/${a.id}`,
       // score MB 0–100 → boost matching nominal
       matchScore: nameMatchScore(a.name, query) + Math.min(80, Number(a.score) || 0) * 0.5,
-      country: a.country || a.area?.name || null,
+      country:
+        normalizeCatalogCountry(a.country) ||
+        normalizeCatalogCountry(a.area?.name) ||
+        a.country ||
+        null,
+      gender: parseGenderCode(a.gender) || null,
     }))
     .sort((x, y) => y.matchScore - x.matchScore)
     .slice(0, 6);
@@ -485,6 +548,9 @@ async function resolveMusicBrainzViaItunes(mbHits, query) {
           ...exact,
           matchScore: Math.max(exact.matchScore, hit.matchScore) + 20,
           genres: exact.genres?.length ? exact.genres : hit.genres,
+          country: exact.country || hit.country || null,
+          language: exact.language || hit.language || null,
+          gender: exact.gender || hit.gender || null,
         });
       } else if (nameMatchScore(hit.name, query) >= 500) {
         out.push(hit);
@@ -573,25 +639,13 @@ export async function searchStyleArtistCandidates(keys, artistName) {
 
   const mbResolved = await resolveMusicBrainzViaItunes(musicbrainz, query).catch(() => musicbrainz);
 
-  // Dédupliquer par nom normalisé — priorité : exact match > Spotify > iTunes > Deezer > MB
-  const sourceRank = { spotify: 4, itunes: 3, deezer: 2, musicbrainz: 1 };
-  const byName = new Map();
-  for (const c of [...spotify, ...itunes, ...deezer, ...mbResolved]) {
-    const key = norm(c.name);
-    if (!key) continue;
-    const prev = byName.get(key);
-    if (!prev) {
-      byName.set(key, c);
-      continue;
-    }
-    const betterScore = c.matchScore > prev.matchScore + 5;
-    const betterSource =
-      Math.abs(c.matchScore - prev.matchScore) <= 5 &&
-      (sourceRank[c.source] || 0) > (sourceRank[prev.source] || 0);
-    if (betterScore || betterSource) byName.set(key, c);
-  }
-
-  const ranked = [...byName.values()].sort((a, b) => b.matchScore - a.matchScore);
+  const ranked = mergeArtistCandidatesByName([
+    ...spotify,
+    ...itunes,
+    ...deezer,
+    ...mbResolved,
+    ...musicbrainz,
+  ]).sort((a, b) => b.matchScore - a.matchScore);
   const best = ranked[0]?.matchScore || 0;
   const candidates = ranked
     .filter((c) => {
@@ -604,6 +658,14 @@ export async function searchStyleArtistCandidates(keys, artistName) {
     .map(({ matchScore, ...rest }) => ({
       ...rest,
       matchScore: Math.round(matchScore),
+      language:
+        rest.language ||
+        inferLanguageFromStyleRef({
+          country: rest.country,
+          genres: rest.genres,
+        }) ||
+        undefined,
+      gender: rest.gender || undefined,
     }));
 
   return {
@@ -1157,6 +1219,204 @@ export async function resolveStyleReferences(keys, picks = []) {
   const merged = mergeStyleLocks(locks);
   if (errors.length) merged.resolveWarnings = errors;
   return merged;
+}
+
+/**
+ * Classe / déduplique les titres phares d’un artiste (preview + match nom d’abord).
+ */
+export function rankArtistTopTracks(raw = [], artistName = "") {
+  const want = norm(artistName);
+  const scored = raw.map((c, i) => {
+    const artist = norm(c.artistName);
+    const same =
+      Boolean(want) &&
+      (artist === want || artist.includes(want) || want.includes(artist));
+    return {
+      c,
+      score: (same ? 80 : 0) + (c.previewUrl ? 25 : 0) + Math.max(0, 12 - i),
+    };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  const byName = new Map();
+  for (const { c } of scored) {
+    const key = `${norm(c.name)}|${norm(c.artistName)}`;
+    if (key.startsWith("|")) continue;
+    const prev = byName.get(key);
+    if (!prev) {
+      byName.set(key, { ...c, genres: uniqGenres(c.genres) });
+      continue;
+    }
+    prev.genres = uniqGenres([...(prev.genres || []), ...(c.genres || [])]);
+    if (!prev.previewUrl && c.previewUrl) prev.previewUrl = c.previewUrl;
+    if (!prev.image && c.image) prev.image = c.image;
+  }
+  return [...byName.values()].slice(0, 8);
+}
+
+function trackFromDeezer(t) {
+  if (!t?.id) return null;
+  return {
+    source: "deezer",
+    id: String(t.id),
+    name: t.title || t.title_short || "Sans titre",
+    artistName: t.artist?.name || "",
+    artistId: t.artist?.id != null ? String(t.artist.id) : undefined,
+    album: t.album?.title || "",
+    image: t.album?.cover_medium || t.album?.cover || null,
+    previewUrl: t.preview || null,
+    duration: t.duration || null,
+    url: t.link || `https://www.deezer.com/track/${t.id}`,
+    genres: [],
+  };
+}
+
+function trackFromItunes(t) {
+  if (!t?.trackId) return null;
+  return {
+    source: "itunes",
+    id: String(t.trackId),
+    name: t.trackName || "Sans titre",
+    artistName: t.artistName || "",
+    artistId: t.artistId != null ? String(t.artistId) : undefined,
+    album: t.collectionName || "",
+    image: t.artworkUrl100?.replace("100x100", "300x300") || t.artworkUrl60 || null,
+    previewUrl: t.previewUrl || null,
+    duration: t.trackTimeMillis ? Math.round(t.trackTimeMillis / 1000) : null,
+    url: t.trackViewUrl || null,
+    genres: t.primaryGenreName ? [titleCaseGenre(t.primaryGenreName)] : [],
+  };
+}
+
+function trackFromSpotify(t) {
+  if (!t?.id) return null;
+  return {
+    source: "spotify",
+    id: String(t.id),
+    name: t.name || "Sans titre",
+    artistName: (t.artists || []).map((a) => a.name).filter(Boolean).join(", "),
+    artistId: t.artists?.[0]?.id ? String(t.artists[0].id) : undefined,
+    album: t.album?.name || "",
+    image: t.album?.images?.[1]?.url || t.album?.images?.[0]?.url || null,
+    previewUrl: t.preview_url || null,
+    duration: t.duration_ms ? Math.round(t.duration_ms / 1000) : null,
+    url: t.external_urls?.spotify || null,
+    genres: [],
+  };
+}
+
+async function deezerTopTracksForArtistName(name) {
+  const q = String(name || "").trim();
+  if (q.length < 2) return [];
+  const enc = encodeURIComponent(q);
+  const searchRes = await fetch(`https://api.deezer.com/search/artist?q=${enc}&limit=5`);
+  if (!searchRes.ok) return [];
+  const search = await searchRes.json();
+  const hit =
+    (search.data || []).find((a) => nameMatchScore(a.name, q) >= 500) || (search.data || [])[0];
+  if (!hit?.id) return [];
+  const topRes = await fetch(`https://api.deezer.com/artist/${hit.id}/top?limit=8`);
+  if (!topRes.ok) return [];
+  const top = await topRes.json();
+  return (top.data || []).map(trackFromDeezer).filter(Boolean);
+}
+
+/**
+ * Titres les plus connus d’un artiste de référence (Deezer top + catalogue source).
+ */
+export async function listArtistTopTrackCandidates(keys, artistPick) {
+  const source = String(artistPick?.source || "").trim();
+  const id = String(artistPick?.id || "").trim();
+  const name = String(artistPick?.name || "").trim();
+  if (!id && name.length < 2) return { candidates: [], sources: [] };
+
+  const raw = [];
+  const sources = [];
+
+  const tasks = [];
+
+  if (name) {
+    tasks.push(
+      deezerTopTracksForArtistName(name)
+        .then((list) => {
+          if (list.length) sources.push("deezer");
+          raw.push(...list);
+        })
+        .catch(() => {}),
+    );
+    const enc = encodeURIComponent(name);
+    tasks.push(
+      fetch(
+        `https://itunes.apple.com/search?term=${enc}&entity=song&attribute=artistTerm&limit=12`,
+      )
+        .then(async (res) => {
+          if (!res.ok) return;
+          const data = await res.json();
+          const tracks = (data.results || [])
+            .filter((r) => r.wrapperType === "track" || r.trackId)
+            .filter((r) => nameMatchScore(r.artistName, name) >= 500)
+            .map(trackFromItunes)
+            .filter(Boolean);
+          if (tracks.length) sources.push("itunes");
+          raw.push(...tracks);
+        })
+        .catch(() => {}),
+    );
+  }
+
+  if (source === "deezer" && id) {
+    tasks.push(
+      fetch(`https://api.deezer.com/artist/${encodeURIComponent(id)}/top?limit=8`)
+        .then(async (res) => {
+          if (!res.ok) return;
+          const top = await res.json();
+          sources.push("deezer");
+          raw.push(...(top.data || []).map(trackFromDeezer).filter(Boolean));
+        })
+        .catch(() => {}),
+    );
+  }
+
+  if (source === "itunes" && id) {
+    tasks.push(
+      fetch(`https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}&entity=song&limit=12`)
+        .then(async (res) => {
+          if (!res.ok) return;
+          const data = await res.json();
+          sources.push("itunes");
+          raw.push(
+            ...(data.results || [])
+              .filter((r) => r.wrapperType === "track" || r.trackId)
+              .map(trackFromItunes)
+              .filter(Boolean),
+          );
+        })
+        .catch(() => {}),
+    );
+  }
+
+  if (source === "spotify" && id) {
+    tasks.push(
+      getSpotifyAccess(keys)
+        .then(async (access) => {
+          if (!access?.token) return;
+          const res = await fetch(
+            `https://api.spotify.com/v1/artists/${encodeURIComponent(id)}/top-tracks?market=FR`,
+            { headers: { Authorization: `Bearer ${access.token}` } },
+          );
+          if (!res.ok) return;
+          const data = await res.json();
+          sources.push("spotify");
+          raw.push(...(data.tracks || []).map(trackFromSpotify).filter(Boolean));
+        })
+        .catch(() => {}),
+    );
+  }
+
+  await Promise.all(tasks);
+  return {
+    candidates: rankArtistTopTracks(raw, name),
+    sources: [...new Set(sources)],
+  };
 }
 
 /**

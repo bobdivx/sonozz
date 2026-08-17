@@ -4,6 +4,7 @@ import {
   parseGenderCode,
   resolveArtistGender,
   withResolvedArtistGender,
+  inferGenderFromStyleRef,
 } from "../src/lib/artistGender.js";
 
 describe("resolveArtistGender", () => {
@@ -46,5 +47,18 @@ describe("resolveArtistGender", () => {
       parseGenderCode("25-year-old adult man, male singer, clearly masculine face"),
       "male",
     );
+  });
+
+  it("parse le sexe MusicBrainz Female / Male", () => {
+    assert.equal(parseGenderCode("Female"), "female");
+    assert.equal(parseGenderCode("Male"), "male");
+  });
+});
+
+describe("inferGenderFromStyleRef", () => {
+  it("lit le sexe d’un artiste catalogue", () => {
+    assert.equal(inferGenderFromStyleRef({ gender: "female" }), "female");
+    assert.equal(inferGenderFromStyleRef({ gender: "Female" }), "female");
+    assert.equal(inferGenderFromStyleRef({}), null);
   });
 });

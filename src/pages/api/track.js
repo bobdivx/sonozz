@@ -72,7 +72,7 @@ export async function POST({ request }) {
       try {
         const info = await testAceStep(body?.keys || {});
         return json({
-          ok: true,
+          ok: info.pipelineUp !== false,
           base: info.base,
           activeModel: info.activeModel || null,
           pickedModel: info.pickedModel || null,
@@ -81,6 +81,7 @@ export async function POST({ request }) {
           preferredModel: info.preferredModel || null,
           gpu: info.gpu || null,
           hasReadyModel: info.hasReadyModel,
+          pipelineUp: info.pipelineUp,
           message: info.message || "Joignable",
         });
       } catch (e) {

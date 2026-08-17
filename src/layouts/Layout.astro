@@ -1,5 +1,7 @@
 ---
 import "../styles/global.css";
+import { ClientRouter } from "astro:transitions";
+import NowPlayingBar from "../components/NowPlayingBar.jsx";
 
 interface Props {
   title?: string;
@@ -27,10 +29,12 @@ const {
       rel="stylesheet"
     />
     <title>{title}</title>
+    <ClientRouter fallback="swap" />
   </head>
   <body>
     <main id="root-app">
       <slot />
     </main>
+    <NowPlayingBar client:load transition:persist="sonozz-now-playing" transition:persist-props />
   </body>
 </html>

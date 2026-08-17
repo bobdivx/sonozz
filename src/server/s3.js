@@ -122,8 +122,38 @@ function publicUrlForKey(key) {
   return `https://${cfg.bucket}.s3.${cfg.region}.amazonaws.com/${cleanKey}`;
 }
 
+function hostnameOf(value = "") {
+  try {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const u = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    return u.hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/** True seulement pour notre bucket / CDN — pas ACE-Step ni un autre /audio/…. */
+export function isOurS3Hostname(hostname, cfg = getS3Config()) {
+  const host = String(hostname || "").toLowerCase();
+  if (!host) return false;
+  const bucket = String(cfg.bucket || "").toLowerCase();
+  if (bucket && (host === bucket || host.startsWith(`${bucket}.`))) return true;
+  if (/sonozz/i.test(host)) return true;
+  const publicHost = hostnameOf(cfg.publicBase);
+  if (publicHost && host === publicHost) return true;
+  const endpointHost = hostnameOf(cfg.endpoint);
+  if (endpointHost && (host === endpointHost || (bucket && host === `${bucket}.${endpointHost}`))) {
+    return true;
+  }
+  const region = String(cfg.region || "").toLowerCase();
+  if (bucket && region && host === `${bucket}.s3.${region}.amazonaws.com`) return true;
+  return false;
+}
+
 /**
  * Extrait une clé objet `audio/…` ou `clips/…` depuis une URL S3 sonozz / Scaleway.
+ * Ignore les hôtes étrangers (ACE-Step `/audio/…` n'est pas une clé bucket).
  * @returns {string|null}
  */
 export function tryParseS3ObjectKey(urlOrKey = "") {
@@ -136,21 +166,13 @@ export function tryParseS3ObjectKey(urlOrKey = "") {
   try {
     const u = new URL(raw);
     const cfg = getS3Config();
+    if (!isOurS3Hostname(u.hostname, cfg)) return null;
     let path = decodeURIComponent(u.pathname.replace(/^\//, ""));
     // path-style : /bucket/audio/...
     if (cfg.bucket && path.startsWith(`${cfg.bucket}/`)) {
       path = path.slice(cfg.bucket.length + 1);
     }
     if (/^(audio|clips)\//i.test(path) && !path.includes("..")) return path;
-    // virtual-host bucket.s3…/audio/...
-    if (
-      cfg.bucket &&
-      (u.hostname === cfg.bucket ||
-        u.hostname.startsWith(`${cfg.bucket}.`) ||
-        /sonozz/i.test(u.hostname))
-    ) {
-      if (/^(audio|clips)\//i.test(path) && !path.includes("..")) return path;
-    }
   } catch {
     /* ignore */
   }

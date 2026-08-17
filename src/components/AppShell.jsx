@@ -39,6 +39,13 @@ export default function AppShell({ active, children, title, subtitle }) {
       .catch(() => setAuthed(false));
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.sonozzNav = authed ? "sidebar" : "";
+    return () => {
+      document.documentElement.dataset.sonozzNav = "";
+    };
+  }, [authed]);
+
   async function logout() {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
@@ -81,7 +88,9 @@ export default function AppShell({ active, children, title, subtitle }) {
           </div>
         )}
 
-        <div class="mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6">{children}</div>
+        <div class="mx-auto max-w-4xl px-3 py-4 pb-[max(1rem,var(--sonozz-now-playing,0px))] sm:px-6 sm:py-6">
+          {children}
+        </div>
       </div>
     );
   }
@@ -185,7 +194,9 @@ export default function AppShell({ active, children, title, subtitle }) {
             )}
           </header>
         )}
-        <div class="px-3 py-4 sm:px-4 sm:py-6 md:px-8 md:py-8">{children}</div>
+        <div class="px-3 py-4 pb-[max(1rem,calc(var(--sonozz-jobs-dock,0px)+var(--sonozz-now-playing,0px)))] sm:px-4 sm:py-6 md:px-8 md:py-8 md:pb-[max(2rem,var(--sonozz-now-playing,0px))]">
+          {children}
+        </div>
       </div>
 
       <JobsDockMobile />

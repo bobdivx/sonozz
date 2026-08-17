@@ -95,6 +95,29 @@ function StepModal({ open, title, onClose, children, wide = false }) {
   );
 }
 
+function styleArtistPickFromArtist(artist) {
+  if (artist?.styleArtistPick?.id) return artist.styleArtistPick;
+  const lock = artist?.styleLock;
+  if (lock?.sourceId && lock.source !== "multi") {
+    return {
+      source: lock.source,
+      id: String(lock.sourceId),
+      name: artist.styleArtist || lock.matchedName,
+      genres: lock.genres || [],
+    };
+  }
+  const ref = lock?.refs?.[0];
+  if (ref?.source && ref.sourceId) {
+    return {
+      source: ref.source,
+      id: String(ref.sourceId),
+      name: ref.matchedName,
+      genres: ref.genres || [],
+    };
+  }
+  return null;
+}
+
 export default function TracksStep({
   track,
   versions = [],
@@ -947,6 +970,12 @@ export default function TracksStep({
         ) : null}
       </div>
 
+      {loading ? (
+        <p class="text-xs text-base-content/50">
+          Tu peux changer de page : la génération continue dans Tâches.
+        </p>
+      ) : null}
+
       {loading && typeof progress?.percent === "number" && (
         <div class="space-y-1.5" aria-live="polite">
           <div class="h-2 overflow-hidden rounded-full bg-base-300">
@@ -1244,6 +1273,7 @@ export default function TracksStep({
         <div class="space-y-3">
           <StyleTrackPicker
             pick={styleTrackPick}
+            artistPick={styleArtistPickFromArtist(artist)}
             disabled={loading || styleTrackBusy}
             label="Titre de référence"
             hint="Optionnel — recalibre le styleLock sur CE titre (preview DNA) avant de générer."

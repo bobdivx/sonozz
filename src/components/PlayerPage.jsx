@@ -14,7 +14,23 @@ import {
   Disc3,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
-import { playableAudioSrc } from "../lib/audioResolve.js";
+import {
+  bindMediaSession,
+  cyclePlayRepeat,
+  getPlayAudio,
+  playIndex,
+  seekTo,
+  setPlayShuffle,
+  skipTrack,
+  startPlayback,
+  togglePlay,
+} from "../lib/playEngine.js";
+import {
+  currentPlayTrack,
+  readPlaySession,
+  setPlayExpanded,
+  subscribePlaySession,
+} from "../lib/playSession.js";
 
 function formatTime(sec) {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
@@ -43,7 +59,6 @@ function shuffleCopy(list) {
 }
 
 export default function PlayerPage() {
-  const audioRef = useRef(null);
   const seekRef = useRef(null);
   const touchRef = useRef({ x: 0, y: 0 });
 
@@ -53,22 +68,58 @@ export default function PlayerPage() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState("titres"); // titres | artistes | file
   const [filterArtist, setFilterArtist] = useState("");
-  const [queue, setQueue] = useState([]);
-  const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(false);
+  const [session, setSession] = useState(() =>
+    typeof window === "undefined"
+      ? { queue: [], index: 0, playing: false, shuffle: false, repeat: "off" }
+      : readPlaySession(),
+  );
+  const [expanded, setExpanded] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [shuffle, setShuffle] = useState(false);
-  const [repeat, setRepeat] = useState("off"); // off | all | one
-  const [expanded, setExpanded] = useState(false);
   const [audioError, setAudioError] = useState("");
   const seekingRef = useRef(false);
 
-  const current = queue[index] || null;
+  const queue = session.queue || [];
+  const index = session.index || 0;
+  const playing = Boolean(session.playing);
+  const shuffle = Boolean(session.shuffle);
+  const repeat = session.repeat || "off";
+  const current = currentPlayTrack(session);
 
   const visibleTracks = filterArtist
     ? tracks.filter((t) => t.slug === filterArtist)
     : tracks;
+
+  useEffect(() => {
+    return subscribePlaySession(setSession);
+  }, []);
+
+  useEffect(() => {
+    setPlayExpanded(expanded);
+    return () => setPlayExpanded(false);
+  }, [expanded]);
+
+  useEffect(() => {
+    const collapseIfLeft = () => {
+      if (typeof location !== "undefined" && location.pathname !== "/play") {
+        setExpanded(false);
+        setPlayExpanded(false);
+      }
+    };
+    document.addEventListener("astro:after-swap", collapseIfLeft);
+    return () => document.removeEventListener("astro:after-swap", collapseIfLeft);
+  }, []);
+
+  useEffect(() => {
+    const open = () => setExpanded(true);
+    const close = () => setExpanded(false);
+    window.addEventListener("sonozz-play-open", open);
+    window.addEventListener("sonozz-play-close", close);
+    return () => {
+      window.removeEventListener("sonozz-play-open", open);
+      window.removeEventListener("sonozz-play-close", close);
+    };
+  }, []);
 
   // Chargement bibliothèque
   useEffect(() => {
@@ -89,19 +140,20 @@ export default function PlayerPage() {
         if (q.artist) {
           const filtered = list.filter((t) => t.slug === q.artist);
           if (filtered.length) {
-            setQueue(filtered);
             const ti = q.track ? filtered.findIndex((t) => t.id === q.track) : 0;
-            setIndex(ti >= 0 ? ti : 0);
+            startPlayback({
+              queue: filtered,
+              index: ti >= 0 ? ti : 0,
+              shuffle,
+              play: Boolean(q.play),
+            });
             setExpanded(true);
-            if (q.play) setPlaying(true);
           }
         } else if (q.track) {
           const ti = list.findIndex((t) => t.id === q.track);
           if (ti >= 0) {
-            setQueue(list);
-            setIndex(ti);
+            startPlayback({ queue: list, index: ti, shuffle, play: Boolean(q.play) });
             setExpanded(true);
-            if (q.play) setPlaying(true);
           }
         }
       } catch (e) {
@@ -112,54 +164,35 @@ export default function PlayerPage() {
     })();
   }, []);
 
-  // Charger / jouer la piste courante
+  // Horloge audio globale
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !current?.audioUrl) return;
+    const el = getPlayAudio();
+    if (!el) return;
+    const onTime = () => {
+      if (seekingRef.current) return;
+      setCurrentTime(el.currentTime || 0);
+      if (Number.isFinite(el.duration)) setDuration(el.duration);
+    };
+    const onErr = () =>
+      setAudioError("Impossible de lire ce fichier — lien expiré ou audio manquant.");
+    el.addEventListener("timeupdate", onTime);
+    el.addEventListener("loadedmetadata", onTime);
+    el.addEventListener("durationchange", onTime);
+    el.addEventListener("error", onErr);
+    onTime();
+    return () => {
+      el.removeEventListener("timeupdate", onTime);
+      el.removeEventListener("loadedmetadata", onTime);
+      el.removeEventListener("durationchange", onTime);
+      el.removeEventListener("error", onErr);
+    };
+  }, [current?.id]);
 
-    setAudioError("");
-    const src = playableAudioSrc(current.audioUrl, current.audioS3Key);
-    if (audio.dataset.trackId !== current.id) {
-      audio.dataset.trackId = current.id;
-      audio.src = src;
-      audio.load();
-    }
-
-    if (playing) {
-      audio.play().catch((e) => {
-        setPlaying(false);
-        setAudioError(e.message || "Lecture bloquée — appuie sur play");
-      });
-    } else {
-      audio.pause();
-    }
-  }, [current?.id, current?.audioUrl, playing]);
-
-  // Media Session
   useEffect(() => {
-    if (!("mediaSession" in navigator) || !current) return;
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: current.trackTitle || "Sans titre",
-      artist: current.artistName || "SONOZZ",
-      album: current.artistName || "SONOZZ",
-      artwork: current.coverUrl
-        ? [{ src: current.coverUrl, sizes: "512x512", type: "image/jpeg" }]
-        : [{ src: "/logo.png", sizes: "512x512", type: "image/png" }],
-    });
-    navigator.mediaSession.setActionHandler("play", () => setPlaying(true));
-    navigator.mediaSession.setActionHandler("pause", () => setPlaying(false));
-    navigator.mediaSession.setActionHandler("previoustrack", () => goPrev());
-    navigator.mediaSession.setActionHandler("nexttrack", () => goNext());
-    navigator.mediaSession.setActionHandler("seekto", (details) => {
-      const audio = audioRef.current;
-      if (audio && details.seekTime != null) {
-        audio.currentTime = details.seekTime;
-        setCurrentTime(details.seekTime);
-      }
-    });
-  }, [current, queue, index, repeat, shuffle]);
+    bindMediaSession();
+  }, [current?.id, queue.length, index, repeat, shuffle]);
 
-  function playList(list, startId = null, { expand = true } = {}) {
+  function playList(list, startId = null, { expand = false } = {}) {
     if (!list.length) return;
     const ordered = shuffle ? shuffleCopy(list) : [...list];
     let i = 0;
@@ -167,9 +200,7 @@ export default function PlayerPage() {
       const found = ordered.findIndex((t) => t.id === startId);
       if (found >= 0) i = found;
     }
-    setQueue(ordered);
-    setIndex(i);
-    setPlaying(true);
+    startPlayback({ queue: ordered, index: i, shuffle, repeat });
     if (expand) setExpanded(true);
   }
 
@@ -191,68 +222,21 @@ export default function PlayerPage() {
   }
 
   function goNext() {
-    if (!queue.length) return;
-    if (repeat === "one") {
-      const audio = audioRef.current;
-      if (audio) {
-        audio.currentTime = 0;
-        audio.play().catch(() => {});
-        setPlaying(true);
-      }
-      return;
-    }
-    if (index < queue.length - 1) {
-      setIndex((i) => i + 1);
-      setPlaying(true);
-      return;
-    }
-    if (repeat === "all") {
-      setIndex(0);
-      setPlaying(true);
-      return;
-    }
-    setPlaying(false);
+    skipTrack(1);
   }
 
   function goPrev() {
-    const audio = audioRef.current;
-    if (audio && audio.currentTime > 3) {
-      audio.currentTime = 0;
-      setCurrentTime(0);
-      return;
-    }
-    if (index > 0) {
-      setIndex((i) => i - 1);
-      setPlaying(true);
-    } else if (repeat === "all" && queue.length) {
-      setIndex(queue.length - 1);
-      setPlaying(true);
-    } else if (audio) {
-      audio.currentTime = 0;
-      setCurrentTime(0);
-    }
-  }
-
-  function onEnded() {
-    goNext();
-  }
-
-  function onTimeUpdate() {
-    if (seekingRef.current) return;
-    const audio = audioRef.current;
-    if (!audio) return;
-    setCurrentTime(audio.currentTime);
-    if (Number.isFinite(audio.duration)) setDuration(audio.duration);
+    skipTrack(-1);
   }
 
   function seekToClientX(clientX) {
     const el = seekRef.current;
-    const audio = audioRef.current;
+    const audio = getPlayAudio();
     if (!el || !audio || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
     const rect = el.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
     const t = ratio * audio.duration;
-    audio.currentTime = t;
+    seekTo(t);
     setCurrentTime(t);
   }
 
@@ -273,19 +257,11 @@ export default function PlayerPage() {
   }
 
   function cycleRepeat() {
-    setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"));
+    cyclePlayRepeat();
   }
 
   function toggleShuffle() {
-    setShuffle((s) => {
-      const next = !s;
-      if (queue.length && current) {
-        const rest = queue.filter((t) => t.id !== current.id);
-        setQueue(next ? [current, ...shuffleCopy(rest)] : [current, ...rest]);
-        setIndex(0);
-      }
-      return next;
-    });
+    setPlayShuffle(!shuffle, current);
   }
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
@@ -304,23 +280,7 @@ export default function PlayerPage() {
       title="Play"
       subtitle="Lecteur tactile — tous les titres, un artiste, ou ta file d’attente."
     >
-      <audio
-        ref={audioRef}
-        preload="metadata"
-        onTimeUpdate={onTimeUpdate}
-        onEnded={onEnded}
-        onLoadedMetadata={onTimeUpdate}
-        onError={() =>
-          setAudioError("Impossible de lire ce fichier — lien expiré ou audio manquant.")
-        }
-        class="hidden"
-      />
-
-      <div
-        class={`mx-auto max-w-4xl pb-28 sm:pb-32 ${
-          current && !expanded ? "pb-36 sm:pb-40" : ""
-        }`}
-      >
+      <div class="mx-auto max-w-4xl pb-[max(2rem,var(--sonozz-now-playing,0px))]">
         {/* Filtres / actions */}
         <div class="mb-4 flex flex-wrap items-center gap-2 sm:mb-6 sm:gap-3">
           <button
@@ -510,8 +470,7 @@ export default function PlayerPage() {
                     i === index ? "bg-primary/10 text-primary" : ""
                   }`}
                   onClick={() => {
-                    setIndex(i);
-                    setPlaying(true);
+                    playIndex(i);
                     setExpanded(true);
                   }}
                 >
@@ -534,53 +493,9 @@ export default function PlayerPage() {
         )}
       </div>
 
-      {/* Mini-lecteur (bas d’écran) */}
-      {current && !expanded && (
-        <div class="fixed inset-x-0 bottom-0 z-50 border-t border-base-content/10 bg-base-200/95 backdrop-blur-md safe-bottom">
-          <button
-            type="button"
-            class="flex w-full min-h-[4.5rem] items-center gap-3 px-3 py-2.5 text-left touch-manipulation active:bg-base-content/5 sm:min-h-[5.5rem] sm:gap-4 sm:px-4 sm:py-3"
-            onClick={() => setExpanded(true)}
-          >
-            {cover ? (
-              <img
-                src={cover}
-                alt=""
-                class="h-12 w-12 shrink-0 object-cover sm:h-16 sm:w-16"
-                width="64"
-                height="64"
-              />
-            ) : (
-              <div class="flex h-12 w-12 shrink-0 items-center justify-center bg-base-300 sm:h-16 sm:w-16">
-                <Music2 size={22} class="opacity-40" />
-              </div>
-            )}
-            <div class="min-w-0 flex-1">
-              <p class="truncate text-base font-semibold sm:text-lg">{current.trackTitle}</p>
-              <p class="truncate text-xs text-base-content/50 sm:text-sm">{current.artistName}</p>
-            </div>
-            <span
-              class="btn btn-primary btn-circle h-12 w-12 min-h-12 min-w-12 touch-manipulation sm:h-16 sm:w-16 sm:min-h-16 sm:min-w-16"
-              onClick={(e) => {
-                e.stopPropagation();
-                setPlaying((p) => !p);
-              }}
-            >
-              {playing ? <Pause size={24} /> : <Play size={24} fill="currentColor" />}
-            </span>
-          </button>
-          <div class="h-1 bg-base-content/10 sm:h-1.5">
-            <div
-              class="h-full bg-primary transition-[width] duration-150"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
-      )}
-
       {/* Now playing plein écran */}
       {current && expanded && (
-        <div class="fixed inset-0 z-[60] flex flex-col overflow-hidden bg-base-200/98 backdrop-blur-xl animate-rise">
+        <div class="fixed inset-x-0 top-0 bottom-[var(--sonozz-now-playing,5.25rem)] z-[60] flex flex-col overflow-hidden bg-base-200/98 backdrop-blur-xl animate-rise">
           <div class="flex shrink-0 items-center justify-between px-2 pb-1 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-4 sm:pb-2 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
             <button
               type="button"
@@ -606,7 +521,7 @@ export default function PlayerPage() {
             </button>
           </div>
 
-          <div class="flex min-h-0 flex-1 flex-col justify-between gap-3 overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:justify-center sm:gap-0 sm:px-6 sm:pb-[max(1.75rem,env(safe-area-inset-bottom))] md:px-16">
+          <div class="flex min-h-0 flex-1 flex-col justify-between gap-3 overflow-y-auto overscroll-contain px-4 pb-4 sm:justify-center sm:gap-0 sm:px-6 sm:pb-6 md:px-16">
             <div
               class="mx-auto w-full max-w-lg shrink-0 touch-manipulation select-none"
               onTouchStart={onCoverTouchStart}
@@ -718,7 +633,7 @@ export default function PlayerPage() {
                 type="button"
                 class="btn btn-primary btn-circle h-16 w-16 min-h-16 min-w-16 touch-manipulation shadow-lg shadow-primary/25 sm:h-24 sm:w-24 sm:min-h-24 sm:min-w-24"
                 aria-label={playing ? "Pause" : "Lecture"}
-                onClick={() => setPlaying((p) => !p)}
+                onClick={() => togglePlay()}
               >
                 {playing ? (
                   <Pause size={32} fill="currentColor" class="sm:h-11 sm:w-11" />

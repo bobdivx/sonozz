@@ -5,6 +5,12 @@ export const ARTIST_GENDER_LABELS = {
   nonbinary: "Non-binaire",
 };
 
+export const ARTIST_GENDER_OPTIONS = [
+  { value: "male", label: ARTIST_GENDER_LABELS.male },
+  { value: "female", label: ARTIST_GENDER_LABELS.female },
+  { value: "nonbinary", label: ARTIST_GENDER_LABELS.nonbinary },
+];
+
 /**
  * Normalise un texte libre (code, FR, EN, genderLock) vers male | female | nonbinary.
  * Ne choisit PAS un défaut : null si vraiment illisible.
@@ -70,6 +76,11 @@ export function resolveArtistGender(artist) {
     if (code) return { code, label: ARTIST_GENDER_LABELS[code] };
   }
   return null;
+}
+
+/** Sexe catalogue (MusicBrainz) d’un artiste de référence. */
+export function inferGenderFromStyleRef(pick) {
+  return parseGenderCode(pick?.gender) || null;
 }
 
 /** Réécrit `artist.gender` au code canonique si on peut l’inférer du profil sauvé. */
