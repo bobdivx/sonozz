@@ -1,13 +1,18 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import LoginForm from "../components/LoginForm.jsx";
 import {
+  authenticatePassword,
   createSessionToken,
   getSessionFromCookies,
   isAuthConfigured,
   SESSION_COOKIE,
   sessionCookieOptions,
-  verifyCredentials,
+  SSO_PASSWORD_BLOCKED,
 } from "../server/auth.js";
+import { isOidcConfigured, SSO_HINT_COOKIE, oidcCookieOptions } from "../server/oidc.js";
+
+export const prerender = false;
 
 function safeNext(raw) {
   if (!raw || typeof raw !== "string") return "/";
@@ -18,6 +23,7 @@ function safeNext(raw) {
 
 const nextParam = Astro.url.searchParams.get("next") || "/";
 const next = safeNext(nextParam);
+const errorCode = Astro.url.searchParams.get("error") || "";
 
 const session = getSessionFromCookies(Astro.cookies);
 if (session) {
@@ -25,9 +31,12 @@ if (session) {
 }
 
 let error = "";
+const passwordConfigured = isAuthConfigured();
+const oidcConfigured = isOidcConfigured();
+const preferSso = Astro.cookies.get(SSO_HINT_COOKIE)?.value === "1";
 
 if (Astro.request.method === "POST") {
-  if (!isAuthConfigured()) {
+  if (!passwordConfigured) {
     error = "Auth non configurée sur le serveur";
   } else {
     const form = await Astro.request.formData();
@@ -37,11 +46,15 @@ if (Astro.request.method === "POST") {
 
     if (!email || !password) {
       error = "Email et mot de passe requis";
-    } else if (!verifyCredentials(email, password)) {
-      error = "Identifiants incorrects";
     } else {
-      Astro.cookies.set(SESSION_COOKIE, createSessionToken(email), sessionCookieOptions());
-      return Astro.redirect(formNext);
+      const result = await authenticatePassword(email, password);
+      if (!result.ok) {
+        error = result.reason === "sso_required" ? SSO_PASSWORD_BLOCKED : "Identifiants incorrects";
+      } else {
+        Astro.cookies.set(SESSION_COOKIE, createSessionToken(email), sessionCookieOptions());
+        Astro.cookies.set(SSO_HINT_COOKIE, "", { ...oidcCookieOptions(0), httpOnly: false, maxAge: 0 });
+        return Astro.redirect(formNext);
+      }
     }
   }
 }
@@ -92,45 +105,14 @@ if (Astro.request.method === "POST") {
       <span class="h-px flex-1 bg-base-content/15"></span>
     </div>
 
-    <form class="space-y-4" method="POST" action={`/login?next=${encodeURIComponent(next)}`} data-astro-reload>
-      <p class="text-center text-sm text-base-content/55">Connexion réservée à l’équipe</p>
-      <input type="hidden" name="next" value={next} />
-
-      <label class="form-control w-full">
-        <span class="label-text mb-1.5 text-xs uppercase tracking-wider text-base-content/50">
-          Email
-        </span>
-        <input
-          type="email"
-          name="email"
-          class="input input-bordered w-full bg-base-200/80"
-          autocomplete="username"
-          required
-        />
-      </label>
-
-      <label class="form-control w-full">
-        <span class="label-text mb-1.5 text-xs uppercase tracking-wider text-base-content/50">
-          Mot de passe
-        </span>
-        <input
-          type="password"
-          name="password"
-          class="input input-bordered w-full bg-base-200/80"
-          autocomplete="current-password"
-          required
-        />
-      </label>
-
-      {error && (
-        <p class="rounded-md bg-error/15 px-3 py-2 text-sm text-error" role="alert">
-          {error}
-        </p>
-      )}
-
-      <button type="submit" class="btn btn-ghost w-full border border-base-content/15">
-        Se connecter au studio
-      </button>
-    </form>
+    <LoginForm
+      client:load
+      next={next}
+      error={error}
+      errorCode={errorCode}
+      oidcConfigured={oidcConfigured}
+      passwordConfigured={passwordConfigured}
+      preferSso={preferSso && oidcConfigured}
+    />
   </div>
 </Layout>

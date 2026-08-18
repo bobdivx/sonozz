@@ -11,8 +11,10 @@ import {
   AudioLines,
   Radio,
   Share2,
+  Shield,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
+import PocketIdAccount from "./PocketIdAccount.jsx";
 import {
   KEY_FIELDS,
   loadKeys,
@@ -35,6 +37,11 @@ const YOUTUBE_STATE_KEY = "sonozz.youtube.oauth.state";
 const YOUTUBE_VERIFIER_KEY = "sonozz.youtube.oauth.verifier";
 
 const SECTION_META = {
+  Compte: {
+    id: "compte",
+    icon: Shield,
+    blurb: "Lier ou délier Pocket ID (SSO DevForge) pour ce compte uniquement.",
+  },
   IA: { id: "ia", icon: Sparkles, blurb: "Texte, images et clips : Gemini, Ollama, Veo / Wan2GP." },
   Morceaux: {
     id: "morceaux",
@@ -61,6 +68,11 @@ function sectionFromQuery() {
   return match?.id || "ia";
 }
 
+const SETTINGS_NAV = [
+  { group: "Compte", items: [] },
+  ...KEY_FIELDS,
+];
+
 export default function SettingsPage() {
   const [keys, setKeys] = useState(loadKeys);
   const [section, setSection] = useState(sectionFromQuery);
@@ -81,10 +93,10 @@ export default function SettingsPage() {
     typeof window !== "undefined" &&
     (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
-  const activeGroup = useMemo(
-    () => KEY_FIELDS.find((g) => SECTION_META[g.group]?.id === section) || KEY_FIELDS[0],
-    [section],
-  );
+  const activeGroup = useMemo(() => {
+    if (section === "compte") return { group: "Compte", items: [] };
+    return KEY_FIELDS.find((g) => SECTION_META[g.group]?.id === section) || KEY_FIELDS[0];
+  }, [section]);
 
   useEffect(() => {
     let cancelled = false;
@@ -434,7 +446,7 @@ export default function SettingsPage() {
           class="flex shrink-0 gap-2 overflow-x-auto lg:w-56 lg:flex-col lg:overflow-visible"
           aria-label="Sections paramètres"
         >
-          {KEY_FIELDS.map((group) => {
+          {SETTINGS_NAV.map((group) => {
             const info = SECTION_META[group.group];
             const Icon = info?.icon || Sparkles;
             const id = info?.id || group.group;
@@ -469,7 +481,9 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {section === "morceaux" ? (
+          {section === "compte" ? (
+            <PocketIdAccount />
+          ) : section === "morceaux" ? (
             <MusicStudiosPanel
               keys={keys}
               onChange={update}
@@ -815,6 +829,7 @@ export default function SettingsPage() {
             </div>
           )}
 
+          {section !== "compte" && (
           <div class="mt-8 flex flex-wrap gap-3">
             <button type="button" class="btn btn-primary gap-2" onClick={handleSave} disabled={saving}>
               <Save size={16} />
@@ -871,6 +886,7 @@ export default function SettingsPage() {
               Tester les connexions
             </button>
           </div>
+          )}
         </section>
       </div>
     </AppShell>

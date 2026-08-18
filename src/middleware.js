@@ -1,7 +1,7 @@
 import { defineMiddleware } from "astro:middleware";
 import {
   getSessionFromCookies,
-  isAuthConfigured,
+  isAccessControlEnabled,
   isPublicPath,
 } from "./server/auth.js";
 
@@ -25,7 +25,7 @@ function withNoStore(response) {
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname, search } = context.url;
 
-  if (isAuthConfigured() && !isPublicPath(pathname)) {
+  if (isAccessControlEnabled() && !isPublicPath(pathname)) {
     const session = getSessionFromCookies(context.cookies);
     if (!session) {
       if (pathname.startsWith("/api/")) {

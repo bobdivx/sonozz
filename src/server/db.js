@@ -74,6 +74,21 @@ export async function ensureSchema() {
     )
   `);
 
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      pocket_id_sub TEXT,
+      sso_linked_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  await db.execute(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_pocket_sub ON users(pocket_id_sub)
+  `);
+
   ready = true;
 }
 

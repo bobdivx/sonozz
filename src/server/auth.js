@@ -1,6 +1,9 @@
 import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
+import { isOidcConfigured } from "./oidc.js";
+import { isSsoLinkedEmail } from "./users.js";
 
 export const SESSION_COOKIE = "sonozz_session";
+export const SSO_PASSWORD_BLOCKED = "Ce compte se connecte avec Pocket ID";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 jours
 
 /**
@@ -32,6 +35,11 @@ export function isAuthConfigured() {
   return Boolean(email && password);
 }
 
+/** Studio protégé si mot de passe OU Pocket ID est configuré. */
+export function isAccessControlEnabled() {
+  return isAuthConfigured() || isOidcConfigured();
+}
+
 function safeEqual(a, b) {
   const aa = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
@@ -45,6 +53,23 @@ export function verifyCredentials(email, password) {
   const okEmail = safeEqual(String(email || "").trim().toLowerCase(), cfg.email);
   const okPass = safeEqual(String(password || ""), cfg.password);
   return okEmail && okPass;
+}
+
+/**
+ * Login mot de passe : refuse si CE user a lié Pocket ID.
+ * @returns {Promise<{ ok: true } | { ok: false, reason: 'invalid' | 'sso_required' }>}
+ */
+export function decidePasswordLogin(credentialsOk, ssoLinked) {
+  if (!credentialsOk) return { ok: false, reason: "invalid" };
+  if (ssoLinked) return { ok: false, reason: "sso_required" };
+  return { ok: true };
+}
+
+export async function authenticatePassword(email, password) {
+  return decidePasswordLogin(
+    verifyCredentials(email, password),
+    await isSsoLinkedEmail(email),
+  );
 }
 
 function sign(payload, secret) {
@@ -64,13 +89,12 @@ export function readSessionToken(token) {
   const parts = token.split("|");
   if (parts.length !== 4) return null;
   const [email, expStr, nonce, sig] = parts;
-  const { secret, email: expected } = getAuthConfig();
+  const { secret } = getAuthConfig();
   const payload = `${email}|${expStr}|${nonce}`;
   const expectedSig = sign(payload, secret);
   if (!safeEqual(sig, expectedSig)) return null;
   const exp = Number(expStr);
   if (!Number.isFinite(exp) || Date.now() > exp) return null;
-  if (expected && !safeEqual(email, expected)) return null;
   return { email, exp };
 }
 
@@ -104,6 +128,8 @@ export function isPublicPath(pathname) {
   // Portraits du lecteur public (/play liste les artistes via /api/library).
   if (/^\/api\/artists\/[^/]+\/photo$/.test(p)) return true;
   if (p === "/api/auth/login" || p === "/api/auth/logout" || p === "/api/auth/me") return true;
+  if (p === "/api/auth/pocket-id" || p === "/api/auth/sso-status") return true;
+  if (p === "/api/auth/callback/pocket-id") return true;
 
   if (p.startsWith("/_astro/") || p.startsWith("/assets/")) return true;
   if (p === "/favicon.ico" || p === "/favicon.svg" || p === "/logo.png") return true;
