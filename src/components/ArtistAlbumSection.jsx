@@ -233,7 +233,7 @@ export default function ArtistAlbumSection({
 
     const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
     setError("");
-    startAlbumJob({
+    const jobId = startAlbumJob({
       projectId,
       totalCount: total,
       resume,
@@ -246,6 +246,7 @@ export default function ArtistAlbumSection({
             ...prev,
             album: {
               ...(prev.album || {}),
+              jobId,
               status: "running",
               live: {
                 percent: resume ? 8 : 4,

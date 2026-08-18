@@ -10,6 +10,7 @@ import {
   getJob,
   listActiveJobs,
   patchJob,
+  removeJob,
   subscribeJobs,
   upsertJob,
 } from "./jobStore.js";
@@ -35,6 +36,13 @@ import { persistAudioRemote } from "./audioResolve.js";
 import { emptyProject } from "./studio.js";
 import { runAlbumJob } from "./runAlbumJob.js";
 import { appendVersion, normalizeProjectVersions } from "./versionsModel.js";
+import { cancelledAlbumState } from "./albumTracks.js";
+import {
+  canonicalAlbumJobId,
+  dedupeStoredAlbumJobs,
+  markAlbumMirrorDismissed,
+  removeDuplicateAlbumJobs,
+} from "./albumJobMirror.js";
 
 /** @type {Map<string, Promise<void>>} */
 const inflight = new Map();
@@ -584,6 +592,27 @@ export function albumJobId(projectId) {
   return `album-${projectId || "unknown"}`;
 }
 
+function interruptAlbumJobs(projectId, message = "Album arrêté") {
+  if (!projectId) return;
+  const canonicalId = albumJobId(projectId);
+  const abort = albumAborts.get(canonicalId);
+  if (abort) abort.aborted = true;
+
+  for (const job of listActiveJobs()) {
+    if (job.projectId !== projectId) continue;
+    if (job.type !== "album" && !job.remoteAlbum) continue;
+    const inflightAbort = albumAborts.get(job.id);
+    if (inflightAbort) inflightAbort.aborted = true;
+    if (job.status === "running") {
+      patchJob(job.id, {
+        status: "interrupted",
+        phase: "interrupted",
+        message,
+      });
+    }
+  }
+}
+
 /**
  * Lance (ou reprend) la génération album en arrière-plan.
  * Survivt à la navigation MPA via localStorage + Turso.
@@ -609,16 +638,84 @@ export function startAlbumJob({
     totalCount,
     resume: Boolean(resume),
     href: href || `/?project=${projectId}&step=4`,
+    remoteAlbum: false,
   });
   ensureRunning(id);
   return id;
 }
 
 export function cancelAlbumJob(projectId) {
-  if (!projectId) return;
-  const id = albumJobId(projectId);
-  const abort = albumAborts.get(id);
-  if (abort) abort.aborted = true;
+  interruptAlbumJobs(projectId);
+}
+
+/**
+ * Arrête une tâche (y compris « running ») et la retire du dock.
+ * Pour un album, persiste l’annulation Turso sinon le poll 4 s la recrée.
+ */
+export async function dismissJob(jobId) {
+  const job = getJob(jobId);
+  if (!job) return;
+
+  if (job.type === "album" || job.remoteAlbum) {
+    markAlbumMirrorDismissed(job.albumId, job.projectId);
+    interruptAlbumJobs(job.projectId || null, "Album arrêté");
+    if (job.projectId) {
+      try {
+        const { project: saved } = await api.getProject(job.projectId);
+        const data = saved?.project || saved;
+        const album = data?.album;
+        if (album?.status === "running") {
+          markAlbumMirrorDismissed(album.id, saved.id || job.projectId);
+          await api.saveProject({
+            id: saved.id || job.projectId,
+            project: { ...data, album: cancelledAlbumState(album) },
+            seed: saved.seed,
+            event: {
+              stepKey: "album",
+              eventType: "album",
+              message: "Album arrêté",
+            },
+          });
+        }
+      } catch {
+        /* réseau : la carte locale part quand même */
+      }
+    }
+    const canonical = job.projectId
+      ? canonicalAlbumJobId({ id: job.albumId, jobId: job.id }, job.projectId)
+      : job.id;
+    removeDuplicateAlbumJobs(canonical, {
+      projectId: job.projectId,
+      albumId: job.albumId,
+    });
+    removeJob(job.id);
+    if (canonical !== job.id) removeJob(canonical);
+    return;
+  }
+
+  if (job.type === "track") {
+    cancelMusicTrackJob(job.projectId);
+    if (job.status === "running") {
+      patchJob(job.id, {
+        status: "interrupted",
+        phase: "interrupted",
+        message: "Génération audio arrêtée",
+      });
+    }
+    removeJob(job.id);
+    return;
+  }
+
+  if (job.status === "running" && HTTP_BOUND_TYPES.has(job.type) && !job.remoteAlbum) {
+    interruptHttpBoundJob(job.id, "Tâche arrêtée");
+  } else if (job.status === "running") {
+    patchJob(job.id, {
+      status: "interrupted",
+      phase: "interrupted",
+      message: "Tâche retirée",
+    });
+  }
+  removeJob(jobId);
 }
 
 async function runAlbumBackgroundJob(job) {
@@ -636,6 +733,16 @@ async function runAlbumBackgroundJob(job) {
   const project = { ...emptyProject(), ...(saved.project || {}) };
   const seed = saved.seed || {};
   const workingRef = { current: project };
+  if (abortState.aborted || project.album?.status === "cancelled") {
+    if (getJob(id)) {
+      patchJob(id, {
+        status: "interrupted",
+        phase: "interrupted",
+        message: "Album arrêté",
+      });
+    }
+    return;
+  }
   const resume =
     Boolean(job.resume) ||
     (project.album?.status === "running" && (project.album.tracks || []).length > 0);
@@ -653,6 +760,7 @@ async function runAlbumBackgroundJob(job) {
       resume,
       abortState,
       persist: async (next, event) => {
+        if (abortState.aborted) return;
         workingRef.current = next;
         await api.saveProject({
           id: projectId,
@@ -667,6 +775,7 @@ async function runAlbumBackgroundJob(job) {
       getWorking: () => workingRef.current,
       jobId: id,
       onProgress: ({ percent, message, label }) => {
+        if (abortState.aborted || !getJob(id)) return;
         patchJob(id, {
           progress: percent,
           message,
@@ -674,19 +783,23 @@ async function runAlbumBackgroundJob(job) {
         });
       },
     });
-    patchJob(id, {
-      status: result?.ok ? "done" : result?.providerDown ? "error" : "done",
-      phase: result?.ok ? "done" : "error",
-      progress: 100,
-      message: result?.message || "Album terminé",
-    });
+    if (getJob(id)) {
+      patchJob(id, {
+        status: result?.ok ? "done" : result?.providerDown ? "error" : "done",
+        phase: result?.ok ? "done" : "error",
+        progress: 100,
+        message: result?.message || "Album terminé",
+      });
+    }
   } catch (e) {
     const wasAbort = e?.name === "AbortError" || abortState.aborted;
-    patchJob(id, {
-      status: wasAbort ? "interrupted" : "error",
-      phase: wasAbort ? "interrupted" : "error",
-      message: wasAbort ? "Album annulé" : e?.message || "Album en erreur",
-    });
+    if (getJob(id)) {
+      patchJob(id, {
+        status: wasAbort ? "interrupted" : "error",
+        phase: wasAbort ? "interrupted" : "error",
+        message: wasAbort ? "Album annulé" : e?.message || "Album en erreur",
+      });
+    }
     if (!wasAbort) throw e;
   } finally {
     albumAborts.delete(id);
@@ -760,6 +873,14 @@ export function cancelMusicTrackJob(projectId) {
   const id = musicTrackJobId(projectId);
   const abort = trackAborts.get(id);
   if (abort) abort.aborted = true;
+  const job = getJob(id);
+  if (job?.status === "running") {
+    patchJob(id, {
+      status: "interrupted",
+      phase: "interrupted",
+      message: "Génération audio arrêtée",
+    });
+  }
 }
 
 async function runTrackBackgroundJob(job) {
@@ -800,7 +921,7 @@ async function runTrackBackgroundJob(job) {
         },
       },
       (p) => {
-        if (!p || abortState.aborted) return;
+        if (!p || abortState.aborted || !getJob(id)) return;
         patchJob(id, {
           progress: Math.max(8, Math.min(96, Number(p.percent) || 12)),
           message: p.message || (preview ? "Extrait…" : "Génération audio…"),
@@ -831,11 +952,13 @@ async function runTrackBackgroundJob(job) {
     );
 
     if (abortState.aborted) {
-      patchJob(id, {
-        status: "interrupted",
-        phase: "interrupted",
-        message: "Génération audio annulée",
-      });
+      if (getJob(id)) {
+        patchJob(id, {
+          status: "interrupted",
+          phase: "interrupted",
+          message: "Génération audio annulée",
+        });
+      }
       return;
     }
 
@@ -889,24 +1012,30 @@ async function runTrackBackgroundJob(job) {
       },
     });
 
-    patchJob(id, {
-      status: "done",
-      phase: "done",
-      progress: 100,
-      message:
-        result?.isPreview || result?.status === "preview-ready"
-          ? "Extrait prêt — écoute le brouillon"
-          : "Morceau terminé",
-      generationId: null,
-      draft: null,
-    });
+    if (abortState.aborted || !getJob(id)) return;
+
+    if (getJob(id)) {
+      patchJob(id, {
+        status: "done",
+        phase: "done",
+        progress: 100,
+        message:
+          result?.isPreview || result?.status === "preview-ready"
+            ? "Extrait prêt — écoute le brouillon"
+            : "Morceau terminé",
+        generationId: null,
+        draft: null,
+      });
+    }
   } catch (e) {
     const wasAbort = e?.name === "AbortError" || abortState.aborted;
-    patchJob(id, {
-      status: wasAbort ? "interrupted" : "error",
-      phase: wasAbort ? "interrupted" : "error",
-      message: wasAbort ? "Génération audio annulée" : e?.message || "Morceau en erreur",
-    });
+    if (getJob(id)) {
+      patchJob(id, {
+        status: wasAbort ? "interrupted" : "error",
+        phase: wasAbort ? "interrupted" : "error",
+        message: wasAbort ? "Génération audio annulée" : e?.message || "Morceau en erreur",
+      });
+    }
     if (!wasAbort) throw e;
   } finally {
     trackAborts.delete(id);
@@ -930,6 +1059,7 @@ async function runJob(jobId) {
     else if (job.type === "album") await runAlbumBackgroundJob(job);
     else if (job.type === "track") await runTrackBackgroundJob(job);
   } catch (e) {
+    if (!getJob(jobId)) return;
     patchJob(jobId, {
       status: "error",
       phase: "error",
@@ -1294,6 +1424,7 @@ let booted = false;
 export function bootJobRunner() {
   if (typeof window === "undefined" || booted) return;
   booted = true;
+  dedupeStoredAlbumJobs();
   resumeAllJobs();
   window.addEventListener("pagehide", () => {
     for (const job of listActiveJobs()) {

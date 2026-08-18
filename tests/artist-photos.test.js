@@ -5,6 +5,7 @@ import {
   listArtistImageUrl,
   normalizeArtistPhotos,
 } from "../src/lib/artistPhotos.js";
+import { isPublicPath } from "../src/server/auth.js";
 
 const JPEG = "data:image/jpeg;base64,/9j/4AAQ";
 const PNG = "data:image/png;base64,iVBORw0K";
@@ -75,5 +76,18 @@ describe("listArtistImageUrl", () => {
       "2026-08-17T21:59:00.000Z",
     );
     assert.equal(url, "/api/artists/jeser-mathieu/photo?v=2026-08-17T215900.000Z");
+  });
+});
+
+describe("isPublicPath — portraits /play", () => {
+  it("laisse passer le thumbnail artiste (lecteur public)", () => {
+    assert.equal(isPublicPath("/api/artists/etherel/photo"), true);
+    assert.equal(isPublicPath("/api/artists/jeser-mathieu/photo/"), true);
+  });
+
+  it("ne rend pas public le reste de l’API artiste", () => {
+    assert.equal(isPublicPath("/api/artists"), false);
+    assert.equal(isPublicPath("/api/artists/etherel"), false);
+    assert.equal(isPublicPath("/api/artists/etherel/releases"), false);
   });
 });

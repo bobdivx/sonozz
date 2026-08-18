@@ -101,6 +101,8 @@ export function isPublicPath(pathname) {
 
   if (p === "/play" || p === "/login") return true;
   if (p === "/api/library" || p === "/api/audio/stream") return true;
+  // Portraits du lecteur public (/play liste les artistes via /api/library).
+  if (/^\/api\/artists\/[^/]+\/photo$/.test(p)) return true;
   if (p === "/api/auth/login" || p === "/api/auth/logout" || p === "/api/auth/me") return true;
 
   if (p.startsWith("/_astro/") || p.startsWith("/assets/")) return true;

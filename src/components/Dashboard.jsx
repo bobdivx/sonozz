@@ -912,7 +912,7 @@ export default function Dashboard() {
 
     const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
     setError("");
-    startAlbumJob({
+    const jobId = startAlbumJob({
       projectId,
       totalCount: total,
       resume,
@@ -923,6 +923,7 @@ export default function Dashboard() {
       ...prev,
       album: {
         ...(prev.album || {}),
+        jobId,
         status: "running",
         live: {
           percent: resume ? 8 : 4,

@@ -5,6 +5,7 @@ import {
   XCircle,
   AlertTriangle,
   Trash2,
+  Ban,
   Film,
   Zap,
   Layers,
@@ -16,10 +17,9 @@ import {
 import {
   clearFinishedJobs,
   listJobs,
-  removeJob,
   subscribeJobs,
 } from "../lib/jobStore.js";
-import { bootJobRunner } from "../lib/jobRunner.js";
+import { bootJobRunner, dismissJob } from "../lib/jobRunner.js";
 import { api } from "../lib/apiClient.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
 
@@ -75,16 +75,20 @@ function JobsList({ visible, active, recent }) {
                   </div>
                 )}
               </div>
-              {job.status !== "running" && (
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100"
-                  title="Retirer"
-                  onClick={() => removeJob(job.id)}
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
+              <button
+                type="button"
+                class={`btn btn-ghost btn-xs btn-square hover:opacity-100 ${
+                  job.status === "running"
+                    ? "text-error opacity-80"
+                    : "opacity-50"
+                }`}
+                title={job.status === "running" ? "Arrêter et retirer" : "Retirer"}
+                onClick={() => {
+                  void dismissJob(job.id);
+                }}
+              >
+                {job.status === "running" ? <Ban size={12} /> : <Trash2 size={12} />}
+              </button>
             </div>
           </li>
         ))}

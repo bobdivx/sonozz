@@ -4,10 +4,76 @@
  * dans le dock Tâches (localStorage) des autres navigateurs.
  */
 
-import { getJob, patchJob, upsertJob } from "./jobStore.js";
+import { isAlbumStale } from "./albumTracks.js";
+import { getJob, listJobs, patchJob, removeJobsWhere, upsertJob } from "./jobStore.js";
+
+/** Sans live Turso depuis ce délai, le miroir n’affiche plus « en cours ». */
+export const STALE_ALBUM_MIRROR_MS = 3 * 60 * 1000;
+
+/** Annulations locales : évite que le poll 4 s recréé la carte avant le save Turso. */
+const dismissedAt = new Map();
 
 export function albumRemoteJobId(albumId) {
   return `album-remote-${albumId || "unknown"}`;
+}
+
+export function albumLocalJobId(projectId) {
+  return `album-${projectId || "unknown"}`;
+}
+
+/**
+ * Un seul id par album : celui du runner (`album-${projectId}`).
+ * Les vieux `album-remote-*` / jobId d’étape sont des doublons à fusionner.
+ */
+export function canonicalAlbumJobId(album, projectId) {
+  if (projectId) return albumLocalJobId(projectId);
+  if (album?.jobId) return String(album.jobId);
+  return albumRemoteJobId(album?.id);
+}
+
+export function markAlbumMirrorDismissed(albumId, projectId) {
+  const now = Date.now();
+  if (albumId) dismissedAt.set(`alb:${albumId}`, now);
+  if (projectId) dismissedAt.set(`proj:${projectId}`, now);
+}
+
+export function isAlbumMirrorDismissed(album, projectId) {
+  const updated = Date.parse(album?.updatedAt || "") || 0;
+  const keys = [];
+  if (album?.id) keys.push(`alb:${album.id}`);
+  if (projectId) keys.push(`proj:${projectId}`);
+  return keys.some((k) => {
+    const at = dismissedAt.get(k);
+    return Boolean(at) && updated <= at;
+  });
+}
+
+export function albumStatusToJob(status) {
+  if (status === "done") return "done";
+  if (status === "cancelled") return "interrupted";
+  if (status === "error") return "error";
+  return null;
+}
+
+export function isAlbumJobLike(job) {
+  return Boolean(
+    job &&
+      (job.type === "album" ||
+        job.remoteAlbum ||
+        job.albumId ||
+        String(job.id || "").startsWith("album-")),
+  );
+}
+
+export function removeDuplicateAlbumJobs(canonicalId, { projectId, albumId } = {}) {
+  if (!canonicalId) return;
+  removeJobsWhere((j) => {
+    if (!j || j.id === canonicalId) return false;
+    if (!isAlbumJobLike(j)) return false;
+    const sameProject = projectId && j.projectId === projectId;
+    const sameAlbum = albumId && j.albumId === albumId;
+    return Boolean(sameProject || sameAlbum);
+  });
 }
 
 /**
@@ -21,8 +87,9 @@ export function albumLiveSummary(album) {
   const done = tracks.filter((t) => t.status === "done").length;
   const active = tracks.find((t) => t.status === "lyrics" || t.status === "audio");
   const failed = tracks.filter((t) => t.status === "error").length;
+  const stale = isAlbumStale(album, STALE_ALBUM_MIRROR_MS);
 
-  if (album.live?.message) {
+  if (album.live?.message && !stale) {
     return {
       label: album.live.label || album.title || `Album · ${total} titres`,
       message: album.live.message,
@@ -31,7 +98,9 @@ export function albumLiveSummary(album) {
   }
 
   let message = `${done}/${total} titres`;
-  if (active?.status === "lyrics") {
+  if (stale && album.status === "running") {
+    message = `Plus de progression · ${done}/${total} titres — tu peux arrêter`;
+  } else if (active?.status === "lyrics") {
     message = `Paroles ${active.index || "?"}/${total}…`;
   } else if (active?.status === "audio") {
     message = `Audio ${active.index || "?"}/${total}…`;
@@ -44,14 +113,32 @@ export function albumLiveSummary(album) {
   }
 
   const percent =
-    album.status === "done" || album.status === "cancelled"
-      ? 100
+    album.status === "done" || album.status === "cancelled" || stale
+      ? stale && album.status === "running"
+        ? Math.max(4, Math.round((done / total) * 90) + (active ? 5 : 0))
+        : 100
       : Math.max(4, Math.round((done / total) * 90) + (active ? 5 : 0));
 
   return {
     label: album.title ? `Album · ${album.title}` : `Album · ${total} titres`,
     message,
     percent,
+  };
+}
+
+function applyMirrorFields(album, projectId, summary, extra = {}) {
+  const href = projectId ? `/?project=${projectId}&step=4` : "/?step=4";
+  return {
+    id: canonicalAlbumJobId(album, projectId),
+    type: extra.type || "album",
+    label: summary.label,
+    message: summary.message,
+    progress: summary.percent,
+    projectId: projectId || undefined,
+    stepKey: "4",
+    href,
+    albumId: album.id,
+    ...extra,
   };
 }
 
@@ -63,65 +150,93 @@ export function albumLiveSummary(album) {
  */
 export function mirrorAlbumJob(album, projectId) {
   if (!album?.id) return null;
-  const id = album.jobId || albumRemoteJobId(album.id);
-  const href = projectId ? `/?project=${projectId}&step=4` : "/?step=4";
+  const id = canonicalAlbumJobId(album, projectId);
   const summary = albumLiveSummary(album);
   if (!summary) return null;
 
   const existing = getJob(id);
-  const isLocalOwner = Boolean(existing && !existing.remoteAlbum);
+  const isLocalOwner = Boolean(existing && existing.type === "album" && !existing.remoteAlbum);
+  const dismissed = isAlbumMirrorDismissed(album, projectId);
+  const stale = album.status === "running" && isAlbumStale(album, STALE_ALBUM_MIRROR_MS);
 
-  // Client qui lance la gen : laisse trackStepJob / finishStepJob gérer le statut
+  removeDuplicateAlbumJobs(id, { projectId, albumId: album.id });
+
   if (isLocalOwner) {
-    if (album.status === "running") {
+    if (album.status === "running" && !dismissed) {
       return patchJob(id, {
         progress: summary.percent,
         message: summary.message,
         label: summary.label,
-        href,
+        href: projectId ? `/?project=${projectId}&step=4` : "/?step=4",
+        albumId: album.id,
       });
     }
-    return existing;
+    const status = dismissed
+      ? "interrupted"
+      : albumStatusToJob(album.status);
+    if (!status) return existing;
+    return patchJob(id, {
+      status,
+      phase: status === "done" ? "done" : status,
+      progress: summary.percent,
+      message: dismissed ? "Album arrêté" : summary.message,
+      label: summary.label,
+    });
   }
 
-  if (album.status === "running") {
-    return upsertJob({
-      id,
-      type: "step",
-      status: "running",
-      label: summary.label,
-      message: summary.message,
-      progress: summary.percent,
-      projectId: projectId || undefined,
-      stepKey: "4",
-      href,
+  if (dismissed) {
+    const leftover = getJob(id);
+    if (!leftover) return null;
+    return patchJob(id, {
+      status: "interrupted",
+      phase: "interrupted",
+      message: "Album arrêté",
       remoteAlbum: true,
       albumId: album.id,
     });
   }
 
-  const status =
-    album.status === "done"
-      ? "done"
-      : album.status === "cancelled"
-        ? "interrupted"
-        : album.status === "error"
-          ? "error"
-          : null;
+  if (album.status === "running" && !stale) {
+    return upsertJob(
+      applyMirrorFields(album, projectId, summary, {
+        type: "album",
+        status: "running",
+        remoteAlbum: true,
+      }),
+    );
+  }
 
-  if (!status) return existing;
+  const status = stale ? "interrupted" : albumStatusToJob(album.status);
+  if (!status) return existing || null;
 
-  return upsertJob({
-    id,
-    type: "step",
-    status,
-    label: summary.label,
-    message: summary.message,
-    progress: 100,
-    projectId: projectId || undefined,
-    stepKey: "4",
-    href,
-    remoteAlbum: true,
-    albumId: album.id,
-  });
+  // Ne pas ressusciter une carte que l’utilisateur a déjà retirée
+  if (!getJob(id) && status !== "running") return null;
+
+  return upsertJob(
+    applyMirrorFields(album, projectId, summary, {
+      type: "album",
+      status,
+      phase: status === "done" ? "done" : status,
+      progress: stale ? summary.percent : 100,
+      remoteAlbum: true,
+    }),
+  );
+}
+
+/** Fusionne les cartes album dupliquées déjà en localStorage (rechargement). */
+export function dedupeStoredAlbumJobs() {
+  const groups = new Map();
+  for (const job of listJobs()) {
+    if (!isAlbumJobLike(job) || !job.projectId) continue;
+    const list = groups.get(job.projectId) || [];
+    list.push(job);
+    groups.set(job.projectId, list);
+  }
+  for (const [projectId, list] of groups) {
+    if (list.length < 2) continue;
+    const canonicalId = albumLocalJobId(projectId);
+    const owner = list.find((j) => j.id === canonicalId && !j.remoteAlbum);
+    const keep = owner || list.find((j) => j.id === canonicalId) || list[0];
+    removeDuplicateAlbumJobs(keep.id, { projectId, albumId: keep.albumId });
+  }
 }

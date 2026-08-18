@@ -103,6 +103,10 @@ export function removeJob(id) {
   writeAll(readAll().filter((j) => j.id !== id));
 }
 
+export function removeJobsWhere(predicate) {
+  writeAll(readAll().filter((j) => !predicate(j)));
+}
+
 export function clearFinishedJobs() {
   writeAll(readAll().filter((j) => j.status === "running"));
 }
