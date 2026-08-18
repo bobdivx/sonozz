@@ -1,8 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { catalogGenresToStyleValues, matchMusicStyleFromGenre, inferLanguageFromStyleRef } from "../src/lib/studio.js";
+import { catalogGenresToStyleValues, matchMusicStyleFromGenre, inferLanguageFromStyleRef, styleGenreChips } from "../src/lib/studio.js";
 
 describe("matchMusicStyleFromGenre", () => {
+  it("mappe alternative metal vers Metal, pas Indie", () => {
+    assert.equal(matchMusicStyleFromGenre("Alternative Metal")?.value, "Metal / Hard rock");
+    assert.equal(matchMusicStyleFromGenre("Death Metal")?.value, "Death Metal / Brutal");
+    assert.equal(matchMusicStyleFromGenre("Alliteration"), null);
+  });
+
   it("mappe Hip-hop Rap iTunes vers Rap / Drill", () => {
     const hit = matchMusicStyleFromGenre("Hip-hop Rap");
     assert.equal(hit?.value, "Rap / Drill francophone");
@@ -14,10 +20,32 @@ describe("matchMusicStyleFromGenre", () => {
   });
 });
 
+describe("styleGenreChips", () => {
+  it("déduplique Death metal, droppe Rock et Alliteration", () => {
+    const chips = styleGenreChips([
+      "Rock",
+      "Death Metal",
+      "Brutal Death Metal",
+      "Alliteration",
+      "Metal",
+    ]);
+    assert.deepEqual(
+      chips.map((c) => c.label),
+      ["Death metal", "Metal"],
+    );
+  });
+});
+
 describe("catalogGenresToStyleValues", () => {
   it("déduplique plusieurs tags hip-hop", () => {
     assert.deepEqual(catalogGenresToStyleValues(["Hip-hop Rap", "West Coast Rap", "Rap"]), [
       "Rap / Drill francophone",
+    ]);
+  });
+
+  it("droppe Rock iTunes si Death Metal est présent", () => {
+    assert.deepEqual(catalogGenresToStyleValues(["Rock", "Death Metal"]), [
+      "Death Metal / Brutal",
     ]);
   });
 });

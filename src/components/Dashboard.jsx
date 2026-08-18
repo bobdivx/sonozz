@@ -1670,8 +1670,7 @@ export default function Dashboard() {
             }
             onPatchArtist={(patch) => {
               setProject((prev) => {
-                if (!prev.artist) return prev;
-                const next = { ...prev, artist: { ...prev.artist, ...patch } };
+                const next = { ...prev, artist: { ...(prev.artist || {}), ...patch } };
                 void persist(
                   next,
                   {

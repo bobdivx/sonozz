@@ -8,6 +8,17 @@ import {
 } from "../lib/musicArrange.js";
 import { parseGenderCode } from "../lib/artistGender.js";
 import { isStudioEnabled } from "../lib/keys.js";
+import {
+  defaultBpmForGenre,
+  isExtremeMetalLane,
+  isMetalLane,
+  mapGenreForStudio,
+  metalBandInstruments,
+  metalFlavorTags,
+  styleLockGenreBlob,
+} from "../lib/musicLane.js";
+
+export { mapGenreForStudio };
 
 /**
  * Client SongGeneration Studio (Pinokio / Demeter).
@@ -564,57 +575,20 @@ export function resolveVocalGender(artist) {
   };
 }
 
-/**
- * Genre pour SongGeneration Studio.
- * Doit matcher GENRE_TO_AUTO_PROMPT (clés lowercased) pour activer auto_prompt_audio
- * = extrait musical de la librairie → instruments. Sinon "Auto" = son générique basique.
- * @see BazedFrog/SongGeneration-Studio generation.py
- */
-function mapGenreForStudio(genre = "") {
-  // Tester la chaîne ENTIÈRE (pas le 1er token) : « Afro-trap / Dancehall »
-  // sinon « afro-trap » matchait `trap` → Pop et perdait dancehall/afrobeat.
-  const g = String(genre || "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-
-  if (!g) return "Pop";
-
-  // Ordre : plus spécifique d’abord
-  // Afro / dancehall AVANT « dance » (sinon Dancehall → Electronic)
-  if (/afro-?trap|afrobeat|afrobeats|amapiano|dancehall|reggae|ska|\bdub\b/.test(g)) {
-    return "Reggae";
-  }
-  if (/gospel|inspirational|choir|spiritual|worship/.test(g)) return "R&B";
-  if (/r&?b|soul|neo-?soul|motown|funk/.test(g)) return "R&B";
-  if (/metal|hardcore|screamo/.test(g)) return "Metal";
-  if (/rock|punk|garage|grunge|britpop|indie rock/.test(g)) return "Rock";
-  if (/jazz|bossa|swing|blues/.test(g)) return "Jazz";
-  if (/folk|acoustic|chanson|singer-?songwriter|americana|country|bluegrass/.test(g))
-    return "Folk";
-  if (
-    /electro|edm|\bdance\b|house|techno|hyperpop|synth|electronic|trance|dubstep|drum.?and.?bass|ambient|indie electronic/.test(
-      g,
-    )
-  ) {
-    return "Electronic";
-  }
-  if (/latin|reggaeton|salsa|bachata|cumbia/.test(g)) return "Pop";
-  if (/hip[\s-]?hop|rap|trap|drill|boom\s*bap|grime/.test(g)) return "Pop";
-  if (/chinese|c-pop|mandopop/.test(g)) return "Chinese Style";
-  if (/ballad|slow jam|love song/.test(g)) return "R&B";
-  if (/pop|variete|variety|k-?pop|j-?pop|dream pop|indie pop/.test(g)) return "Pop";
-  return "Pop";
-}
-
 /** Emotion Studio : anglais court (LeVo ignore souvent le FR). */
-function mapEmotionForStudio(mood = "", { gospel = false, wantsChoir = false } = {}) {
+function mapEmotionForStudio(
+  mood = "",
+  { gospel = false, wantsChoir = false, genreHint = "" } = {},
+) {
   const raw = String(mood || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
+  const blob = `${raw} ${genreHint}`;
+  if (isMetalLane(blob) || /brutal|growl|guttural|blast/.test(blob)) {
+    return "aggressive";
+  }
   if (!raw) {
     if (gospel) return "uplifting";
     if (wantsChoir) return "soulful";
@@ -623,9 +597,9 @@ function mapEmotionForStudio(mood = "", { gospel = false, wantsChoir = false } =
   if (/festif|dansant|party|upbeat|joyeux|energie|energetic|hype|fire|soleil|summer/.test(raw)) {
     return "energetic";
   }
+  if (/agress|rage|angry|hard|raw|brutal/.test(raw)) return "aggressive";
   if (/melancol|sad|triste|dark|sombre|intim/.test(raw)) return "melancholic";
   if (/romanti|love|doux|tendre|sensual/.test(raw)) return "romantic";
-  if (/agress|rage|angry|hard|raw/.test(raw)) return "aggressive";
   if (/chill|cool|laid.?back|relax|zen/.test(raw)) return "chill";
   if (/soulful|emotion|profond/.test(raw)) return "soulful";
   // Premier token si déjà anglais court
@@ -663,6 +637,8 @@ function genreFlavorTags(genreHint = "") {
   } else if (/hyperpop|electro/.test(raw)) {
     add("hyperpop");
     add("glitchy synths");
+  } else if (isMetalLane(raw)) {
+    for (const t of metalFlavorTags(raw)) add(t);
   }
   return tags;
 }
@@ -674,7 +650,12 @@ function genreFlavorTags(genreHint = "") {
  * @param {"male"|"female"} genderCode
  * @param {{ language?: string }} [opts]
  */
-function buildSongGenStyleTags(lock, fromArrange, genderCode = "male", { language } = {}) {
+function buildSongGenStyleTags(
+  lock,
+  fromArrange,
+  genderCode = "male",
+  { language, metal = false, extreme = false } = {},
+) {
   const tags = [];
   const push = (v, max = 36) => {
     let s0 = stripOppositeGender(v, genderCode);
@@ -690,7 +671,12 @@ function buildSongGenStyleTags(lock, fromArrange, genderCode = "male", { languag
     if (/\b(with|and the|never|like a|full mixed)\b/i.test(s0) && s0.split(/\s+/).length > 5) {
       return;
     }
-    if (genderCode === "male" && FEMININE_TIMBRE_RE.test(s0) && !MASCULINE_TIMBRE_RE.test(s0)) {
+    if (
+      !metal &&
+      genderCode === "male" &&
+      FEMININE_TIMBRE_RE.test(s0) &&
+      !MASCULINE_TIMBRE_RE.test(s0)
+    ) {
       return;
     }
     const low = s0.toLowerCase();
@@ -698,18 +684,35 @@ function buildSongGenStyleTags(lock, fromArrange, genderCode = "male", { languag
     tags.push(s0);
   };
 
-  // Mix d’abord — trop de tags « vocals » → vocoder sans bande audible
-  push("full band mix", 20);
-  push("punchy drums", 16);
-  push("audible bass", 16);
-  if (genderCode === "female") {
-    push("natural female vocals", 24);
+  if (metal) {
+    push("full band mix", 20);
+    push("crushing guitars", 20);
+    push("double kick drums", 20);
+    if (extreme) {
+      push("guttural growls", 20);
+      push("brutal death metal", 22);
+    } else {
+      push("aggressive metal vocals", 24);
+    }
+    push("no clean singing", 18);
+    push("no vocoder", 14);
+    push("no autotune", 14);
+    push("no synth pads", 16);
+    push("no pop polish", 16);
   } else {
-    push("natural male vocals", 24);
+    // Mix d’abord — trop de tags « vocals » → vocoder sans bande audible
+    push("full band mix", 20);
+    push("punchy drums", 16);
+    push("audible bass", 16);
+    if (genderCode === "female") {
+      push("natural female vocals", 24);
+    } else {
+      push("natural male vocals", 24);
+    }
+    push("dry vocals", 14);
+    push("no vocoder", 14);
+    push("no autotune", 14);
   }
-  push("dry vocals", 14);
-  push("no vocoder", 14);
-  push("no autotune", 14);
   const lang = String(language || "").toLowerCase();
   if (lang.startsWith("fr")) push("french lyrics", 16);
   else if (lang.startsWith("en")) push("english lyrics", 16);
@@ -736,33 +739,45 @@ function buildSongGenStyleTags(lock, fromArrange, genderCode = "male", { languag
   }
   if (lock?.tempoFeel) push(String(lock.tempoFeel).split(/[,;/]/)[0], 24);
 
-  if (lock?.energy === "high") push("high energy");
-  else if (lock?.energy === "low") push("moody");
-  else push("polished mix");
+  if (metal) {
+    push("high energy");
+    push("dense layers");
+    push("wall of sound");
+    for (const t of metalFlavorTags(styleLockGenreBlob(lock))) push(t, 32);
+    for (const d of (lock?.doNot || []).slice(0, 3)) {
+      push(`no ${String(d).split(/[,;/]/)[0].trim()}`.slice(0, 28), 28);
+    }
+  } else {
+    if (lock?.energy === "high") push("high energy");
+    else if (lock?.energy === "low") push("moody");
+    else push("polished mix");
 
-  // Toujours densifier — « intimate/sparse » = mix nul chez LeVo
-  push("full band");
-  push("dense layers");
-  push("rich arrangement");
-  push("multi instrument");
+    // Toujours densifier — « intimate/sparse » = mix nul chez LeVo
+    push("full band");
+    push("dense layers");
+    push("rich arrangement");
+    push("multi instrument");
+  }
 
   if (fromArrange?.gospel) {
     push("gospel choir");
     push("church organ");
     push("call and response");
-  } else if (fromArrange?.wantsChoir) {
+  } else if (fromArrange?.wantsChoir && !metal) {
     push("backing vocals");
     push("vocal harmonies");
   }
 
-  if (fromArrange?.summary) {
+  if (fromArrange?.summary && !metal) {
     for (const bit of String(fromArrange.summary).split(/\s*·\s*/)) {
       push(bit.replace(/^Lead:\s*/i, ""), 28);
     }
   }
 
-  push("layered instruments");
-  push("wide stereo");
+  if (!metal) {
+    push("layered instruments");
+    push("wide stereo");
+  }
   return tags.slice(0, 18);
 }
 
@@ -773,8 +788,11 @@ function bandForStudioGenre(studioGenre = "Pop", { gospel = false } = {}) {
   if (g.includes("electronic") || g === "dance") {
     return ["synth bass", "drum machine", "synth pads", "electric piano", "arpeggiator", "soft synth lead"];
   }
-  if (g.includes("rock") || g.includes("metal")) {
-    return ["electric guitar", "bass guitar", "drum kit", "rhythm guitar", "keys"];
+  if (g.includes("metal")) {
+    return metalBandInstruments();
+  }
+  if (g.includes("rock")) {
+    return ["electric guitar", "bass guitar", "drum kit", "rhythm guitar"];
   }
   if (g.includes("r&b") || g.includes("jazz") || g.includes("soul")) {
     return ["electric piano", "bass", "drum kit", "synth pads", "keys", "soft guitar"];
@@ -800,6 +818,9 @@ function bandForStudioGenre(studioGenre = "Pop", { gospel = false } = {}) {
 
 /** Instruments concrets (tags) — styleLock + arrangement, jamais 1 seul. */
 function buildSongGenInstruments(lock, fromArrange, { gospel = false, studioGenre = "Pop" } = {}) {
+  const metal = /metal/i.test(String(studioGenre));
+  const skipSoft = (x) =>
+    metal && /\b(piano|keys|synth|pad|organ|choir)\b/i.test(x) && !/hammond/i.test(x);
   const bits = [];
   const add = (t) => {
     const x = String(t || "")
@@ -807,6 +828,7 @@ function buildSongGenInstruments(lock, fromArrange, { gospel = false, studioGenr
       .trim();
     if (!x) return;
     if (/\b(sparse|minimal|a cappella)\b/i.test(x)) return;
+    if (skipSoft(x)) return;
     if (bits.some((b) => b.toLowerCase() === x.toLowerCase())) return;
     bits.push(x);
   };
@@ -844,7 +866,18 @@ function shortTimbre(raw = "") {
 
 
 /** Timbre aligné sur le sexe — hard-lock (le styleLock / auto_prompt fuit souvent vers une voix femme). */
-function timbreForGender(genderCode, voiceSample, _lock, voiceDesc = "") {
+function timbreForGender(genderCode, voiceSample, lock, _voiceDesc = "", { metal = false, extreme = false } = {}) {
+  if (metal) {
+    const fromLock = shortTimbre(lock?.timbre || lock?.vocalStyle || "");
+    if (fromLock && /growl|scream|harsh|guttural|rasp|death|shout/.test(fromLock)) {
+      return stripOppositeGender(fromLock, genderCode) || fromLock;
+    }
+    if (extreme) {
+      return genderCode === "female" ? "harsh screamed vocals" : "guttural death growl";
+    }
+    return genderCode === "female" ? "aggressive metal vocals" : "aggressive raspy metal";
+  }
+
   // Défauts forts : ne pas faire confiance au styleLock (réf. souvent femme).
   if (genderCode === "female") {
     const personal = shortTimbre(
@@ -1260,9 +1293,6 @@ export async function startSongGeneration(
     );
   }
 
-  // Timbre : court, optionnel. Pas d’analyse Gemini à chaque gen (voix souvent pire).
-  const cachedTimbre = timbreForGender(vocal.code, voiceSample, lock, artist?.voice);
-
   // Arrangement : si vide → déduire du styleLock (titre / artiste de référence)
   let arrange = normalizeMusicArrange(artist?.musicArrange);
   if (isDefaultMusicArrange(arrange) && lock) {
@@ -1270,24 +1300,30 @@ export async function startSongGeneration(
   }
   const fromArrange = musicArrangeToSongGen(arrange, {
     styleLockInstruments: lock?.instruments,
+    styleLock: lock,
   });
   const gospel = Boolean(fromArrange.gospel);
   const wantsChoir = Boolean(fromArrange.wantsChoir);
 
-  // Genre → auto_prompt_audio Studio (extrait librairie) — crucial pour éviter le son « Auto » basique
+  // Joindre TOUS les genres : iTunes « Rock » + « Death Metal » doit matcher Metal, pas Rock.
   const genreHint = gospel
     ? "gospel soul R&B"
-    : (Array.isArray(lock?.genres) && lock.genres.find(Boolean)) ||
-      lock?.genreSummary ||
-      genre ||
-      artist?.genre ||
-      "";
+    : styleLockGenreBlob(lock, [genre, artist?.genre]);
   const studioGenre = mapGenreForStudio(genreHint);
+  const metal = isMetalLane(genreHint);
+  const extreme = isExtremeMetalLane(genreHint);
+
+  const cachedTimbre = timbreForGender(vocal.code, voiceSample, lock, artist?.voice, {
+    metal,
+    extreme,
+  });
 
   const instruments = buildSongGenInstruments(lock, fromArrange, { gospel, studioGenre });
 
   const styleTags = buildSongGenStyleTags(lock, fromArrange, vocal.code, {
     language: artist?.language || lyrics?.language,
+    metal,
+    extreme,
   });
   for (const flavor of genreFlavorTags(genreHint)) {
     if (!styleTags.some((t) => t.toLowerCase() === flavor.toLowerCase())) {
@@ -1303,13 +1339,7 @@ export async function startSongGeneration(
     .slice(0, preview ? 220 : 360);
 
   const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
-  const genreBpm = /dancehall|reggae/i.test(genreHint)
-    ? 98
-    : /afro/i.test(genreHint)
-      ? 108
-      : /trap|drill/i.test(genreHint)
-        ? 138
-        : 110;
+  const genreBpm = defaultBpmForGenre(genreHint);
 
   // Modèle auto selon VRAM + préférence SONOZZ (Large soft sur 3090)
   let catalog = null;
@@ -1338,7 +1368,11 @@ export async function startSongGeneration(
     infer.cfg_coef = Math.min(Number(infer.cfg_coef) || 1.8, 1.85);
   }
 
-  let emotionRaw = mapEmotionForStudio(mood || lock?.mood || "", { gospel, wantsChoir });
+  let emotionRaw = mapEmotionForStudio(mood || lock?.mood || "", {
+    gospel,
+    wantsChoir,
+    genreHint,
+  });
   if (vocal.code === "male" && FEMININE_TIMBRE_RE.test(emotionRaw)) {
     emotionRaw = "energetic";
   }

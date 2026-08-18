@@ -264,6 +264,9 @@ export function lyricsForAceStepPreview(text) {
   return lines.slice(0, 16).join("\n");
 }
 
+/** Force du conditionnement audio : assez bas = lane sonore, pas une cover du titre phare. */
+export const ACE_STYLE_TRANSFER_STRENGTH = 0.25;
+
 export function buildAceStepBody({
   title,
   style,
@@ -273,13 +276,23 @@ export function buildAceStepBody({
   durationSec,
   modelId,
   preview = false,
+  referenceAudioUrl,
+  referenceAudioTitle,
+  audioCoverStrength,
+  studioBase,
 }) {
   const meta = aceStepModelMeta(modelId);
   const isTurbo = Boolean(meta && meta.steps <= 8);
   const duration = preview
     ? Math.min(45, Number(durationSec) || 30)
     : Math.min(480, Math.max(60, Number(durationSec) || 180));
-  return {
+  let refUrl = String(referenceAudioUrl || "").trim();
+  if (isAceHostedAudioUrl(studioBase, refUrl)) refUrl = "";
+  const strengthNum = Number(audioCoverStrength);
+  const strength = Number.isFinite(strengthNum)
+    ? Math.min(1, Math.max(0.05, strengthNum))
+    : ACE_STYLE_TRANSFER_STRENGTH;
+  const body = {
     customMode: true,
     title: String(preview ? `${title || "SONOZZ"} · extrait` : title || "SONOZZ Track").slice(0, 120),
     style: String(style || "pop, emotional, radio-ready").slice(0, 800),
@@ -296,6 +309,16 @@ export function buildAceStepBody({
     randomSeed: true,
     pollinations: { enabled: false },
   };
+  if (/^https?:\/\//i.test(refUrl)) {
+    body.referenceAudioUrl = refUrl;
+    const refTitle = String(referenceAudioTitle || "").trim();
+    if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
+    body.audioCoverStrength = strength;
+    body.taskType = "text2music";
+    body.instruction =
+      "Use the reference audio for timbre, riffs, drums and production only. Generate an original song with the provided lyrics — not a cover, remix or melody clone of the reference.";
+  }
+  return body;
 }
 
 const ACE_UNREACHABLE_RE =
@@ -431,6 +454,205 @@ export async function switchAceStepModel(keys, modelId) {
   }
 }
 
+const GRADIO_CACHE_ERROR_RE =
+  /not uploaded by a user|check_in_upload_folder|InvalidPathError|gradio cache dir/i;
+
+export function isGradioReferenceCacheError(err) {
+  return GRADIO_CACHE_ERROR_RE.test(String(err?.message || err || ""));
+}
+
+/** UI Studio = :3001, moteur Python Gradio = :8001 (Pinokio ACE-Step Studio). */
+export function resolveAceStepGradioUrl(keys, studioBase) {
+  const explicit = String(keys?.aceStepGradioUrl || "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (explicit) return explicit;
+  const base = String(studioBase || resolveAceStepBaseUrl(keys)).replace(/\/+$/, "");
+  try {
+    const u = new URL(base);
+    if (u.port === "8001") return base;
+    u.port = "8001";
+    return String(u).replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Fichier hébergé par l’UI ACE (`/audio/…`).
+ * Le Studio le recopie dans `app/temp/gradio/ref-*` → Gradio 5 refuse
+ * (« was not uploaded by a user »).
+ */
+export function isAceHostedAudioUrl(studioBase, url) {
+  const s = String(url || "").trim();
+  if (!s) return false;
+  if (s.startsWith("/audio/")) return true;
+  try {
+    const u = new URL(s);
+    if (!u.pathname.startsWith("/audio/")) return false;
+    if (!studioBase) return false;
+    const base = new URL(studioBase);
+    return u.hostname === base.hostname && (u.port || "") === (base.port || "");
+  } catch {
+    return false;
+  }
+}
+
+export function gradioFileUrl(gradioBase, localPath) {
+  const base = String(gradioBase || "").replace(/\/+$/, "");
+  const p = String(localPath || "").trim().replace(/\\/g, "/");
+  if (!base || !p) return "";
+  if (/^https?:\/\//i.test(p)) return p;
+  return `${base}/gradio_api/file=${p}`;
+}
+
+export function extractGradioUploadUrl(gradioBase, data) {
+  const pick = (item) => {
+    if (!item) return "";
+    if (typeof item === "string") {
+      if (/^https?:\/\//i.test(item)) return item;
+      return gradioFileUrl(gradioBase, item);
+    }
+    if (typeof item === "object") {
+      if (/^https?:\/\//i.test(item.url || "")) return String(item.url);
+      if (item.path) return gradioFileUrl(gradioBase, item.path);
+    }
+    return "";
+  };
+  if (Array.isArray(data)) return pick(data[0]);
+  if (data && typeof data === "object" && data.files) {
+    return pick(Array.isArray(data.files) ? data.files[0] : data.files);
+  }
+  return pick(data);
+}
+
+function extFromPreview(url, mimeType) {
+  const path = String(url || "").split("?")[0].toLowerCase();
+  if (/\.mp3$/i.test(path) || /mpeg|mp3/i.test(mimeType)) return "mp3";
+  if (/\.m4a$/i.test(path) || /mp4|m4a|aac/i.test(mimeType)) return "m4a";
+  if (/\.wav$/i.test(path) || /wav/i.test(mimeType)) return "wav";
+  if (/\.ogg$/i.test(path) || /ogg/i.test(mimeType)) return "ogg";
+  if (/\.flac$/i.test(path) || /flac/i.test(mimeType)) return "flac";
+  return "mp3";
+}
+
+async function downloadPreviewBuffer(url) {
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; SONOZZ/1.0; +https://sonozz.briseteia.me)",
+      Accept: "audio/*,*/*",
+    },
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!res.ok) throw new Error(`Preview HTTP ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!buffer.length) throw new Error("Preview audio vide");
+  const mimeType = res.headers.get("content-type") || "audio/mpeg";
+  return { buffer, mimeType };
+}
+
+/**
+ * Upload via l’API officielle Gradio (`/gradio_api/upload`).
+ * Le path renvoyé est dans le vrai cache Gradio — contrairement à
+ * ACE `app/temp/gradio/ref-*` qui déclenche InvalidPathError.
+ */
+export async function uploadReferenceToGradio(gradioBase, buffer, fileName = "style-ref.mp3", mimeType = "audio/mpeg") {
+  const base = String(gradioBase || "").replace(/\/+$/, "");
+  if (!base) return "";
+  const safeName = String(fileName || "style-ref.mp3")
+    .replace(/[^\w.\-]+/g, "_")
+    .slice(0, 80);
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  const blob = new Blob([bytes], { type: mimeType || "audio/mpeg" });
+  const endpoints = [`${base}/gradio_api/upload`, `${base}/upload`];
+  for (const endpoint of endpoints) {
+    const form = new FormData();
+    form.append("files", blob, safeName);
+    let res;
+    try {
+      res = await fetch(endpoint, {
+        method: "POST",
+        body: form,
+        signal: AbortSignal.timeout(60000),
+      });
+    } catch {
+      continue;
+    }
+    if (!res.ok) continue;
+    const data = await res.json().catch(() => null);
+    const url = extractGradioUploadUrl(base, data);
+    if (url) return url;
+  }
+  return "";
+}
+
+/**
+ * @deprecated Ne plus utiliser pour une référence style : ACE recopie `/audio/`
+ * dans `temp/gradio/ref-*` et Gradio 5 refuse le fichier.
+ */
+export async function uploadAceStepReference(keys, buffer, fileName = "style-ref.mp3", mimeType = "audio/mpeg") {
+  const base = resolveAceStepBaseUrl(keys);
+  const safeName = String(fileName || "style-ref.mp3")
+    .replace(/[^\w.\-]+/g, "_")
+    .slice(0, 80);
+  const form = new FormData();
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  const file =
+    typeof File !== "undefined"
+      ? new File([bytes], safeName, { type: mimeType || "audio/mpeg" })
+      : new Blob([bytes], { type: mimeType || "audio/mpeg" });
+  form.append("audio", file, safeName);
+
+  return withAuth(base, async (token) => {
+    let res;
+    try {
+      res = await fetch(`${base}/api/generate/upload-audio`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+        signal: AbortSignal.timeout(60000),
+      });
+    } catch (e) {
+      throw new Error(`Upload réf. ACE-Step injoignable. ${errText(e).slice(0, 120)}`);
+    }
+    const ct = res.headers.get("content-type") || "";
+    const data = /json/i.test(ct) ? await res.json().catch(() => ({})) : {};
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      throw new Error(apiError("/api/generate/upload-audio", data, res.status));
+    }
+    const url = String(data?.url || data?.publicUrl || "").trim();
+    if (!url) throw new Error("ACE-Step n’a pas renvoyé d’URL de référence");
+    return resolveAceAudioUrl(base, url);
+  });
+}
+
+/**
+ * Prépare une URL de référence que Gradio accepte.
+ * 1. Upload officiel Gradio (:8001) → URL `/gradio_api/file=…`
+ * 2. Sinon URL catalogue distante (iTunes / Deezer) — ACE fait handle_file(url)
+ * Jamais d’URL ACE `/audio/…` (copie `temp/gradio/ref-*` rejetée).
+ */
+export async function ensureAceStepStyleReference(keys, previewUrl) {
+  const url = String(previewUrl || "").trim();
+  if (!/^https?:\/\//i.test(url)) return "";
+  const studioBase = resolveAceStepBaseUrl(keys);
+  if (isAceHostedAudioUrl(studioBase, url)) return "";
+
+  const gradioBase = resolveAceStepGradioUrl(keys, studioBase);
+  if (gradioBase) {
+    try {
+      const { buffer, mimeType } = await downloadPreviewBuffer(url);
+      const ext = extFromPreview(url, mimeType);
+      const hosted = await uploadReferenceToGradio(gradioBase, buffer, `style-ref.${ext}`, mimeType);
+      if (hosted && !isAceHostedAudioUrl(studioBase, hosted)) return hosted;
+    } catch (e) {
+      console.warn("[acestep] upload Gradio réf. ignoré:", e.message);
+    }
+  }
+  return url;
+}
+
 export async function startAceStep(keys, {
   prompt,
   lyrics,
@@ -438,6 +660,8 @@ export async function startAceStep(keys, {
   language,
   bpm,
   preview = false,
+  referenceAudioUrl,
+  referenceAudioTitle,
 } = {}) {
   const base = resolveAceStepBaseUrl(keys);
   const info = await testAceStep(keys);
@@ -465,6 +689,22 @@ export async function startAceStep(keys, {
     }
   }
 
+  let refUrl = String(referenceAudioUrl || "").trim();
+  if (isAceHostedAudioUrl(base, refUrl)) refUrl = "";
+  if (/^https?:\/\//i.test(refUrl)) {
+    try {
+      refUrl = (await ensureAceStepStyleReference(keys, refUrl)) || refUrl;
+    } catch (e) {
+      console.warn("[acestep] preview référence ignoré:", e.message);
+    }
+  } else {
+    refUrl = "";
+  }
+  if (isAceHostedAudioUrl(base, refUrl)) {
+    refUrl = String(referenceAudioUrl || "").trim();
+    if (isAceHostedAudioUrl(base, refUrl)) refUrl = "";
+  }
+
   const body = buildAceStepBody({
     title,
     style: prompt,
@@ -474,6 +714,9 @@ export async function startAceStep(keys, {
     durationSec: preview ? 30 : 180,
     modelId: pick.modelId,
     preview,
+    referenceAudioUrl: refUrl,
+    referenceAudioTitle,
+    studioBase: base,
   });
 
   console.info(
@@ -487,6 +730,7 @@ export async function startAceStep(keys, {
     `lang=${body.vocalLanguage}`,
     `dur=${body.duration}s`,
     `bpm=${body.bpm || "?"}`,
+    refUrl ? `ref=${String(referenceAudioTitle || "").slice(0, 40) || "audio"}` : "ref=OFF",
   );
 
   const created = await withAuth(base, (token) =>
@@ -501,6 +745,8 @@ export async function startAceStep(keys, {
     model: pick.modelId,
     quality: aceStepModelLabel(pick.modelId),
     pickReason: pick.reason,
+    usedReference: Boolean(body.referenceAudioUrl),
+    referenceAudioTitle: body.referenceAudioTitle || null,
   };
 }
 
@@ -554,6 +800,11 @@ export async function pollAceStep(keys, generationId) {
     if (/out of memory|CUDA|VRAM/i.test(raw)) {
       throw new Error(`VRAM insuffisante — ${raw}`);
     }
+    if (isGradioReferenceCacheError(raw)) {
+      throw new Error(
+        "Gradio a rejeté le fichier de référence (not uploaded by a user). Relance le morceau — l’extrait n’est plus envoyé via /audio/ local.",
+      );
+    }
     throw new Error(raw);
   }
   const eta = Number(status?.etaSeconds);
@@ -587,6 +838,19 @@ export async function cancelAceStep(keys, generationId) {
 }
 
 export async function generateMusicWithAceStep(keys, opts = {}) {
+  const run = () => generateMusicWithAceStepOnce(keys, opts);
+  try {
+    return await run();
+  } catch (e) {
+    if (isGradioReferenceCacheError(e) && opts.referenceAudioUrl) {
+      console.warn("[acestep] réf. Gradio rejetée — retry sans audio");
+      return generateMusicWithAceStepOnce(keys, { ...opts, referenceAudioUrl: "" });
+    }
+    throw e;
+  }
+}
+
+async function generateMusicWithAceStepOnce(keys, opts = {}) {
   const started = await startAceStep(keys, opts);
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise((r) => setTimeout(r, POLL_MS));

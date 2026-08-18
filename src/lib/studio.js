@@ -1,3 +1,5 @@
+import { isMetalLane } from "./musicLane.js";
+
 export const STEPS = [
   { id: 1, key: "stats", label: "Stats", short: "Analytics" },
   { id: 2, key: "artist", label: "Artiste", short: "Profil" },
@@ -32,6 +34,7 @@ export const MUSIC_STYLES = [
   { value: "Dancehall / Reggae", label: "Dancehall" },
   { value: "Rock / Indie rock", label: "Rock" },
   { value: "Metal / Hard rock", label: "Metal" },
+  { value: "Death Metal / Brutal", label: "Death metal" },
   { value: "Punk / Garage", label: "Punk" },
   { value: "Jazz / Nu-jazz", label: "Jazz" },
   { value: "Blues / Roots", label: "Blues" },
@@ -69,13 +72,14 @@ export function matchMusicStyleFromGenre(raw) {
     { re: /house|dance(?!hall)/, value: "House / Dance" },
     { re: /techno/, value: "Techno / Underground" },
     { re: /edm|festival/, value: "EDM / Festival" },
-    { re: /indie|alternative|alt/, value: "Indie / Alternative" },
+    { re: /death\s*metal|brutal death|black\s*metal|grindcore|deathcore/, value: "Death Metal / Brutal" },
+    { re: /metal|screamo|thrash|doom/, value: "Metal / Hard rock" },
+    { re: /punk|garage/, value: "Punk / Garage" },
+    { re: /\bindie\b|\balternative\b(?!\s*metal)/, value: "Indie / Alternative" },
     { re: /folk|acoustic/, value: "Folk / Acoustique" },
     { re: /chanson|variete/, value: "Variété / Chanson" },
-    { re: /reggaeton|latin|salsa/, value: "Latin / Reggaeton" },
+    { re: /reggaeton|\blatin\b|salsa/, value: "Latin / Reggaeton" },
     { re: /dancehall|reggae/, value: "Dancehall / Reggae" },
-    { re: /metal/, value: "Metal / Hard rock" },
-    { re: /punk|garage/, value: "Punk / Garage" },
     { re: /rock/, value: "Rock / Indie rock" },
     { re: /jazz/, value: "Jazz / Nu-jazz" },
     { re: /blues/, value: "Blues / Roots" },
@@ -109,7 +113,49 @@ export function catalogGenresToStyleValues(genres = []) {
     seen.add(hit.value);
     values.push(hit.value);
   }
+  if (values.some((v) => /metal/i.test(v))) {
+    return values.filter(
+      (v) => v !== "Rock / Indie rock" && v !== "Pop contemporaine" && v !== "Indie / Alternative",
+    );
+  }
   return values;
+}
+
+const JUNK_GENRE_RE =
+  /alliteration|assonance|metaphor|rhyme|lyrics|poetry|literary|seen live|favourite|favorite/;
+
+function looksLikeGenreToken(raw) {
+  const g = String(raw || "").trim();
+  if (g.length < 3 || g.length > 48) return false;
+  if (JUNK_GENRE_RE.test(g.toLowerCase())) return false;
+  if (matchMusicStyleFromGenre(g)) return true;
+  return /metal|rock|punk|jazz|soul|pop|rap|hop|house|techno|folk|blues|funk|disco|gospel|indie|electro|trap|drill|reggae|latin|country|ambient|hardcore|grind|thrash|doom|black|death|wave|beat/.test(
+    g.toLowerCase(),
+  );
+}
+
+/**
+ * Pastilles UI : genres catalogue nettoyés, dédupliqués par label.
+ * Rock/Pop ombrelle retirés si un vrai metal est présent.
+ */
+export function styleGenreChips(rawList = []) {
+  const chips = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(rawList) ? rawList : [rawList]) {
+    const g = String(raw || "").trim();
+    if (!g || !looksLikeGenreToken(g)) continue;
+    const mapped = matchMusicStyleFromGenre(g);
+    const label = mapped?.label || g;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    chips.push({ raw: g, value: mapped?.value || g, label });
+  }
+  const blob = chips.map((c) => `${c.label} ${c.raw}`).join(" ");
+  if (isMetalLane(blob)) {
+    return chips.filter((c) => !/^(rock|pop|indie)$/i.test(c.label));
+  }
+  return chips;
 }
 
 /** Normalise genres (tableau ou string legacy) → string[]. */

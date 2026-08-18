@@ -1,5 +1,7 @@
 /** Réglages d’arrangement SongGen (projet) — défauts prudents = mix complet. */
 
+import { isMetalLane, metalBandInstruments, styleLockGenreBlob } from "./musicLane.js";
+
 export const LEAD_INSTRUMENTS = [
   { id: "", label: "Auto (style artiste)" },
   { id: "piano", label: "Piano" },
@@ -115,6 +117,7 @@ export function musicArrangeFromStyleLock(styleLock) {
     lock.energy,
     lock.musicPrompt,
     lock.vocalStyle,
+    lock.matchedName,
     lock.seedTrack?.title,
   ]
     .filter(Boolean)
@@ -123,8 +126,12 @@ export function musicArrangeFromStyleLock(styleLock) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
+  const metal = isMetalLane(bits) || isMetalLane(styleLockGenreBlob(lock));
+
   let choir = "none";
-  if (/gospel|church choir|satb|call and response|call-and-response/.test(bits)) {
+  if (metal) {
+    choir = "none";
+  } else if (/gospel|church choir|satb|call and response|call-and-response/.test(bits)) {
     choir = "gospel";
   } else if (/choir pad|ethereal choir|ambient choir|atmospheric (vocal|pad)/.test(bits)) {
     choir = "pads";
@@ -145,6 +152,9 @@ export function musicArrangeFromStyleLock(styleLock) {
     );
 
   let leadInstrument = "";
+  if (metal) {
+    leadInstrument = "electric guitar";
+  } else {
   const leadRules = [
     { re: /\borgan\b|church organ|hammond/, id: "organ" },
     { re: /synth lead|lead synth|arvo|synth pad|analog synth/, id: "synth lead" },
@@ -169,8 +179,12 @@ export function musicArrangeFromStyleLock(styleLock) {
   if (!leadInstrument && isElectronicLane) {
     leadInstrument = "synth lead";
   }
+  }
 
   let drums = "";
+  if (metal) {
+    drums = "live kit";
+  } else {
   const drumRules = [
     { re: /trap|808s|hi-?hat roll/, id: "trap 808s" },
     { re: /boom[\s-]?bap|boom bap/, id: "boom bap" },
@@ -191,6 +205,7 @@ export function musicArrangeFromStyleLock(styleLock) {
   if (!drums && isElectronicLane) {
     drums = "live kit";
   }
+  }
 
   // Densité : « intimate » ≠ mix vide. Sparse explicite OK, sauf lane electronic (pads + groove).
   // En pratique LeVo + sparse = 1 instrument → on refuse sparse sauf demande ultra-claire.
@@ -201,7 +216,7 @@ export function musicArrangeFromStyleLock(styleLock) {
     /dense|maximal|wall of sound|layered|full band|lush|thick|maximalist/.test(bits);
 
   let density = "mid";
-  if (lock.energy === "high" || explicitlyDense || isElectronicLane) {
+  if (metal || lock.energy === "high" || explicitlyDense || isElectronicLane) {
     density = "dense";
   } else if (explicitlySparse && !isElectronicLane && lock.energy === "low") {
     density = "mid"; // plus de sparse → lit mono chez SongGen
@@ -216,6 +231,8 @@ export function musicArrangeFromStyleLock(styleLock) {
   for (const f of FEATURE_TAGS) {
     const id = f.id.toLowerCase();
     if (bits.includes(id)) {
+      if (metal && (f.id === "organ pads" || f.id === "gospel choir" || f.id === "fingerpicked guitar"))
+        continue;
       pushFeat(f.id);
       continue;
     }
@@ -224,7 +241,7 @@ export function musicArrangeFromStyleLock(styleLock) {
     else if (f.id === "brass stabs" && /brass|horn stab/.test(bits)) pushFeat(f.id);
     else if (f.id === "string swell" && /string swell|string rise|strings/.test(bits))
       pushFeat(f.id);
-    else if (f.id === "organ pads" && /organ pad|pad organ|ambient|atmospheric|synth pad/.test(bits))
+    else if (f.id === "organ pads" && !metal && /organ pad|pad organ|ambient|atmospheric|synth pad/.test(bits))
       pushFeat(f.id);
     else if (
       f.id === "fingerpicked guitar" &&
@@ -234,7 +251,7 @@ export function musicArrangeFromStyleLock(styleLock) {
       pushFeat(f.id);
     } else if (f.id === "sidechain pump" && /sidechain/.test(bits)) pushFeat(f.id);
   }
-  if (isElectronicLane) {
+  if (isElectronicLane && !metal) {
     pushFeat("organ pads");
     if (/organic|acoustic|finger/.test(bits)) pushFeat("fingerpicked guitar");
   }
@@ -291,7 +308,7 @@ function looksLikeDrums(tag = "") {
 }
 
 /** Complète une liste d’instruments pour éviter les sorties « 1 piste seule ». */
-function ensureFullBandInstruments(bits, { gospel = false } = {}) {
+function ensureFullBandInstruments(bits, { gospel = false, metal = false } = {}) {
   const list = [...bits].filter(Boolean);
   const has = (re) => list.some((t) => re.test(String(t)));
   const add = (tag) => {
@@ -304,6 +321,8 @@ function ensureFullBandInstruments(bits, { gospel = false } = {}) {
     add("piano");
     add("bass");
     add("drums");
+  } else if (metal) {
+    for (const tag of metalBandInstruments()) add(tag);
   } else {
     // Toujours une section rythmique + harmonique + mélodie
     if (!has(/\bbass|808\b/i)) add("bass");
@@ -320,16 +339,17 @@ function ensureFullBandInstruments(bits, { gospel = false } = {}) {
  * Convertit les réglages UX en champs SongGen (instruments + fragments custom_style).
  * Priorité : chœur / lead utilisateur > style lock (sauf si chœur gospel → on filtre le biais batterie).
  */
-export function musicArrangeToSongGen(arrange, { styleLockInstruments } = {}) {
+export function musicArrangeToSongGen(arrange, { styleLockInstruments, styleLock } = {}) {
   const a = normalizeMusicArrange(arrange);
+  const metal = isMetalLane(styleLockGenreBlob(styleLock, [a.notes, a.leadInstrument]));
   const parts = [];
   const instrumentBits = [];
-  const wantsChoir = a.choir && a.choir !== "none";
-  const gospel = a.choir === "gospel";
+  const wantsChoir = !metal && a.choir && a.choir !== "none";
+  const gospel = !metal && a.choir === "gospel";
 
   const choir = CHOIR_OPTIONS.find((c) => c.id === a.choir);
   // Chœur EN TÊTE — sinon SongGen / LeVo ignore le hint noyé derrière « drums »
-  if (choir?.en) {
+  if (!metal && choir?.en) {
     parts.push(choir.en);
     if (gospel) {
       instrumentBits.push("gospel choir", "church organ", "piano");
@@ -351,6 +371,7 @@ export function musicArrangeToSongGen(arrange, { styleLockInstruments } = {}) {
     const lockTags = styleLockInstruments.filter(Boolean).slice(0, 4);
     for (const tag of lockTags) {
       if (wantsChoir && looksLikeDrums(tag)) continue;
+      if (metal && /\b(piano|keys|synth|pad|organ|choir)\b/i.test(tag)) continue;
       if (!instrumentBits.includes(tag)) instrumentBits.push(tag);
     }
   }
@@ -370,6 +391,8 @@ export function musicArrangeToSongGen(arrange, { styleLockInstruments } = {}) {
     parts.push(
       "intimate arrangement with space, still full band: bass, soft drums, pads and lead — never thin or single-instrument",
     );
+  } else if (metal) {
+    parts.push("dense wall of sound, down-tuned guitars, relentless double-kick drums");
   } else if (density === "dense") {
     parts.push(
       gospel
@@ -388,18 +411,22 @@ export function musicArrangeToSongGen(arrange, { styleLockInstruments } = {}) {
   if (a.notes) parts.push(a.notes);
 
   // Toujours compléter en bande complète (évite 1 seul instrument du style-lock)
-  const fullInstruments = ensureFullBandInstruments(instrumentBits, { gospel });
+  const fullInstruments = ensureFullBandInstruments(instrumentBits, { gospel, metal });
 
   parts.unshift(
     gospel
       ? "commercial gospel-soul production quality, radio-ready full mix"
-      : "commercial radio-ready full-band production, polished multi-instrument arrangement like a streaming hit",
+      : metal
+        ? "brutal death metal production, crushing down-tuned guitars, blast beats"
+        : "commercial radio-ready full-band production, polished multi-instrument arrangement like a streaming hit",
   );
 
   parts.push(
     gospel
       ? "full mixed song: lead vocal + gospel choir + band, never drums-only or instrumental bed alone"
-      : "full mixed song with lead vocals AND full band (bass, keys/guitar, drums, pads) — never a single instrument loop, never drums-only, never vocals-only",
+      : metal
+        ? "harsh growled vocals over distorted guitars and drums — never pop, never clean singing, never synth pads"
+        : "full mixed song with lead vocals AND full band (bass, keys/guitar, drums, pads) — never a single instrument loop, never drums-only, never vocals-only",
   );
 
   return {

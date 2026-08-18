@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   mergeArtistCandidatesByName,
   rankArtistTopTracks,
+  pickStyleLockPreviewUrl,
 } from "../src/server/styleReference.js";
 
 describe("rankArtistTopTracks", () => {
@@ -132,5 +133,22 @@ describe("mergeArtistCandidatesByName", () => {
     assert.equal(merged[0].source, "deezer");
     assert.equal(merged[0].country, "US");
     assert.equal(merged[0].gender, "female");
+  });
+});
+
+describe("pickStyleLockPreviewUrl", () => {
+  it("prend le preview du titre seed", () => {
+    assert.equal(
+      pickStyleLockPreviewUrl({
+        previewUrl: "https://cdn/artist.mp3",
+        seedTrack: { previewUrl: "https://audio.apple.com/condemnation.m4a" },
+      }),
+      "https://audio.apple.com/condemnation.m4a",
+    );
+  });
+
+  it("ignore les URLs non http", () => {
+    assert.equal(pickStyleLockPreviewUrl({ previewUrl: "/local.mp3" }), "");
+    assert.equal(pickStyleLockPreviewUrl(null), "");
   });
 });

@@ -2,11 +2,16 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildAceStepBody,
+  extractGradioUploadUrl,
+  gradioFileUrl,
   interpretAceProbe,
+  isAceHostedAudioUrl,
+  isGradioReferenceCacheError,
   lyricsForAceStepPreview,
   pickAceStepModel,
   resolveAceAudioUrl,
   resolveAceStepBaseUrl,
+  resolveAceStepGradioUrl,
   isAceStepMusicProvider,
 } from "../src/server/aceStep.js";
 import { isStudioEnabled, keysAfterStudioToggle } from "../src/lib/keys.js";
@@ -90,6 +95,100 @@ describe("ACE-Step Studio client", () => {
     assert.equal(sft.inferenceSteps, 50);
     assert.equal(sft.guidanceScale, 7);
     assert.equal(sft.duration, 180);
+    assert.equal(sft.referenceAudioUrl, undefined);
+    assert.equal(sft.taskType, undefined);
+  });
+
+  it("envoie le preview titre phare en référence style (pas une cover)", () => {
+    const body = buildAceStepBody({
+      title: "Vile Adulteress",
+      style: "brutal death metal",
+      lyrics: "[Verse]\nFlesh",
+      language: "en",
+      bpm: 170,
+      modelId: "acestep-v15-xl-sft",
+      referenceAudioUrl: "https://audio.example/condemnation.m4a",
+      referenceAudioTitle: "Condemnation Contagion — Cannibal Corpse",
+    });
+    assert.equal(body.customMode, true);
+    assert.equal(body.taskType, "text2music");
+    assert.equal(body.referenceAudioUrl, "https://audio.example/condemnation.m4a");
+    assert.match(body.referenceAudioTitle, /Condemnation Contagion/);
+    assert.equal(body.audioCoverStrength, 0.25);
+    assert.match(body.instruction, /not a cover/i);
+
+    const viaGradio = buildAceStepBody({
+      title: "Vile Adulteress",
+      style: "brutal death metal",
+      lyrics: "x",
+      language: "en",
+      studioBase: "http://127.0.0.1:3001",
+      referenceAudioUrl: "http://127.0.0.1:8001/gradio_api/file=/tmp/gradio/hash/style-ref.mp3",
+      referenceAudioTitle: "Condemnation Contagion",
+    });
+    assert.match(viaGradio.referenceAudioUrl, /gradio_api\/file=/);
+    assert.equal(viaGradio.taskType, "text2music");
+  });
+
+  it("refuse les URLs ACE /audio/ (Gradio 5 InvalidPathError)", () => {
+    const studio = "http://127.0.0.1:3001";
+    assert.equal(isAceHostedAudioUrl(studio, "/audio/u/ref.mp3"), true);
+    assert.equal(
+      isAceHostedAudioUrl(studio, "http://127.0.0.1:3001/audio/1787059803049-9af11083.mp3"),
+      true,
+    );
+    assert.equal(
+      isAceHostedAudioUrl(studio, "https://audio-ssl.itunes.apple.com/preview.m4a"),
+      false,
+    );
+    assert.equal(
+      isAceHostedAudioUrl(studio, "http://127.0.0.1:8001/gradio_api/file=/tmp/gradio/x.mp3"),
+      false,
+    );
+
+    const body = buildAceStepBody({
+      title: "Vile Adulteress",
+      style: "death metal",
+      lyrics: "x",
+      language: "en",
+      studioBase: studio,
+      referenceAudioUrl: "http://127.0.0.1:3001/audio/ref.mp3",
+      referenceAudioTitle: "local ACE",
+    });
+    assert.equal(body.referenceAudioUrl, undefined);
+    assert.equal(body.taskType, undefined);
+  });
+
+  it("dérive l’URL Gradio :8001 et parse l’upload officiel", () => {
+    assert.equal(
+      resolveAceStepGradioUrl({ aceStepBaseUrl: "http://10.1.0.88:3001" }),
+      "http://10.1.0.88:8001",
+    );
+    assert.equal(
+      resolveAceStepGradioUrl({ aceStepGradioUrl: "http://127.0.0.1:7865" }),
+      "http://127.0.0.1:7865",
+    );
+    assert.equal(
+      gradioFileUrl("http://127.0.0.1:8001", "D:\\temp\\gradio\\a.mp3"),
+      "http://127.0.0.1:8001/gradio_api/file=D:/temp/gradio/a.mp3",
+    );
+    assert.equal(
+      extractGradioUploadUrl("http://127.0.0.1:8001", ["/tmp/gradio/hash/style-ref.mp3"]),
+      "http://127.0.0.1:8001/gradio_api/file=/tmp/gradio/hash/style-ref.mp3",
+    );
+    assert.equal(
+      extractGradioUploadUrl("http://127.0.0.1:8001", {
+        url: "http://127.0.0.1:8001/gradio_api/file=/tmp/gradio/x.mp3",
+      }),
+      "http://127.0.0.1:8001/gradio_api/file=/tmp/gradio/x.mp3",
+    );
+    assert.equal(
+      isGradioReferenceCacheError(
+        "Cannot move D:\\pinokio\\api\\ACE-Step-Studio-pinokio.git\\app\\temp\\gradio\\ref-1\\x.mp3 to the gradio cache dir because it was not uploaded by a user.",
+      ),
+      true,
+    );
+    assert.equal(isGradioReferenceCacheError("VRAM OOM"), false);
   });
 
   it("détecte ACE totalement injoignable vs moteur Python down", () => {

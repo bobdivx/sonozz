@@ -19,7 +19,7 @@ import {
   songGenLanguageHint,
   languageEngineLabel,
   catalogGenresToStyleValues,
-  matchMusicStyleFromGenre,
+  styleGenreChips,
   inferLanguageFromStyleRef,
   parseGenres,
 } from "../../lib/studio.js";
@@ -31,6 +31,7 @@ import PhotoUpload from "../PhotoUpload.jsx";
 import VoiceSampleUpload from "../VoiceSampleUpload.jsx";
 import { resolveArtistGender, inferGenderFromStyleRef, ARTIST_GENDER_OPTIONS, ARTIST_GENDER_LABELS } from "../../lib/artistGender.js";
 import { artistPhotoSyncKey, normalizeArtistPhotos } from "../../lib/artistPhotos.js";
+import { buildArtistDraftPatch, isUnchangedArtistDraft } from "../../lib/artistDraft.js";
 
 export default function ArtistStep({ artist, trends, loading, onGenerate, onPatchArtist, initialMode }) {
   const [mode, setMode] = useState(() =>
@@ -43,7 +44,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
   const [customGenre, setCustomGenre] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [language, setLanguage] = useState(artist?.language || "fr");
-  const [bioHint, setBioHint] = useState("");
+  const [bioHint, setBioHint] = useState(artist?.bioHint || "");
   const [styleArtist, setStyleArtist] = useState(artist?.styleArtist || "");
   const [styleArtistPick, setStyleArtistPick] = useState(() =>
     artist?.styleLock?.sourceId && artist?.styleLock?.source !== "multi"
@@ -80,6 +81,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
         album: st.album || "",
         image: st.image || null,
         url: st.url || null,
+        previewUrl: st.previewUrl || null,
       };
     }
     return null;
@@ -92,6 +94,16 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
   const [pickError, setPickError] = useState("");
   const languageManualRef = useRef(false);
   const genderManualRef = useRef(Boolean(resolveArtistGender(artist)?.code));
+  const skipHydrateRef = useRef(false);
+  const persistTimerRef = useRef(null);
+  const draftReadyRef = useRef(false);
+  const loadingRef = useRef(Boolean(loading));
+  const artistRef = useRef(artist);
+  const onPatchRef = useRef(onPatchArtist);
+  const draftRef = useRef({});
+  loadingRef.current = Boolean(loading);
+  artistRef.current = artist;
+  onPatchRef.current = onPatchArtist;
   const keysSnap = loadKeys();
   const langOptions = languagesForProvider(
     keysSnap.musicProvider,
@@ -100,9 +112,9 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
   const songGenLangs = String(keysSnap.musicProvider || "") === "songgen";
 
   useEffect(() => {
-    if (initialMode === "self" || initialMode === "fiction") {
-      setMode(initialMode);
-    }
+    if (initialMode !== "self" && initialMode !== "fiction") return;
+    if (initialMode === mode) return;
+    setMode(initialMode);
   }, [initialMode]);
 
   useEffect(() => {
@@ -113,10 +125,14 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
 
   useEffect(() => {
     if (!artist) return;
+    if (skipHydrateRef.current) {
+      skipHydrateRef.current = false;
+      return;
+    }
     setName(artist.name || "");
     setAllowTakenName(false);
     setNameStatus(null);
-    if (artist.mode === "self") setMode("self");
+    if (artist.mode === "self" || artist.mode === "fiction") setMode(artist.mode);
     const parsed = parseGenres(artist.genres || artist.genre);
     const presetValues = new Set(MUSIC_STYLES.map((s) => s.value).filter(Boolean));
     const known = parsed.filter((g) => presetValues.has(g));
@@ -131,13 +147,14 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     }
     if (artist.language) setLanguage(artist.language);
     setStyleArtist(artist.styleArtist || "");
-    if (artist.age != null) setAge(String(artist.age));
+    setAge(artist.age != null ? String(artist.age) : "");
     const savedGender = resolveArtistGender(artist)?.code;
     if (savedGender) {
       setGender(savedGender);
       genderManualRef.current = true;
     }
-    if (artist.city) setCity(artist.city);
+    setCity(artist.city || "");
+    setBioHint(artist.bioHint || "");
     setVoiceSample(artist.voiceSample || null);
     if (Array.isArray(artist.styleLock?.refs) && artist.styleLock.refs.length) {
       setStyleArtistPicks(
@@ -159,7 +176,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
         image: artist.styleLock.image || null,
       });
     }
-  }, [artist?.name, artist?.genre, artist?.genres, artist?.language, artist?.styleArtist, artist?.mode]);
+  }, [artist?.name, artist?.genre, artist?.genres, artist?.language, artist?.styleArtist, artist?.mode, artist?.age, artist?.city, artist?.bioHint]);
 
   const photoSyncKey = artistPhotoSyncKey(artist);
   useEffect(() => {
@@ -175,7 +192,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     const list = normalizeArtistPhotos(next);
     setPhotos(list);
     setPickError("");
-    if (!artist) return;
+    skipHydrateRef.current = true;
     onPatchArtist?.({
       photos: list,
       imageUrl: list[0] || null,
@@ -203,6 +220,79 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
   ];
   const resolvedGenre = formatGenres(resolvedGenres);
   const isSelf = mode === "self";
+  draftRef.current = {
+    mode,
+    name,
+    age,
+    gender,
+    city,
+    language,
+    resolvedGenres,
+    bioHint,
+    styleArtist,
+    styleArtistPick,
+    styleArtistPicks,
+    styleTrackPick,
+  };
+
+  function flushDraft(overrides = {}) {
+    if (loadingRef.current) return;
+    const prev = artistRef.current || {};
+    const patch = buildArtistDraftPatch(
+      { ...draftRef.current, ...overrides },
+      prev,
+    );
+    if (isUnchangedArtistDraft(patch, prev)) return;
+    skipHydrateRef.current = true;
+    onPatchRef.current?.(patch);
+  }
+
+  function queueDraft(overrides = {}, immediate = false) {
+    if (overrides && Object.keys(overrides).length) {
+      draftRef.current = { ...draftRef.current, ...overrides };
+    }
+    if (loadingRef.current) return;
+    if (immediate) {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+      flushDraft(overrides);
+      return;
+    }
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      flushDraft();
+    }, 500);
+  }
+
+  function applyMode(nextMode) {
+    setPickError("");
+    const nextPicks =
+      nextMode === "self" && !styleArtistPicks.length && styleArtistPick?.id
+        ? [styleArtistPick]
+        : styleArtistPicks;
+    if (nextMode === "self" && nextPicks.length && !styleArtistPicks.length) {
+      setStyleArtistPicks(nextPicks);
+    }
+    if (nextMode === "fiction" && !styleArtistPick?.id && styleArtistPicks[0]?.id) {
+      setStyleArtistPick(styleArtistPicks[0]);
+      if (styleArtistPicks[0].name) setStyleArtist(styleArtistPicks[0].name);
+    }
+    setMode(nextMode);
+    queueDraft(
+      {
+        mode: nextMode,
+        styleArtistPicks: nextMode === "self" ? nextPicks : styleArtistPicks,
+        styleArtistPick:
+          nextMode === "fiction" && !styleArtistPick?.id && styleArtistPicks[0]
+            ? styleArtistPicks[0]
+            : styleArtistPick,
+      },
+      true,
+    );
+  }
   const hasStyleRef = Boolean(
     styleTrackPick?.id ||
       styleArtistPick?.id ||
@@ -238,6 +328,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
   const artistOnlyStyleValues = new Set(
     catalogGenresToStyleValues(artistRefGenres).filter((v) => !trackStyleValues.has(v)),
   );
+  const trackGenreChips = styleGenreChips(trackRefGenres);
+  const artistGenreChips = styleGenreChips(artistRefGenres).filter(
+    (chip) => !trackGenreChips.some((t) => t.label === chip.label),
+  );
   const nameBlocked = isArtistNameBlocked(name, nameStatus, allowTakenName);
 
   useEffect(() => {
@@ -272,7 +366,54 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     if (inferred && inferred !== gender) setGender(inferred);
   }, [isSelf, styleArtistPick?.id, styleArtistPick?.gender, styleArtistPicks, gender]);
 
+  useEffect(() => {
+    if (!draftReadyRef.current) {
+      draftReadyRef.current = true;
+      return;
+    }
+    queueDraft();
+  }, [
+    name,
+    age,
+    gender,
+    city,
+    language,
+    resolvedGenre,
+    bioHint,
+    styleArtist,
+    styleArtistPick,
+    styleArtistPicks,
+    styleTrackPick,
+  ]);
+
+  useEffect(() => {
+    if (initialMode !== "self" && initialMode !== "fiction") return;
+    if (artistRef.current?.mode === initialMode) return;
+    queueDraft({ mode: initialMode }, true);
+  }, [initialMode]);
+
+  useEffect(() => {
+    if (!loading) return;
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    return () => {
+      if (!persistTimerRef.current) return;
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+      if (!loadingRef.current) flushDraft();
+    };
+  }, []);
+
   function handleGenerate() {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
     if (isSelf) {
       if (!name.trim()) {
         setPickError("Indique ton nom de scène.");
@@ -380,10 +521,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
           aria-selected={!isSelf}
           class={`btn btn-sm gap-2 ${!isSelf ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
           disabled={loading}
-          onClick={() => {
-            setMode("fiction");
-            setPickError("");
-          }}
+          onClick={() => applyMode("fiction")}
         >
           <Sparkles size={14} />
           Artiste fictionnel
@@ -394,10 +532,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
           aria-selected={isSelf}
           class={`btn btn-sm gap-2 ${isSelf ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
           disabled={loading}
-          onClick={() => {
-            setMode("self");
-            setPickError("");
-          }}
+          onClick={() => applyMode("self")}
         >
           <Heart size={14} />
           C’est moi
@@ -424,11 +559,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
               projectId={name.trim() || artist?.slug || "voice"}
               onChange={(sample) => {
                 setVoiceSample(sample);
-                if (!artist?.name) return;
+                skipHydrateRef.current = true;
                 if (sample?.url || sample?.s3Key) {
                   onPatchArtist?.({ voiceSample: sample });
                 } else {
-                  // Retrait audio (guideMode peut rester en state local pour le prochain upload)
                   onPatchArtist?.({ voiceSample: null });
                 }
               }}
@@ -542,38 +676,30 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
             Styles musicaux (optionnel)
           </legend>
 
-          {hasStyleRef && (trackRefGenres.length > 0 || artistRefGenres.length > 0) && (
+          {hasStyleRef && (trackGenreChips.length > 0 || artistGenreChips.length > 0) && (
             <div class="space-y-2 rounded-lg border border-base-content/10 bg-base-200/40 p-3">
               <p class="text-xs text-base-content/55">Déduit de ta référence — pas besoin de recocher :</p>
               <div class="flex flex-wrap gap-2">
-                {trackRefGenres.map((g) => {
-                  const mapped = matchMusicStyleFromGenre(g);
-                  return (
+                {trackGenreChips.map((chip) => (
                     <span
-                      key={`track-${g}`}
+                      key={`track-${chip.label}`}
                       class="badge badge-lg gap-1 border-0 bg-info/25 font-medium text-info"
                       title="Depuis le titre de référence"
                     >
-                      {mapped?.label || g}
+                      {chip.label}
                       <span class="opacity-70">· titre</span>
                     </span>
-                  );
-                })}
-                {artistRefGenres
-                  .filter((g) => !trackRefGenres.some((t) => t.toLowerCase() === g.toLowerCase()))
-                  .map((g) => {
-                    const mapped = matchMusicStyleFromGenre(g);
-                    return (
-                      <span
-                        key={`artist-${g}`}
-                        class="badge badge-lg gap-1 border-0 bg-secondary/25 font-medium text-secondary"
-                        title="Depuis l’artiste de référence"
-                      >
-                        {mapped?.label || g}
-                        <span class="opacity-70">· artiste</span>
-                      </span>
-                    );
-                  })}
+                ))}
+                {artistGenreChips.map((chip) => (
+                    <span
+                      key={`artist-${chip.label}`}
+                      class="badge badge-lg gap-1 border-0 bg-secondary/25 font-medium text-secondary"
+                      title="Depuis l’artiste de référence"
+                    >
+                      {chip.label}
+                      <span class="opacity-70">· artiste</span>
+                    </span>
+                ))}
               </div>
               <p class="text-[11px] text-base-content/45">
                 <span class="text-info">Bleu = titre</span>

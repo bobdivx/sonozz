@@ -177,6 +177,7 @@ export default function TracksStep({
         album: st.album || "",
         image: st.image || null,
         url: st.url || null,
+        previewUrl: st.previewUrl || null,
       };
     }
     return null;
@@ -1307,6 +1308,9 @@ export default function TracksStep({
                 ? ` — ${artist.styleLock.seedTrack.artistName}`
                 : ""}
               {artist.styleLock.audioListened ? " · preview écouté" : ""}
+              {artist.styleLock.seedTrack?.previewUrl || artist.styleLock.previewUrl
+                ? " · ACE recevra l’extrait audio"
+                : ""}
             </p>
           )}
         </div>

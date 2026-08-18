@@ -6,6 +6,7 @@ import {
   resolveStyleReference,
   resolveStyleReferences,
   resolveStyleTrackReference,
+  resolveStyleLockPreview,
 } from "./styleReference.js";
 import { submitOnceRelease } from "./once.js";
 import {
@@ -29,6 +30,7 @@ import {
   isAceStepMusicProvider,
 } from "./aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
+import { coalesceGenres, defaultBpmForGenre, isMetalLane, metalVoiceHint, styleLockGenreBlob } from "../lib/musicLane.js";
 import { normalizeArtistPhotos } from "../lib/artistPhotos.js";
 import { isStudioEnabled } from "../lib/keys.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
@@ -434,6 +436,7 @@ function serializeStyleLock(styleLock) {
     musicPrompt: styleLock.musicPrompt,
     topTracks: styleLock.topTracks,
     audioListened: Boolean(styleLock.audioListened),
+    previewUrl: styleLock.previewUrl || styleLock.seedTrack?.previewUrl || undefined,
     seedTrack: styleLock.seedTrack
       ? {
           title: styleLock.seedTrack.title,
@@ -443,6 +446,7 @@ function serializeStyleLock(styleLock) {
           album: styleLock.seedTrack.album,
           url: styleLock.seedTrack.url,
           image: styleLock.seedTrack.image,
+          previewUrl: styleLock.seedTrack.previewUrl || undefined,
         }
       : undefined,
     refs: Array.isArray(styleLock.refs)
@@ -591,10 +595,10 @@ export async function runArtist({
 
   // Styles finaux : référence artiste = vérité ; styles user en complément optionnel
   const finalGenres = styleLock
-    ? userStyles.length
-      ? [...new Set([...styleLock.genres, ...userStyles])].slice(0, 5)
-      : styleLock.genres
-    : userStyles;
+    ? coalesceGenres(
+        userStyles.length ? [...(styleLock.genres || []), ...userStyles] : styleLock.genres,
+      )
+    : coalesceGenres(userStyles);
   const finalGenre = styleLock
     ? styleLock.genreSummary || finalGenres.join(" × ")
     : finalGenres.join(" × ");
@@ -1006,8 +1010,12 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   }
   const packed = musicArrangeToSongGen(arrange, {
     styleLockInstruments: styleLock?.instruments,
+    styleLock,
   });
   const arrangeBits = packed.customFragments || [];
+  const metal = isMetalLane(
+    styleLockGenreBlob(styleLock, [artist?.genre, lyrics?.title, lyrics?.theme]),
+  );
   // Arrangement (chœur…) EN TÊTE pour MiniMax aussi + qualité production
   const qualityBits = packed.gospel
     ? [
@@ -1015,11 +1023,18 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
         "full band with choir, organ, piano, bass and drums",
         "radio-ready streaming quality",
       ]
-    : [
-        "commercial radio-ready full-band production",
-        "polished multi-instrument arrangement like a Billboard hit",
-        "rich bass, harmony instruments, drums and pads — never thin or single-instrument",
-      ];
+    : metal
+      ? [
+          "brutal death metal",
+          "down-tuned distorted guitars and blast beats",
+          "guttural growled vocals, harsh not clean pop singing",
+          "crushing dense mix, no synth pads, no radio-pop polish",
+        ]
+      : [
+          "commercial radio-ready full-band production",
+          "polished multi-instrument arrangement like a Billboard hit",
+          "rich bass, harmony instruments, drums and pads — never thin or single-instrument",
+        ];
 
   // Scrub fuites de sexe opposé depuis la référence (ex. artiste favori femme → prompt femme)
   const scrubVoiceLeak = (text) => {
@@ -1035,19 +1050,48 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   };
 
   const safeMusicPrompt = scrubVoiceLeak(styleLock?.musicPrompt || "");
+  const voiceLine = metal ? metalVoiceHint(vocal.code) : vocal.voiceHint;
+  const banBits = (Array.isArray(styleLock?.doNot) ? styleLock.doNot : [])
+    .slice(0, 4)
+    .map((d) => `avoid ${d}`);
 
   const prompt = (
     safeMusicPrompt
-      ? [
-          vocal.voiceHint,
-          ...arrangeBits,
-          ...qualityBits,
-          safeMusicPrompt,
-          `${artist?.mood || styleLock.mood || "emotional"} mood`,
-          `vocals and lyrics in ${langName}`,
-          "original composition",
-        ]
-      : [
+      ? metal
+        ? [
+            styleLock?.genreSummary || "brutal death metal",
+            voiceLine,
+            ...qualityBits,
+            safeMusicPrompt,
+            ...banBits,
+            `${artist?.mood || styleLock.mood || "brutal"} mood`,
+            `vocals and lyrics in ${langName}`,
+            "original composition inspired by that lane, not a cover",
+          ]
+        : [
+            vocal.voiceHint,
+            ...arrangeBits,
+            ...qualityBits,
+            safeMusicPrompt,
+            `${artist?.mood || styleLock.mood || "emotional"} mood`,
+            `vocals and lyrics in ${langName}`,
+            "original composition",
+          ]
+      : metal
+        ? [
+            voiceLine,
+            ...qualityBits,
+            artist?.genre || "death metal",
+            artist?.styleArtists?.length
+              ? `in the sonic lane of ${artist.styleArtists.join(" and ")} (original, not a cover)`
+              : artist?.styleArtist
+                ? `in the sonic lane of ${artist.styleArtist} (original, not a cover)`
+                : "",
+            `${artist?.mood || "brutal"} mood`,
+            `vocals and lyrics in ${langName}`,
+            "original composition, not a cover",
+          ]
+        : [
           vocal.voiceHint,
           ...arrangeBits,
           ...qualityBits,
@@ -1088,6 +1132,7 @@ function assembleTrackResult({
     arr = musicArrangeFromStyleLock(styleLock);
   }
   const voice = vocal || resolveVocalGender(artist);
+  const metal = isMetalLane(styleLockGenreBlob(styleLock, [artist?.genre, lyrics?.title]));
 
   const sunoPrompt = buildSunoPrompt({
     lyrics,
@@ -1095,7 +1140,7 @@ function assembleTrackResult({
     styleLock,
     bpmGuess,
     musicArrange: arr,
-    vocalHint: voice?.voiceHint,
+    vocalHint: metal ? metalVoiceHint(voice?.code) : voice?.voiceHint,
   });
 
   const noteReady =
@@ -1162,7 +1207,7 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
   const bpmGuess =
     Number.isFinite(lockBpm) && lockBpm >= 60 && lockBpm <= 200
       ? Math.round(lockBpm)
-      : 95 + Math.floor(Math.random() * 35);
+      : defaultBpmForGenre(styleLockGenreBlob(styleLock, [artist?.genre]));
   const draft = assembleTrackResult({
     lyrics,
     artist,
@@ -1176,6 +1221,13 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
   });
 
   if (wantAceStep) {
+    let styleRef = { previewUrl: "", title: null, artistName: null, via: "none" };
+    try {
+      styleRef = await resolveStyleLockPreview(keys, styleLock || artist?.styleLock);
+    } catch (e) {
+      console.warn("[acestep] preview style:", e.message);
+    }
+    const refTitle = [styleRef.title, styleRef.artistName].filter(Boolean).join(" — ");
     const started = await startAceStep(keys, {
       prompt,
       lyrics: lyrics?.text || "",
@@ -1183,6 +1235,8 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
       language: lang,
       bpm: bpmGuess,
       preview: isPreview,
+      referenceAudioUrl: styleRef.previewUrl,
+      referenceAudioTitle: refTitle,
     });
     return {
       pollNeeded: true,
@@ -1200,10 +1254,14 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
         isPreview,
         status: isPreview ? "preview-ready" : "prompt-ready",
         note: isPreview
-          ? `Extrait ACE-Step · ${started.quality || "auto"} — brouillon indicatif`
-          : started.model
-            ? `ACE-Step · ${started.quality || started.model}`
-            : draft.note,
+          ? `Extrait ACE-Step · ${started.quality || "auto"}${
+              started.usedReference && refTitle ? ` · réf. « ${refTitle} »` : ""
+            } — brouillon indicatif`
+          : started.usedReference && refTitle
+            ? `ACE-Step · ${started.quality || started.model || "auto"} · réf. audio « ${refTitle} »`
+            : started.model
+              ? `ACE-Step · ${started.quality || started.model}`
+              : draft.note,
       },
     };
   }
@@ -1378,7 +1436,7 @@ export async function runTrack({ keys, lyrics, artist }) {
   const bpmGuess =
     Number.isFinite(lockBpm) && lockBpm >= 60 && lockBpm <= 200
       ? Math.round(lockBpm)
-      : 95 + Math.floor(Math.random() * 35);
+      : defaultBpmForGenre(styleLockGenreBlob(styleLock, [artist?.genre]));
 
   let audioUrl = null;
   let provider = "brief";
@@ -1387,12 +1445,20 @@ export async function runTrack({ keys, lyrics, artist }) {
   let hasVocals = false;
 
   if (isAceStepMusicProvider(keys)) {
+    let styleRef = { previewUrl: "", title: null, artistName: null };
+    try {
+      styleRef = await resolveStyleLockPreview(keys, styleLock || artist?.styleLock);
+    } catch (e) {
+      console.warn("[acestep] preview style:", e.message);
+    }
     const result = await generateMusicWithAceStep(keys, {
       prompt,
       lyrics: lyrics?.text || "",
       title: lyrics?.title || artist?.name || "SONOZZ",
       language: lyrics?.language || artist?.language || "fr",
       bpm: bpmGuess,
+      referenceAudioUrl: styleRef.previewUrl,
+      referenceAudioTitle: [styleRef.title, styleRef.artistName].filter(Boolean).join(" — "),
     });
     audioUrl = result.url;
     provider = result.provider;

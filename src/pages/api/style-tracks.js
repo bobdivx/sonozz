@@ -34,6 +34,7 @@ function lightStyleLock(styleLock) {
     musicPrompt: styleLock.musicPrompt,
     topTracks: styleLock.topTracks,
     audioListened: Boolean(styleLock.audioListened),
+    previewUrl: styleLock.previewUrl || styleLock.seedTrack?.previewUrl || undefined,
     seedTrack: styleLock.seedTrack || undefined,
   };
 }

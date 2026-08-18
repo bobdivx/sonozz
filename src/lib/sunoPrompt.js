@@ -5,6 +5,7 @@ import {
   isDefaultMusicArrange,
 } from "./musicArrange.js";
 import { resolveArtistGender } from "./artistGender.js";
+import { isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob } from "./musicLane.js";
 
 function voiceHintFromArtist(artist) {
   const g = resolveArtistGender(artist)?.code;
@@ -34,10 +35,13 @@ export function buildSunoPrompt({
   }
   const packed = musicArrangeToSongGen(arrange, {
     styleLockInstruments: lock.instruments,
+    styleLock: lock,
   });
 
+  const metal = isMetalLane(styleLockGenreBlob(lock, [artist?.genre]));
+
   const bpmNum = Number(
-    bpmGuess ?? arrange.bpm ?? lock.bpm ?? artist?.track?.bpm ?? 110,
+    bpmGuess ?? arrange.bpm ?? lock.bpm ?? artist?.track?.bpm ?? (metal ? 170 : 110),
   );
   const bpm =
     Number.isFinite(bpmNum) && bpmNum >= 60 && bpmNum <= 200 ? Math.round(bpmNum) : 110;
@@ -45,7 +49,9 @@ export function buildSunoPrompt({
   const instruRaw =
     (packed?.instruments && String(packed.instruments)) ||
     (Array.isArray(lock.instruments) ? lock.instruments.slice(0, 6).join(", ") : "") ||
-    "bass, keys, soft drums, synth pads";
+    (metal
+      ? "distorted electric guitar, rhythm guitar, bass guitar, double kick drums"
+      : "bass, keys, soft drums, synth pads");
   const instru = instruRaw
     .split(",")
     .map((s) => s.trim().replace(/^lead\s+/i, ""))
@@ -54,8 +60,8 @@ export function buildSunoPrompt({
     .slice(0, 8)
     .join(", ");
 
-  let production = String(lock.production || "contemporary polished mix").trim();
-  if (/sparse|intimate|minimal/i.test(production)) {
+  let production = String(lock.production || (metal ? "brutal death metal mix" : "contemporary polished mix")).trim();
+  if (!metal && /sparse|intimate|minimal/i.test(production)) {
     const focusMatch = production.match(/with a focus on\s+(.+?)(?:\.|$)/i);
     const focus = (focusMatch?.[1] || "organic textures and subtle electronic elements")
       .replace(/\s+/g, " ")
@@ -76,29 +82,36 @@ export function buildSunoPrompt({
     .filter(Boolean)
     .join(" · ");
 
-  const keywords = [
-    ...(Array.isArray(lock.sonicKeywords) ? lock.sonicKeywords : []),
-    "atmospheric pads",
-    "subtle electronic",
-    "warm bass",
-    "soft drums",
-  ]
+  const keywords = (
+    metal
+      ? [
+          ...(Array.isArray(lock.sonicKeywords) ? lock.sonicKeywords : []),
+          ...metalFlavorTags(styleLockGenreBlob(lock, [artist?.genre])),
+        ]
+      : [
+          ...(Array.isArray(lock.sonicKeywords) ? lock.sonicKeywords : []),
+          "atmospheric pads",
+          "subtle electronic",
+          "warm bass",
+          "soft drums",
+        ]
+  )
     .filter(Boolean)
     .filter((k, i, arr) => arr.findIndex((x) => x.toLowerCase() === k.toLowerCase()) === i)
     .slice(0, 10)
     .join(", ");
 
-  const voice = vocalHint || voiceHintFromArtist(artist);
+  const voice = vocalHint || (metal ? metalVoiceHint(resolveArtistGender(artist)?.code) : voiceHintFromArtist(artist));
 
-  return `Style: ${artist?.genre || lock.genreSummary || "indie pop"}${
+  return `Style: ${artist?.genre || lock.genreSummary || (metal ? "brutal death metal" : "indie pop")}${
     lock.matchedName || seed?.artistName
       ? ` (lane of ${lock.matchedName || seed.artistName})`
       : ""
-  }. ${voice}. Mood: ${artist?.mood || lock.mood || "emotional"}.
+  }. ${voice}. Mood: ${artist?.mood || lock.mood || (metal ? "brutal aggressive" : "emotional")}.
 Production: ${production}
 Keywords: ${keywords}
 Instruments: ${instru}
-Groove: ${lock.rhythmFeel || arrange?.drums || "natural soft groove"} · BPM ${bpm}${
+Groove: ${lock.rhythmFeel || arrange?.drums || (metal ? "blast beats, double kick" : "natural soft groove")} · BPM ${bpm}${
     seed?.title ? ` · ref « ${seed.title} »` : ""
   }${arrangeLine ? `\nArrange: ${arrangeLine}` : ""}
 Title: ${lyrics?.title || "Untitled"}

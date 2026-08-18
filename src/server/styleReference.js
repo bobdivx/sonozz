@@ -777,6 +777,7 @@ ${JSON.stringify(
 )}
 
 Genres déjà connus: ${uniqueGenres.join(", ") || "(aucun)"}
+ATTENTION catalogues: iTunes/Apple classent souvent le metal extrême (death, black, grind) comme « Rock ». Si l'artiste est du death/black/thrash metal, genres DOIT être le sous-genre précis (Death Metal, Brutal Death Metal…) — JAMAIS « Rock » ou « Pop » générique.
 ${audioBlock}
 
 Retourne un LOCK STYLE strict pour un artiste FICTIONNEL dans EXACTEMENT la même lane sonore (groove, timbre, écriture, prod).
@@ -1044,6 +1045,7 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
     doNot: lock.doNot,
     influences,
     audioListened: Boolean(lock.audioListened || audioDna),
+    previewUrl: previewUrls[0] || null,
     musicPrompt: [
       genreSummary,
       lock.production,
@@ -1175,6 +1177,8 @@ export function mergeStyleLocks(locks = []) {
     doNot,
     influences,
     audioListened: list.some((l) => l.audioListened),
+    previewUrl: list.find((l) => l.previewUrl)?.previewUrl || list[0].previewUrl || null,
+    seedTrack: list.find((l) => l.seedTrack?.previewUrl)?.seedTrack || list.find((l) => l.seedTrack)?.seedTrack,
     musicPrompt: [
       genreSummary,
       production,
@@ -1739,6 +1743,7 @@ export async function resolveStyleTrackReference(keys, pick) {
     influences: [catalog.name, track.name].filter(Boolean),
     audioListened: Boolean(lock.audioListened || audioDna),
     seedTrack,
+    previewUrl: track.previewUrl || null,
     musicPrompt: [
       genreSummary,
       lock.production,
@@ -1757,5 +1762,87 @@ export async function resolveStyleTrackReference(keys, pick) {
       .filter(Boolean)
       .join(", "),
   };
+}
+
+function httpPreviewUrl(raw) {
+  const u = String(raw || "").trim();
+  return /^https?:\/\//i.test(u) ? u : "";
+}
+
+/** Preview ~30s déjà connu sur le lock (titre seed ou top artiste). */
+export function pickStyleLockPreviewUrl(lock) {
+  if (!lock || typeof lock !== "object") return "";
+  return (
+    httpPreviewUrl(lock.seedTrack?.previewUrl) ||
+    httpPreviewUrl(lock.previewUrl) ||
+    (Array.isArray(lock.previewUrls) ? lock.previewUrls.map(httpPreviewUrl).find(Boolean) : "") ||
+    ""
+  );
+}
+
+/**
+ * URL d’extrait à envoyer à ACE-Step (style transfer, pas une cover).
+ * Rehydrate iTunes/Deezer si l’ancien profil a perdu previewUrl.
+ */
+export async function resolveStyleLockPreview(keys, lock) {
+  const title =
+    String(lock?.seedTrack?.title || lock?.topTracks?.[0] || "").trim() || null;
+  const artistName =
+    String(lock?.seedTrack?.artistName || lock?.matchedName || "").trim() || null;
+  const existing = pickStyleLockPreviewUrl(lock);
+  if (existing) {
+    return { previewUrl: existing, title, artistName, via: "lock" };
+  }
+
+  const seed = lock?.seedTrack;
+  if (seed?.source && seed?.sourceId) {
+    try {
+      const track = await hydrateStyleTrackFull(keys, {
+        source: seed.source,
+        id: seed.sourceId,
+        name: seed.title,
+        artistName: seed.artistName,
+        previewUrl: seed.previewUrl,
+        url: seed.url,
+        image: seed.image,
+        album: seed.album,
+      });
+      const url = httpPreviewUrl(track?.previewUrl);
+      if (url) {
+        return {
+          previewUrl: url,
+          title: track.name || title,
+          artistName: track.artistName || artistName,
+          via: "seed-hydrate",
+        };
+      }
+    } catch {
+      /* fallback top titres */
+    }
+  }
+
+  const name = artistName || String(lock?.matchedName || "").trim();
+  if (name.length >= 2) {
+    try {
+      const { candidates } = await listArtistTopTrackCandidates(keys, {
+        name,
+        source: lock?.source,
+        id: lock?.sourceId,
+      });
+      const hit = (candidates || []).find((c) => httpPreviewUrl(c.previewUrl));
+      if (hit) {
+        return {
+          previewUrl: httpPreviewUrl(hit.previewUrl),
+          title: hit.name || title,
+          artistName: hit.artistName || artistName,
+          via: "top-tracks",
+        };
+      }
+    } catch {
+      /* pas d’extrait */
+    }
+  }
+
+  return { previewUrl: "", title, artistName, via: "none" };
 }
 
