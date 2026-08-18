@@ -20,6 +20,38 @@ const NAV = [
 ];
 
 /**
+ * Réserve la hauteur réelle du lecteur (et de la bande Tâches sur mobile)
+ * sans se faire écraser par les classes `py-*` de Tailwind.
+ */
+function BottomChromeSpacer({ includeJobs = false }) {
+  if (!includeJobs) {
+    return (
+      <div
+        class="pointer-events-none"
+        style={{ height: "var(--sonozz-now-playing, 5.25rem)" }}
+        aria-hidden="true"
+      />
+    );
+  }
+  return (
+    <>
+      <div
+        class="pointer-events-none md:hidden"
+        style={{
+          height: "calc(var(--sonozz-jobs-dock, 0px) + var(--sonozz-now-playing, 5.25rem))",
+        }}
+        aria-hidden="true"
+      />
+      <div
+        class="pointer-events-none hidden md:block"
+        style={{ height: "var(--sonozz-now-playing, 5.25rem)" }}
+        aria-hidden="true"
+      />
+    </>
+  );
+}
+
+/**
  * Shell app avec sidebar (si connecté) ou bandeau logo public (écoute /play).
  * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres', children: any, title?: string, subtitle?: string }} props
  */
@@ -88,8 +120,9 @@ export default function AppShell({ active, children, title, subtitle }) {
           </div>
         )}
 
-        <div class="mx-auto max-w-4xl px-3 py-4 pb-[max(1rem,var(--sonozz-now-playing,0px))] sm:px-6 sm:py-6">
+        <div class="mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6">
           {children}
+          <BottomChromeSpacer />
         </div>
       </div>
     );
@@ -194,8 +227,9 @@ export default function AppShell({ active, children, title, subtitle }) {
             )}
           </header>
         )}
-        <div class="px-3 py-4 pb-[max(1rem,calc(var(--sonozz-jobs-dock,0px)+var(--sonozz-now-playing,0px)))] sm:px-4 sm:py-6 md:px-8 md:py-8 md:pb-[max(2rem,var(--sonozz-now-playing,0px))]">
+        <div class="px-3 py-4 sm:px-4 sm:py-6 md:px-8 md:py-8">
           {children}
+          <BottomChromeSpacer includeJobs />
         </div>
       </div>
 

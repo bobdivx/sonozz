@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { Pause, Play, SkipForward, Headphones, Music2 } from "lucide-preact";
 import {
   bindMediaSession,
@@ -21,6 +21,7 @@ const BAR_HEIGHT = "5.25rem";
  * Mini-lecteur global — toujours visible en pied de page.
  */
 export default function NowPlayingBar() {
+  const barRef = useRef(null);
   const [session, setSession] = useState(() =>
     typeof window === "undefined" ? { queue: [], playing: false, index: 0 } : readPlaySession(),
   );
@@ -68,7 +69,20 @@ export default function NowPlayingBar() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--sonozz-now-playing", BAR_HEIGHT);
+    const root = document.documentElement;
+    const el = barRef.current;
+    if (!el) {
+      root.style.setProperty("--sonozz-now-playing", BAR_HEIGHT);
+      return undefined;
+    }
+    const apply = () => {
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      root.style.setProperty("--sonozz-now-playing", `${Math.max(72, h)}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const current = currentPlayTrack(session);
@@ -88,6 +102,7 @@ export default function NowPlayingBar() {
 
   return (
     <div
+      ref={barRef}
       class={`fixed inset-x-0 bottom-0 z-[55] border-t border-base-content/10 bg-base-200/95 backdrop-blur-md safe-bottom ${
         hasSidebar ? "md:left-64" : ""
       }`}

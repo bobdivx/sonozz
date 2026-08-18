@@ -38,6 +38,7 @@
   --font-display: "Syne", "Avenir Next", "Segoe UI", sans-serif;
   --font-body: "Figtree", "Avenir Next", "Segoe UI", sans-serif;
   --sonozz-now-playing: 5.25rem;
+  --sonozz-jobs-dock: 0px;
 }
 
 html,
@@ -47,6 +48,9 @@ body {
   font-family: var(--font-body);
   background: var(--ink);
   color: var(--fog);
+  scroll-padding-bottom: calc(
+    var(--sonozz-jobs-dock, 0px) + var(--sonozz-now-playing, 5.25rem)
+  );
 }
 
 body {

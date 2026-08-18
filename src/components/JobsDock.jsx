@@ -205,15 +205,24 @@ export function JobsDockMobile() {
     root.style.setProperty("--sonozz-jobs-dock", "6.5rem");
     const el = barRef.current;
     if (!el) return undefined;
+    const desktop = window.matchMedia("(min-width: 768px)");
     const apply = () => {
       if (open) return;
+      if (desktop.matches) {
+        root.style.setProperty("--sonozz-jobs-dock", "0px");
+        return;
+      }
       const h = Math.ceil(el.getBoundingClientRect().height);
       root.style.setProperty("--sonozz-jobs-dock", `${Math.max(72, h)}px`);
     };
     apply();
     const ro = new ResizeObserver(apply);
     ro.observe(el);
-    return () => ro.disconnect();
+    desktop.addEventListener("change", apply);
+    return () => {
+      ro.disconnect();
+      desktop.removeEventListener("change", apply);
+    };
   }, [open, visible.length, active.length]);
 
   useEffect(() => {
@@ -242,7 +251,7 @@ export function JobsDockMobile() {
 
       <div
         ref={barRef}
-        class="pointer-events-auto relative border-t border-base-content/15 bg-base-200 shadow-[0_-8px_32px_rgba(0,0,0,0.45)] safe-bottom"
+        class="pointer-events-auto relative border-t border-base-content/15 bg-base-200 shadow-[0_-8px_32px_rgba(0,0,0,0.45)]"
       >
         <button
           type="button"

@@ -280,7 +280,7 @@ export default function PlayerPage() {
       title="Play"
       subtitle="Lecteur tactile — tous les titres, un artiste, ou ta file d’attente."
     >
-      <div class="mx-auto max-w-4xl pb-[max(2rem,var(--sonozz-now-playing,0px))]">
+      <div class="mx-auto max-w-4xl">
         {/* Filtres / actions */}
         <div class="mb-4 flex flex-wrap items-center gap-2 sm:mb-6 sm:gap-3">
           <button
