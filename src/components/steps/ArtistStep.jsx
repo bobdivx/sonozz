@@ -19,6 +19,7 @@ import {
   songGenLanguageHint,
   languageEngineLabel,
   catalogGenresToStyleValues,
+  matchMusicStyleFromGenre,
   inferLanguageFromStyleRef,
   parseGenres,
 } from "../../lib/studio.js";
