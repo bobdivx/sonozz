@@ -12,6 +12,7 @@ import {
   resolveAceAudioUrl,
   resolveAceStepBaseUrl,
   resolveAceStepGradioUrl,
+  gradioUploadBases,
   isAceStepMusicProvider,
 } from "../src/server/aceStep.js";
 import { isStudioEnabled, keysAfterStudioToggle } from "../src/lib/keys.js";
@@ -99,7 +100,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(sft.taskType, undefined);
   });
 
-  it("envoie le preview titre phare en référence style (pas une cover)", () => {
+  it("envoie le preview titre phare en cover (source + référence)", () => {
     const body = buildAceStepBody({
       title: "Vile Adulteress",
       style: "brutal death metal",
@@ -111,11 +112,26 @@ describe("ACE-Step Studio client", () => {
       referenceAudioTitle: "Condemnation Contagion — Cannibal Corpse",
     });
     assert.equal(body.customMode, true);
-    assert.equal(body.taskType, "text2music");
+    assert.equal(body.taskType, "cover");
     assert.equal(body.referenceAudioUrl, "https://audio.example/condemnation.m4a");
+    assert.equal(body.sourceAudioUrl, "https://audio.example/condemnation.m4a");
     assert.match(body.referenceAudioTitle, /Condemnation Contagion/);
-    assert.equal(body.audioCoverStrength, 0.25);
-    assert.match(body.instruction, /not a cover/i);
+    assert.equal(body.audioCoverStrength, 0.5);
+    assert.equal(body.coverNoiseStrength, 0.35);
+    assert.equal(body.guidanceScale, 7);
+    assert.match(body.instruction, /semantic tokens/i);
+
+    const turbo = buildAceStepBody({
+      title: "Echoes",
+      style: "metal ballad",
+      lyrics: "x",
+      language: "en",
+      modelId: "marcorez8/acestep-v15-xl-turbo-bf16",
+      referenceAudioUrl: "https://audio.example/nem.m4a",
+    });
+    assert.equal(turbo.taskType, "cover");
+    assert.equal(turbo.guidanceScale, 0);
+    assert.equal(turbo.inferenceSteps, 8);
 
     const viaGradio = buildAceStepBody({
       title: "Vile Adulteress",
@@ -127,7 +143,8 @@ describe("ACE-Step Studio client", () => {
       referenceAudioTitle: "Condemnation Contagion",
     });
     assert.match(viaGradio.referenceAudioUrl, /gradio_api\/file=/);
-    assert.equal(viaGradio.taskType, "text2music");
+    assert.equal(viaGradio.sourceAudioUrl, viaGradio.referenceAudioUrl);
+    assert.equal(viaGradio.taskType, "cover");
   });
 
   it("refuse les URLs ACE /audio/ (Gradio 5 InvalidPathError)", () => {
@@ -164,6 +181,10 @@ describe("ACE-Step Studio client", () => {
       resolveAceStepGradioUrl({ aceStepBaseUrl: "http://10.1.0.88:3001" }),
       "http://10.1.0.88:8001",
     );
+    assert.deepEqual(gradioUploadBases({ aceStepBaseUrl: "https://ace.briseteia.me" }), [
+      "https://ace.briseteia.me",
+      "https://ace.briseteia.me:8001",
+    ]);
     assert.equal(
       resolveAceStepGradioUrl({ aceStepGradioUrl: "http://127.0.0.1:7865" }),
       "http://127.0.0.1:7865",

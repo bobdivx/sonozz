@@ -121,7 +121,15 @@ export default function LyricsStep({
           {loading ? <span class="loading loading-spinner loading-sm" /> : <PenLine size={18} />}
           {loading ? "Écriture…" : generateLabel}
         </button>
-        {!artist && <p class="text-sm text-warning">Créez d'abord un artiste (étape 2).</p>}
+        {!artist && (
+          <p class="text-sm text-warning">
+            Choisis un artiste existant (Auto A→Z) ou{" "}
+            <a class="link" href="/artiste/nouveau">
+              crée un profil
+            </a>{" "}
+            dans Artistes.
+          </p>
+        )}
       </div>
 
       {hasVersions && (

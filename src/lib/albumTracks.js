@@ -1,4 +1,4 @@
-import { emptyProject } from "./studio.js";
+import { emptyProject, studioHref } from "./studio.js";
 import { api } from "./apiClient.js";
 import { appendVersion } from "./versionsModel.js";
 
@@ -93,7 +93,7 @@ export function resumeAlbumTracks(tracks) {
 
 export function albumStudioHref(entry, leadProjectId) {
   const id = entry?.role === "lead" ? leadProjectId : entry?.projectId || leadProjectId;
-  return id ? `/?project=${id}&step=4` : "/?step=4";
+  return studioHref(id, "tracks");
 }
 
 export function buildAlbumMemberProject({ leadProject, entry, leadProjectId }) {

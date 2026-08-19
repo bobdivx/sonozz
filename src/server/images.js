@@ -24,7 +24,7 @@ export async function generateVisual({
   const usesRef = Boolean(refUrl) && (kind === "cover" || kind === "portrait");
   if (kind === "cover" && !isUsableRasterImage(refUrl)) {
     throw new Error(
-      "Jaquette impossible sans portrait photo. Régénère l’étape Artiste (Gemini Image ou Replicate).",
+      "Jaquette impossible sans portrait photo. Ouvre Modifier le profil (Gemini Image ou Replicate).",
     );
   }
   if (usesRef && isEphemeralImageUrl(refUrl)) {
@@ -32,7 +32,7 @@ export async function generateVisual({
       refUrl = await materializeImageForStorage(refUrl);
     } catch {
       throw new Error(
-        "Portrait Replicate expiré — régénère l’étape Artiste, puis la jaquette.",
+        "Portrait Replicate expiré — ouvre Modifier le profil, puis relance la jaquette.",
       );
     }
   }

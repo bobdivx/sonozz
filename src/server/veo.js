@@ -219,7 +219,7 @@ async function prepareVeoInputs({
 
   if (!isUsableRasterImage(portraitUrl) && !isUsableRasterImage(coverUrl)) {
     throw new Error(
-      "Portrait artiste photo requis pour Veo (pas de SVG). Régénère l’étape Artiste.",
+      "Portrait artiste photo requis pour Veo (pas de SVG). Ouvre Modifier le profil et régénère la photo.",
     );
   }
 
@@ -254,7 +254,7 @@ async function prepareVeoInputs({
   if (!portrait) {
     throw new Error(
       portraitError?.message ||
-        "Impossible de charger le portrait pour Veo. Régénère l’étape Artiste (photo durable), puis relance.",
+        "Impossible de charger le portrait pour Veo. Ouvre Modifier le profil (photo durable), puis relance.",
     );
   }
 

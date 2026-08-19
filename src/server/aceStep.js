@@ -1,4 +1,5 @@
 import { isStudioEnabled } from "../lib/keys.js";
+import { isS3Configured, uploadClipBuffer } from "./s3.js";
 
 /**
  * Client ACE-Step Studio (Pinokio).
@@ -264,8 +265,11 @@ export function lyricsForAceStepPreview(text) {
   return lines.slice(0, 16).join("\n");
 }
 
-/** Force du conditionnement audio : assez bas = lane sonore, pas une cover du titre phare. */
-export const ACE_STYLE_TRANSFER_STRENGTH = 0.25;
+/**
+ * Force du source audio en mode cover (0 = texte seul, 1 = clone).
+ * 0.5 = groove / structure du titre phare, paroles originales.
+ */
+export const ACE_STYLE_TRANSFER_STRENGTH = 0.5;
 
 export function buildAceStepBody({
   title,
@@ -311,12 +315,16 @@ export function buildAceStepBody({
   };
   if (/^https?:\/\//i.test(refUrl)) {
     body.referenceAudioUrl = refUrl;
+    body.sourceAudioUrl = refUrl;
     const refTitle = String(referenceAudioTitle || "").trim();
     if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
     body.audioCoverStrength = strength;
-    body.taskType = "text2music";
-    body.instruction =
-      "Use the reference audio for timbre, riffs, drums and production only. Generate an original song with the provided lyrics — not a cover, remix or melody clone of the reference.";
+    body.coverNoiseStrength = 0.35;
+    body.taskType = "cover";
+    body.instruction = "Generate audio semantic tokens based on the given conditions:";
+    if (!isTurbo && (body.guidanceScale == null || body.guidanceScale < 7)) {
+      body.guidanceScale = 7;
+    }
   }
   return body;
 }
@@ -478,6 +486,13 @@ export function resolveAceStepGradioUrl(keys, studioBase) {
   }
 }
 
+/** Tunnel public (même host) d’abord, puis :8001 local Pinokio. */
+export function gradioUploadBases(keys, studioBase) {
+  const studio = String(studioBase || resolveAceStepBaseUrl(keys)).replace(/\/+$/, "");
+  const derived = resolveAceStepGradioUrl(keys, studio);
+  return [...new Set([studio, derived].filter(Boolean))];
+}
+
 /**
  * Fichier hébergé par l’UI ACE (`/audio/…`).
  * Le Studio le recopie dans `app/temp/gradio/ref-*` → Gradio 5 refuse
@@ -573,7 +588,7 @@ export async function uploadReferenceToGradio(gradioBase, buffer, fileName = "st
       res = await fetch(endpoint, {
         method: "POST",
         body: form,
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.timeout(8000),
       });
     } catch {
       continue;
@@ -628,9 +643,10 @@ export async function uploadAceStepReference(keys, buffer, fileName = "style-ref
 }
 
 /**
- * Prépare une URL de référence que Gradio accepte.
- * 1. Upload officiel Gradio (:8001) → URL `/gradio_api/file=…`
- * 2. Sinon URL catalogue distante (iTunes / Deezer) — ACE fait handle_file(url)
+ * Prépare une URL de référence que Gradio / ACE peuvent vraiment charger.
+ * 1. Upload officiel Gradio (même host que le Studio, puis :8001)
+ * 2. S3 public (ACE fetch l’URL)
+ * 3. URL catalogue distante (iTunes — souvent 403 depuis le GPU)
  * Jamais d’URL ACE `/audio/…` (copie `temp/gradio/ref-*` rejetée).
  */
 export async function ensureAceStepStyleReference(keys, previewUrl) {
@@ -639,17 +655,47 @@ export async function ensureAceStepStyleReference(keys, previewUrl) {
   const studioBase = resolveAceStepBaseUrl(keys);
   if (isAceHostedAudioUrl(studioBase, url)) return "";
 
-  const gradioBase = resolveAceStepGradioUrl(keys, studioBase);
-  if (gradioBase) {
+  let buffer;
+  let mimeType = "audio/mpeg";
+  try {
+    const downloaded = await downloadPreviewBuffer(url);
+    buffer = downloaded.buffer;
+    mimeType = downloaded.mimeType;
+  } catch (e) {
+    console.warn("[acestep] download preview ignoré:", e.message);
+    return url;
+  }
+  const ext = extFromPreview(url, mimeType);
+
+  for (const gradioBase of gradioUploadBases(keys, studioBase)) {
     try {
-      const { buffer, mimeType } = await downloadPreviewBuffer(url);
-      const ext = extFromPreview(url, mimeType);
       const hosted = await uploadReferenceToGradio(gradioBase, buffer, `style-ref.${ext}`, mimeType);
-      if (hosted && !isAceHostedAudioUrl(studioBase, hosted)) return hosted;
+      if (hosted && !isAceHostedAudioUrl(studioBase, hosted)) {
+        console.info("[acestep] réf. via Gradio", gradioBase);
+        return hosted;
+      }
     } catch (e) {
-      console.warn("[acestep] upload Gradio réf. ignoré:", e.message);
+      console.warn("[acestep] upload Gradio ignoré:", gradioBase, e.message);
     }
   }
+
+  if (isS3Configured()) {
+    try {
+      const uploaded = await uploadClipBuffer(buffer, {
+        projectId: "ace-style-ref",
+        mimeType: mimeType || "audio/mpeg",
+        key: `audio/ace-ref/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`,
+      });
+      if (uploaded?.url) {
+        console.info("[acestep] réf. via S3");
+        return uploaded.url;
+      }
+    } catch (e) {
+      console.warn("[acestep] upload S3 réf. ignoré:", e.message);
+    }
+  }
+
+  console.warn("[acestep] réf. URL distante (iTunes/Deezer) — ACE peut ne pas la télécharger");
   return url;
 }
 
@@ -730,6 +776,9 @@ export async function startAceStep(keys, {
     `lang=${body.vocalLanguage}`,
     `dur=${body.duration}s`,
     `bpm=${body.bpm || "?"}`,
+    `task=${body.taskType || "text2music"}`,
+    `str=${body.audioCoverStrength ?? "-"}`,
+    body.sourceAudioUrl ? "src=ON" : "src=OFF",
     refUrl ? `ref=${String(referenceAudioTitle || "").slice(0, 40) || "audio"}` : "ref=OFF",
   );
 

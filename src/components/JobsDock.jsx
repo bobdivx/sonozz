@@ -17,11 +17,63 @@ import {
 import {
   clearFinishedJobs,
   listJobs,
+  removeJobsWhere,
   subscribeJobs,
 } from "../lib/jobStore.js";
 import { bootJobRunner, dismissJob } from "../lib/jobRunner.js";
 import { api } from "../lib/apiClient.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
+
+/** Un seul poll album pour sidebar + mobile (sinon 2× GET /api/projects). */
+let albumSyncTimer = null;
+let albumSyncSubs = 0;
+const missingProjectIds = new Set();
+
+function currentProjectId() {
+  try {
+    return new URLSearchParams(window.location.search).get("project") || "";
+  } catch {
+    return "";
+  }
+}
+
+async function syncAlbumFromProjectUrl() {
+  const pid = currentProjectId();
+  if (!pid || missingProjectIds.has(pid)) return;
+  try {
+    const { project: saved } = await api.getProject(pid);
+    const album = saved?.project?.album;
+    if (album) {
+      mirrorAlbumJob(
+        album,
+        saved.id || pid,
+        saved.project?.artist?.slug || saved.seed?.artistSlug,
+      );
+    }
+  } catch (e) {
+    const msg = String(e?.message || "");
+    if (/introuvable/i.test(msg)) {
+      missingProjectIds.add(pid);
+      removeJobsWhere((j) => j.projectId === pid);
+    }
+  }
+}
+
+function startAlbumProjectSync() {
+  albumSyncSubs += 1;
+  if (albumSyncTimer) return;
+  void syncAlbumFromProjectUrl();
+  albumSyncTimer = window.setInterval(() => {
+    void syncAlbumFromProjectUrl();
+  }, 4000);
+}
+
+function stopAlbumProjectSync() {
+  albumSyncSubs = Math.max(0, albumSyncSubs - 1);
+  if (albumSyncSubs > 0 || !albumSyncTimer) return;
+  window.clearInterval(albumSyncTimer);
+  albumSyncTimer = null;
+}
 
 function StatusIcon({ status }) {
   if (status === "running") return <Loader2 size={14} class="animate-spin text-primary" />;
@@ -96,7 +148,8 @@ function JobsList({ visible, active, recent }) {
       {active.length > 0 && (
         <p class="mt-2 px-1 text-[10px] text-base-content/40">
           Album, morceau unique, clips (Veo / Seedance / Wan2GP) : tu peux changer de page.
-          Pipeline Auto A→Z : reste sur le Studio.
+          Les albums se lancent et se gèrent sur la fiche artiste. Pipeline Auto A→Z : reste
+          sur le Studio.
         </p>
       )}
       {recent.length > 0 && (
@@ -119,33 +172,11 @@ function useJobs() {
 
   useEffect(() => {
     bootJobRunner();
-    return subscribeJobs(setJobs);
-  }, []);
-
-  // Sync album distant → dock Tâches (localStorage ne traverse pas les appareils)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const pid = params.get("project");
-    if (!pid) return;
-
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      try {
-        const { project: saved } = await api.getProject(pid);
-        if (cancelled) return;
-        const album = saved?.project?.album;
-        if (album) mirrorAlbumJob(album, saved.id || pid);
-      } catch {
-        /* ignore */
-      }
-    };
-
-    tick();
-    const id = window.setInterval(tick, 4000);
+    startAlbumProjectSync();
+    const unsub = subscribeJobs(setJobs);
     return () => {
-      cancelled = true;
-      window.clearInterval(id);
+      unsub();
+      stopAlbumProjectSync();
     };
   }, []);
 

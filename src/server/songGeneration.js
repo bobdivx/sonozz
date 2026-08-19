@@ -16,6 +16,7 @@ import {
   metalBandInstruments,
   metalFlavorTags,
   styleLockGenreBlob,
+  withKnownArtistLane,
 } from "../lib/musicLane.js";
 
 export { mapGenreForStudio };
@@ -1279,7 +1280,7 @@ export async function startSongGeneration(
     styleLock: artist?.styleLock,
     visualIdentity: artist?.visualIdentity,
   });
-  const lock = artist?.styleLock;
+  const lock = withKnownArtistLane(artist?.styleLock);
   const voiceSample = artist?.voiceSample;
   const wantsReference =
     voiceSample?.guideMode === "reference" &&

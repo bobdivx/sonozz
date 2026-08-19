@@ -39,6 +39,8 @@ import {
   titleFromAudioFileName,
   isSongGenNativeLanguage,
   languageLabel,
+  artistEditHref,
+  artistHubHref,
 } from "../../lib/studio.js";
 import { resolveArtistGender } from "../../lib/artistGender.js";
 import VersionPicker from "../VersionPicker.jsx";
@@ -1068,9 +1070,12 @@ export default function TracksStep({
 
           {audioReady && artistSlug && (
             <p class="text-sm text-base-content/60">
-              Album autonome :{" "}
-              <a class="link link-primary" href={`/artiste/${encodeURIComponent(artistSlug)}`}>
-                gérer sur la fiche artiste
+              Album : créer et gérer sur la{" "}
+              <a
+                class="link link-primary"
+                href={`${artistHubHref(artistSlug)}#album`}
+              >
+                fiche artiste
               </a>
             </p>
           )}
@@ -1277,7 +1282,7 @@ export default function TracksStep({
             artistPick={styleArtistPickFromArtist(artist)}
             disabled={loading || styleTrackBusy}
             label="Titre de référence"
-            hint="Optionnel — recalibre le styleLock sur CE titre (preview DNA) avant de générer."
+            hint="Optionnel — recale le style de CE titre (preview) avant de générer."
             onPickChange={(p) => setStyleTrackPick(p)}
           />
           {styleTrackPick?.id && onApplyStyleTrack && (
@@ -1309,7 +1314,7 @@ export default function TracksStep({
                 : ""}
               {artist.styleLock.audioListened ? " · preview écouté" : ""}
               {artist.styleLock.seedTrack?.previewUrl || artist.styleLock.previewUrl
-                ? " · ACE recevra l’extrait audio"
+                ? " · ACE recevra l’extrait en mode cover (son + groove)"
                 : ""}
             </p>
           )}
@@ -1363,8 +1368,11 @@ export default function TracksStep({
             ) : null}
             {!voiceLabel && (
               <p class="text-xs text-warning">
-                Retourne à l’étape Artiste, choisis Homme/Femme, régénère le profil, puis relance le
-                morceau.
+                Ouvre{" "}
+                <a class="link" href={artistEditHref(artist?.slug)}>
+                  Modifier le profil
+                </a>
+                , choisis Homme/Femme, régénère, puis relance le morceau.
               </p>
             )}
           </div>

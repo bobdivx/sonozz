@@ -715,7 +715,7 @@ export default function ClipStep({
   async function generateVeoClip() {
     setKindTab(CLIP_KIND_SHORT);
     if (!audioReady) {
-      setError("Crée d'abord le morceau audio (étape 4).");
+      setError("Crée d'abord le morceau audio (étape Morceaux).");
       return null;
     }
     if (!social) {
@@ -723,12 +723,12 @@ export default function ClipStep({
       return null;
     }
     if (!hasPortrait) {
-      setError("Portrait artiste photo requis — régénère l’étape Artiste.");
+      setError("Portrait artiste photo requis — ouvre Modifier le profil et régénère la photo.");
       return null;
     }
     if (portraitExpired) {
       setError(
-        "Portrait expiré (URL Replicate morte). Va à l’étape Artiste, régénère le portrait, puis relance.",
+        "Portrait expiré (URL Replicate morte). Ouvre Modifier le profil, régénère la photo, puis relance.",
       );
       return null;
     }
@@ -990,7 +990,7 @@ export default function ClipStep({
           {portraitDurable
             ? "✓ durable"
             : portraitExpired
-              ? "✗ URL expirée — régénère Artiste"
+              ? "✗ URL expirée — régénère le profil"
               : hasPortrait
                 ? "✓"
                 : "✗ requis pour Veo"}
@@ -1163,7 +1163,7 @@ export default function ClipStep({
               : "Audio temporaire / à risque"}
           </p>
           <p class="text-base-content/70">
-            Les liens Replicate expirent (~1 h). Va à l’étape 4 → régénère MiniMax ou importe un
+            Les liens Replicate expirent (~1 h). Va à l’étape Morceaux → régénère MiniMax ou importe un
             fichier mp3 (sauvé sur S3).
           </p>
           {onGoToTracks ? (

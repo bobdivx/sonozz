@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
   BarChart3,
-  UserRound,
   PenLine,
   AudioLines,
   ImagePlus,
@@ -20,7 +19,6 @@ import {
   Library,
 } from "lucide-preact";
 import StatsStep from "./steps/StatsStep.jsx";
-import ArtistStep from "./steps/ArtistStep.jsx";
 import LyricsStep from "./steps/LyricsStep.jsx";
 import TracksStep from "./steps/TracksStep.jsx";
 import CoverStep from "./steps/CoverStep.jsx";
@@ -33,27 +31,22 @@ import ClipTrackPlayer from "./ClipTrackPlayer.jsx";
 import {
   STEPS,
   emptyProject,
-  MUSIC_STYLES,
   languagesForProvider,
   songGenLanguageHint,
   languageEngineLabel,
-  formatGenres,
-  catalogGenresToStyleValues,
-  inferLanguageFromStyleRef,
-  languageLabel,
-  isTrackAudioFinal,
   isPlaceholderTitle,
+  isTrackAudioFinal,
   titleFromAudioFileName,
+  studioHref,
+  artistAlbumHref,
+  STUDIO_STEP,
 } from "../lib/studio.js";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
 import { persistAudioRemote } from "../lib/audioResolve.js";
 import { migrateProjectClipBlobs } from "../lib/clipStore.js";
 import { musicArrangeFromStyleLock } from "../lib/musicArrange.js";
-import { withResolvedArtistGender, inferGenderFromStyleRef, ARTIST_GENDER_OPTIONS, ARTIST_GENDER_LABELS } from "../lib/artistGender.js";
-import StyleArtistPicker from "./StyleArtistPicker.jsx";
-import StyleTrackPicker from "./StyleTrackPicker.jsx";
-import ArtistNameField, { isArtistNameBlocked } from "./ArtistNameField.jsx";
+import { withResolvedArtistGender } from "../lib/artistGender.js";
 import {
   isClipReady,
   normalizeProjectClips,
@@ -85,20 +78,18 @@ import {
 } from "../lib/jobRunner.js";
 
 const ICONS = {
-  1: BarChart3,
-  2: UserRound,
-  3: PenLine,
-  4: AudioLines,
-  5: ImagePlus,
-  6: Music2,
-  7: Film,
-  8: Share2,
+  stats: BarChart3,
+  lyrics: PenLine,
+  tracks: AudioLines,
+  covers: ImagePlus,
+  distrokid: Music2,
+  clip: Film,
+  social: Share2,
 };
 
 const STEP_STATUS_LABEL = {
   trends: "Tendances",
   stats: "Stats",
-  artist: "Artiste",
   lyrics: "Paroles",
   track: "Morceau",
   cover: "Jaquette",
@@ -112,7 +103,6 @@ const STEP_STATUS_LABEL = {
 /** Étapes affichées pendant le pipeline auto (hors « done »). */
 const AUTO_PIPELINE_UI = [
   { key: "trends", label: "Tendances" },
-  { key: "artist", label: "Artiste" },
   { key: "lyrics", label: "Paroles" },
   { key: "track", label: "Morceau" },
   { key: "cover", label: "Jaquette" },
@@ -124,28 +114,6 @@ function formatElapsed(ms) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return m > 0 ? `${m}:${String(r).padStart(2, "0")}` : `${r}s`;
-}
-
-/** Langue + sexe proposés d’après l’artiste / titre de référence. */
-function styleRefInferenceInput(artistPick, trackPick) {
-  return {
-    country: artistPick?.country,
-    language: artistPick?.language,
-    genres: [...(artistPick?.genres || []), ...(trackPick?.genres || [])],
-    titles: [trackPick?.name, trackPick?.album].filter(Boolean),
-  };
-}
-
-function styleRefSeedPatch(s, { pick, trackPick } = {}) {
-  const artistPick = pick === undefined ? s.styleArtistPick : pick;
-  const track = trackPick === undefined ? s.styleTrackPick : trackPick;
-  const inferredLang =
-    !s.languageManual && inferLanguageFromStyleRef(styleRefInferenceInput(artistPick, track));
-  const inferredGender = !s.genderManual && inferGenderFromStyleRef(artistPick);
-  return {
-    ...(inferredLang ? { language: inferredLang } : {}),
-    ...(inferredGender ? { gender: inferredGender } : {}),
-  };
 }
 
 /** Clips + versions créatives (paroles / audio / jaquettes). */
@@ -205,22 +173,12 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [log, setLog] = useState([]);
   const [seed, setSeed] = useState({
-    name: "",
-    bioHint: "",
     theme: "",
     market: "FR",
-    genre: "",
-    genres: [],
     language: "fr",
-    languageManual: false,
-    gender: "",
-    genderManual: false,
-    styleArtist: "",
-    styleArtistPick: null,
-    styleTrackPick: null,
-    allowTakenName: false,
+    artistSlug: "",
   });
-  const [seedNameStatus, setSeedNameStatus] = useState(null);
+  const [catalogArtists, setCatalogArtists] = useState([]);
   const [published, setPublished] = useState(false);
   const [projectId, setProjectId] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -228,7 +186,6 @@ export default function Dashboard() {
   const [saveMsg, setSaveMsg] = useState("");
   /** Accueil studio `/` uniquement — masqué quand un projet est ouvert via ?project= */
   const [showHomePipeline, setShowHomePipeline] = useState(true);
-  const [artistMode, setArtistMode] = useState(null);
   /** Génération album lancée dans cet onglet (évite d’écraser l’état live par le poll). */
   const albumWorkingRef = useRef(null);
   /** Annulation génération étape (morceau / extrait). */
@@ -266,6 +223,22 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/artists");
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok) setCatalogArtists(data.artists || []);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!autoRunning) return;
     autoStartedAt.current = Date.now();
     setElapsedMs(0);
@@ -280,8 +253,9 @@ export default function Dashboard() {
     const pid = params.get("project");
     const stepParam = Number(params.get("step"));
     const modeParam = params.get("mode");
-    if (modeParam === "self" || modeParam === "fiction") {
-      setArtistMode(modeParam);
+    if (!pid && (modeParam === "self" || modeParam === "fiction")) {
+      window.location.replace(`/artiste/nouveau?mode=${modeParam}`);
+      return;
     }
     if (stepParam >= 1 && stepParam <= STEPS.length && !pid) {
       setShowHomePipeline(false);
@@ -316,10 +290,24 @@ export default function Dashboard() {
           }
         }
         setProject(loaded);
-        if (saved.seed) setSeed((s) => ({ ...s, ...saved.seed }));
+        if (saved.seed) {
+          setSeed((s) => ({
+            ...s,
+            ...saved.seed,
+            artistSlug: saved.seed.artistSlug || loaded.artist?.slug || s.artistSlug,
+            theme: saved.seed.theme || s.theme,
+            language: saved.seed.language || loaded.artist?.language || s.language,
+          }));
+        } else if (loaded.artist?.slug) {
+          setSeed((s) => ({
+            ...s,
+            artistSlug: loaded.artist.slug,
+            language: loaded.artist.language || s.language,
+          }));
+        }
         if (stepParam >= 1 && stepParam <= STEPS.length) setStep(stepParam);
-        else if (!saved.project?.lyrics) setStep(3);
-        else if (!saved.project?.track && !saved.project?.distrokid?.releaseId) setStep(4);
+        else if (!saved.project?.lyrics) setStep(2);
+        else if (!saved.project?.track && !saved.project?.distrokid?.releaseId) setStep(3);
         setSaveMsg(`Projet ${saved.title}`);
         if (loaded.album) mirrorAlbumJob(loaded.album, saved.id);
       } catch (e) {
@@ -463,73 +451,33 @@ export default function Dashboard() {
       total: tracks.length || 0,
       prevHref,
       nextHref,
-      artistHref: artistSlug
-        ? `/artiste/${encodeURIComponent(artistSlug)}${leadId ? `#album-${leadId}` : ""}`
-        : null,
+      artistHref: artistSlug ? artistAlbumHref(artistSlug, leadId) : null,
     };
   })();
-  const seedHasStyleRef = Boolean(seed.styleTrackPick?.id || seed.styleArtistPick?.id);
-  const seedTrackStyleValues = new Set(
-    catalogGenresToStyleValues(
-      seed.styleTrackPick?.id
-        ? seed.styleTrackPick.genres?.length
-          ? seed.styleTrackPick.genres
-          : seed.styleArtistPick?.genres
-        : [],
-    ),
-  );
-  const seedArtistStyleValues = new Set(
-    catalogGenresToStyleValues(seed.styleArtistPick?.genres).filter(
-      (v) => !seedTrackStyleValues.has(v),
-    ),
-  );
-  const seedInferredLanguage = inferLanguageFromStyleRef(
-    styleRefInferenceInput(seed.styleArtistPick, seed.styleTrackPick),
-  );
-  const seedInferredGender = inferGenderFromStyleRef(seed.styleArtistPick);
   const seedLangOptions = languagesForProvider(
     loadKeys().musicProvider,
     loadKeys().songGenPreferredModel,
   );
-  const seedEffectiveLanguage =
-    !seed.languageManual && seedInferredLanguage
-      ? seedInferredLanguage
-      : seedLangOptions.some((l) => l.code === seed.language)
-        ? seed.language
-        : seedLangOptions[0]?.code || "en";
-
-  useEffect(() => {
-    if (seed.languageManual || !seedInferredLanguage) return;
-    if (seed.language === seedInferredLanguage) return;
-    setSeed((s) =>
-      s.languageManual || s.language === seedInferredLanguage
-        ? s
-        : { ...s, language: seedInferredLanguage },
-    );
-  }, [seedInferredLanguage, seed.language, seed.languageManual]);
-
-  useEffect(() => {
-    if (seed.genderManual || !seedInferredGender) return;
-    if (seed.gender === seedInferredGender) return;
-    setSeed((s) =>
-      s.genderManual || s.gender === seedInferredGender ? s : { ...s, gender: seedInferredGender },
-    );
-  }, [seedInferredGender, seed.gender, seed.genderManual]);
+  const seedEffectiveLanguage = seedLangOptions.some((l) => l.code === seed.language)
+    ? seed.language
+    : seedLangOptions[0]?.code || "en";
+  const selectedCatalog = catalogArtists.find((a) => a.slug === seed.artistSlug) || null;
   const trackBusy = trackJob?.status === "running";
   const trackUiLoading = loading || trackBusy;
+  const stepKey = STEPS.find((s) => s.id === step)?.key;
+  const stepIdOf = (key) => STEPS.find((s) => s.key === key)?.id;
 
   const doneMap = {
-    1: Boolean(project.track || project.distrokid),
-    2: Boolean(project.artist),
-    3: Boolean(project.lyrics),
-    4: isTrackAudioFinal(project.track),
-    5: Boolean(project.cover),
-    6: Boolean(project.distrokid),
-    7: Boolean(
+    stats: Boolean(project.track || project.distrokid),
+    lyrics: Boolean(project.lyrics),
+    tracks: isTrackAudioFinal(project.track),
+    covers: Boolean(project.cover),
+    distrokid: Boolean(project.distrokid),
+    clip: Boolean(
       (Array.isArray(project.clips) && project.clips.some(isClipReady)) ||
         isClipReady(project.clip),
     ),
-    8: Boolean(project.social?.publishedAt || project.social?.publish),
+    social: Boolean(project.social?.publishedAt || project.social?.publish),
   };
   const completed = Object.values(doneMap).filter(Boolean).length;
   const progress = Math.round((completed / STEPS.length) * 100);
@@ -574,7 +522,7 @@ export default function Dashboard() {
                 ? { ...nextProject.artist, slug: data.artist.slug }
                 : nextProject.artist,
             });
-            setSaveMsg(`Sauvé · /artiste/${data.artist.slug}`);
+            setSaveMsg("Sauvé · fiche artiste");
           } else {
             setProject((prev) =>
               normalizeProjectState({
@@ -769,7 +717,7 @@ export default function Dashboard() {
         const url = new URL(window.location.href);
         if (url.searchParams.get("project") !== pid) {
           url.searchParams.set("project", pid);
-          url.searchParams.set("step", "4");
+          url.searchParams.set("step", String(STUDIO_STEP.tracks));
           window.history.replaceState({}, "", `${url.pathname}${url.search}`);
         }
       } catch {
@@ -778,7 +726,7 @@ export default function Dashboard() {
       startMusicTrackJob({
         projectId: pid,
         preview: Boolean(preview),
-        href: `/?project=${pid}&step=4`,
+        href: studioHref(pid, "tracks"),
       });
     } catch (e) {
       setError(e.message || "Impossible de lancer la génération audio");
@@ -916,7 +864,7 @@ export default function Dashboard() {
       projectId,
       totalCount: total,
       resume,
-      href: projectId ? `/?project=${projectId}&step=4` : "/?step=4",
+      href: artistSlug ? artistAlbumHref(artistSlug, projectId) : studioHref(projectId, "tracks"),
       label: `Album · ${total} titres`,
     });
     setProject((prev) => ({
@@ -941,16 +889,8 @@ export default function Dashboard() {
       window.location.href = "/parametres?section=ia";
       return;
     }
-    if (seed.styleArtist?.trim() && !seed.styleArtistPick?.id && !seed.styleTrackPick?.id) {
-      setError(
-        "Choisis et valide un artiste ou un titre dans les résultats avant de lancer l'auto.",
-      );
-      return;
-    }
-    if (isArtistNameBlocked(seed.name, seedNameStatus, seed.allowTakenName)) {
-      setError(
-        "Ce nom de scène est déjà pris sur les plateformes de streaming — choisis-en un autre ou force quand même.",
-      );
+    if (!seed.artistSlug) {
+      setError("Choisis un artiste existant, ou crée-le d’abord dans Artistes.");
       return;
     }
     setAutoRunning(true);
@@ -1021,12 +961,11 @@ export default function Dashboard() {
           });
         }
         const navMap = {
-          trends: 1,
-          artist: 2,
-          lyrics: 3,
-          track: 4,
-          cover: 5,
-          distrokid: 6,
+          trends: stepIdOf("stats"),
+          lyrics: stepIdOf("lyrics"),
+          track: stepIdOf("tracks"),
+          cover: stepIdOf("covers"),
+          distrokid: stepIdOf("distrokid"),
         };
         if (navMap[evt.step]) setStep(navMap[evt.step]);
       });
@@ -1057,25 +996,19 @@ export default function Dashboard() {
         message: "Pipeline A→Z prêt — validation ONCE",
         payload: { log: data.log, awaitingOnce: true },
       });
-      const slug =
-        saved?.project?.artist?.slug || next.artist?.slug || data.artist?.slug || "";
       finishPipelineJob(pipeJobId, {
         ok: true,
-        message: slug ? `Fiche artiste /${slug}` : "Prêt à valider ONCE",
+        message: "Prêt à valider ONCE",
         projectId: saved?.id || projectIdRef.current,
       });
       if (!data.track?.audioUrl) {
-        setStep(4);
+        setStep(stepIdOf("tracks"));
         setError(
-          "Pipeline OK jusqu'au morceau, mais sans fichier audio. Ajoute Replicate (ou finalise Suno) à l'étape 4 avant ONCE.",
+          "Pipeline OK jusqu'au morceau, mais sans fichier audio. Ajoute Replicate (ou finalise Suno) à l'étape Morceaux avant ONCE.",
         );
         return;
       }
-      if (slug) {
-        window.location.href = `/artiste/${encodeURIComponent(slug)}`;
-        return;
-      }
-      setStep(6);
+      setStep(stepIdOf("distrokid"));
       setSaveMsg("Pipeline prêt — vérifie et publie via ONCE.");
     } catch (e) {
       setError(e.message);
@@ -1103,27 +1036,29 @@ export default function Dashboard() {
     try {
       const { project: saved } = await api.getProject(id);
       assignProjectId(saved.id);
-      setProject(
-        normalizeProjectState({ ...emptyProject(), ...(saved.project || {}) }),
-      );
-      if (saved.seed) setSeed((s) => ({ ...s, ...saved.seed }));
+      const loaded = normalizeProjectState(saved.project || {});
+      setProject(loaded);
+      setSeed((s) => ({
+        ...s,
+        ...(saved.seed || {}),
+        artistSlug: saved.seed?.artistSlug || loaded.artist?.slug || s.artistSlug,
+        language: saved.seed?.language || loaded.artist?.language || s.language,
+      }));
       setHistoryOpen(false);
       setSaveMsg(`Chargé : ${saved.title}`);
       // Place l'utilisateur sur la dernière étape utile
-      const loaded = normalizeProjectState(saved.project || {});
-      if (saved.project?.social?.publishedAt || saved.project?.social?.publish) setStep(8);
+      if (saved.project?.social?.publishedAt || saved.project?.social?.publish) setStep(stepIdOf("social"));
       else if (
         (Array.isArray(loaded.clips) && loaded.clips.some(isClipReady)) ||
         isClipReady(loaded.clip)
       )
-        setStep(8);
-      else if (saved.project?.social) setStep(7);
-      else if (saved.project?.distrokid) setStep(6);
-      else if (saved.project?.cover) setStep(5);
-      else if (saved.project?.track) setStep(4);
-      else if (saved.project?.lyrics) setStep(3);
-      else if (saved.project?.artist) setStep(2);
-      else setStep(1);
+        setStep(stepIdOf("social"));
+      else if (saved.project?.social) setStep(stepIdOf("clip"));
+      else if (saved.project?.distrokid) setStep(stepIdOf("distrokid"));
+      else if (saved.project?.cover) setStep(stepIdOf("covers"));
+      else if (saved.project?.track) setStep(stepIdOf("tracks"));
+      else if (saved.project?.lyrics) setStep(stepIdOf("lyrics"));
+      else setStep(stepIdOf("stats"));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1137,7 +1072,7 @@ export default function Dashboard() {
       <header class="mb-8 space-y-6">
         <div class="flex flex-wrap items-center gap-3 animate-rise">
           <p class="inline-flex items-center gap-2 text-xs uppercase tracking-[0.28em] text-primary">
-            <Waves size={14} /> Studio automatisé
+            <Waves size={14} /> Studio
           </p>
           <a href="/parametres" class="btn btn-ghost btn-xs gap-1">
             <Settings2 size={14} />
@@ -1150,7 +1085,7 @@ export default function Dashboard() {
           </button>
           {artistSlug && (
             <a href={`/artiste/${artistSlug}`} class="btn btn-ghost btn-xs gap-1 text-primary">
-              /{artistSlug}
+              Fiche artiste
             </a>
           )}
           {albumCtx && !showHomePipeline && (
@@ -1175,7 +1110,7 @@ export default function Dashboard() {
               )}
               {albumCtx.artistHref && (
                 <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.artistHref}>
-                  Gérer l’album
+                  Voir l’album
                 </a>
               )}
             </div>
@@ -1228,7 +1163,8 @@ export default function Dashboard() {
                   isTrackAudioFinal(project.track) ? "text-sm" : "text-base md:text-lg"
                 }`}
               >
-                Pipeline A→Z : jusqu’à la jaquette, puis tu valides ONCE avant Spotify.
+                Pipeline A→Z : paroles, morceau, jaquette — avec un artiste déjà créé. Le profil
+                se gère dans Artistes.
               </p>
             )}
           </div>
@@ -1258,17 +1194,19 @@ export default function Dashboard() {
         <section class="mb-8 border border-primary/25 bg-primary/5 p-4 md:p-5">
           <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 class="font-display text-lg font-semibold">Lancer tout automatiquement</h2>
-              <p class="text-sm text-base-content/60">Seeds optionnels — laisse vide pour génération totale.</p>
+              <h2 class="font-display text-lg font-semibold">Lancer un morceau</h2>
+              <p class="text-sm text-base-content/60">
+                Choisis un artiste existant, puis Auto A→Z. Le profil se crée sur{" "}
+                <a class="link link-hover text-primary" href="/artistes">
+                  Artistes
+                </a>
+                .
+              </p>
             </div>
             <button
               type="button"
               class="btn btn-primary gap-2"
-              disabled={
-                autoRunning ||
-                loading ||
-                isArtistNameBlocked(seed.name, seedNameStatus, seed.allowTakenName)
-              }
+              disabled={autoRunning || loading || !seed.artistSlug}
               onClick={runFullAuto}
             >
               {autoRunning ? <span class="loading loading-spinner loading-sm" /> : <Zap size={18} />}
@@ -1276,17 +1214,58 @@ export default function Dashboard() {
             </button>
           </div>
           <div class="grid gap-3 md:grid-cols-2">
-            <ArtistNameField
-              value={seed.name}
-              disabled={autoRunning}
-              placeholder="Laisser vide pour inventer un nom"
-              allowTakenName={Boolean(seed.allowTakenName)}
-              onChange={(name) => setSeed((s) => ({ ...s, name }))}
-              onAllowTakenNameChange={(allowTakenName) =>
-                setSeed((s) => ({ ...s, allowTakenName }))
-              }
-              onAvailabilityChange={setSeedNameStatus}
-            />
+            <label class="form-control w-full">
+              <span class="label-text mb-1 text-xs text-base-content/55">Artiste</span>
+              {catalogArtists.length === 0 ? (
+                <a class="btn btn-outline btn-sm mt-1" href="/artiste/nouveau">
+                  Créer un artiste d’abord
+                </a>
+              ) : (
+                <select
+                  class="select select-bordered w-full bg-base-200"
+                  value={seed.artistSlug}
+                  disabled={autoRunning}
+                  onChange={(e) => {
+                    const slug = e.currentTarget.value;
+                    const hit = catalogArtists.find((a) => a.slug === slug);
+                    setSeed((s) => ({
+                      ...s,
+                      artistSlug: slug,
+                      language: hit?.profile?.language || s.language,
+                    }));
+                  }}
+                >
+                  <option value="">Choisir…</option>
+                  {catalogArtists.map((a) => (
+                    <option key={a.slug} value={a.slug}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <p class="mt-1 text-[11px] text-base-content/45">
+                {selectedCatalog ? (
+                  <>
+                    {selectedCatalog.profile?.genre || "Profil prêt"} — le style se règle sur la{" "}
+                    <a class="link" href={`/artiste/${encodeURIComponent(selectedCatalog.slug)}`}>
+                      fiche artiste
+                    </a>
+                    .
+                  </>
+                ) : (
+                  <>
+                    Pas encore de profil ?{" "}
+                    <a class="link" href="/artiste/nouveau">
+                      Créer un artiste
+                    </a>
+                    {" · "}
+                    <a class="link" href="/artiste/nouveau?mode=self">
+                      Créer mon profil
+                    </a>
+                  </>
+                )}
+              </p>
+            </label>
             <label class="form-control w-full">
               <span class="label-text mb-1 text-xs text-base-content/55">Thème / titre</span>
               <input
@@ -1297,101 +1276,7 @@ export default function Dashboard() {
                 onInput={(e) => setSeed((s) => ({ ...s, theme: e.currentTarget.value }))}
               />
             </label>
-            <div class="form-control w-full md:col-span-2">
-              <span class="label-text mb-1 text-xs text-base-content/55">
-                Styles musicaux (optionnel)
-              </span>
-              <p class="mb-2 text-[11px] text-base-content/45">
-                {seed.styleTrackPick?.id || seed.styleArtistPick?.id
-                  ? "Violet / bleu = prédit par la référence. Jaune = forçage manuel (optionnel)."
-                  : "Ou choisis plutôt un artiste / titre ci-dessous pour caler le style automatiquement."}
-              </p>
-              <div class="flex flex-wrap gap-2">
-                {MUSIC_STYLES.map((s) => {
-                  const manual = s.value
-                    ? (seed.genres || []).includes(s.value)
-                    : !(seed.genres || []).length && !seedHasStyleRef;
-                  const fromTrack = Boolean(s.value && seedTrackStyleValues.has(s.value));
-                  const fromArtist = Boolean(s.value && seedArtistStyleValues.has(s.value));
-                  let cls = "btn btn-xs btn-ghost border border-base-content/15";
-                  if (manual) cls = "btn btn-xs btn-primary";
-                  else if (fromTrack) cls = "btn btn-xs border-0 bg-info/25 text-info hover:bg-info/35";
-                  else if (fromArtist)
-                    cls = "btn btn-xs border-0 bg-secondary/25 text-secondary hover:bg-secondary/35";
-                  return (
-                    <button
-                      key={s.label}
-                      type="button"
-                      class={cls}
-                      disabled={autoRunning}
-                      title={
-                        fromTrack
-                          ? "Prédit par le titre de référence"
-                          : fromArtist
-                            ? "Prédit par l’artiste de référence"
-                            : undefined
-                      }
-                      onClick={() => {
-                        if (!s.value) {
-                          setSeed((prev) => ({ ...prev, genres: [], genre: "" }));
-                          return;
-                        }
-                        setSeed((prev) => {
-                          const cur = prev.genres || [];
-                          const next = cur.includes(s.value)
-                            ? cur.filter((g) => g !== s.value)
-                            : [...cur, s.value];
-                          return { ...prev, genres: next, genre: formatGenres(next) };
-                        });
-                      }}
-                    >
-                      {s.label}
-                      {fromTrack && !manual ? " · titre" : ""}
-                      {fromArtist && !manual && !fromTrack ? " · artiste" : ""}
-                    </button>
-                  );
-                })}
-              </div>
-              {(seed.genres || []).length > 0 && (
-                <p class="mt-1 text-[11px] text-primary">Forçage : {formatGenres(seed.genres)}</p>
-              )}
-            </div>
-            <div class="md:col-span-2 space-y-3">
-              <StyleArtistPicker
-                value={seed.styleArtist}
-                pick={seed.styleArtistPick}
-                disabled={autoRunning}
-                compact
-                onQueryChange={(q) =>
-                  setSeed((s) => ({ ...s, styleArtist: q, styleArtistPick: null }))
-                }
-                onPickChange={(pick) =>
-                  setSeed((s) => ({
-                    ...s,
-                    styleArtist: pick?.name || s.styleArtist,
-                    styleArtistPick: pick,
-                    ...styleRefSeedPatch(s, { pick, trackPick: s.styleTrackPick }),
-                  }))
-                }
-              />
-              <StyleTrackPicker
-                pick={seed.styleTrackPick}
-                artistPick={seed.styleArtistPick}
-                disabled={autoRunning}
-                compact
-                onPickChange={(pick) =>
-                  setSeed((s) => ({
-                    ...s,
-                    styleTrackPick: pick,
-                    ...styleRefSeedPatch(s, {
-                      pick: s.styleArtistPick,
-                      trackPick: pick,
-                    }),
-                  }))
-                }
-              />
-            </div>
-            <label class="form-control w-full">
+            <label class="form-control w-full md:col-span-2">
               <span class="label-text mb-1 text-xs text-base-content/55">Langue des chansons</span>
               {String(loadKeys().musicProvider || "") === "songgen" && (
                 <p class="mb-1 text-[11px] text-warning">
@@ -1406,7 +1291,6 @@ export default function Dashboard() {
                   setSeed((s) => ({
                     ...s,
                     language: e.currentTarget.value,
-                    languageManual: true,
                   }))
                 }
               >
@@ -1423,52 +1307,7 @@ export default function Dashboard() {
                   );
                 })}
               </select>
-              {seedInferredLanguage &&
-                !seed.languageManual &&
-                seed.styleArtistPick?.name && (
-                  <p class="mt-1 text-[11px] text-base-content/45">
-                    {languageLabel(seedInferredLanguage)} proposé d’après{" "}
-                    {seed.styleTrackPick?.name
-                      ? `${seed.styleArtistPick.name} · ${seed.styleTrackPick.name}`
-                      : seed.styleArtistPick.name}{" "}
-                    — tu peux changer.
-                  </p>
-                )}
             </label>
-            <fieldset class="form-control w-full">
-              <legend class="label-text mb-1 text-xs text-base-content/55">Sexe / présentation</legend>
-              <div class="flex flex-wrap gap-2">
-                {ARTIST_GENDER_OPTIONS.map((g) => (
-                  <button
-                    key={g.value}
-                    type="button"
-                    class={`btn btn-sm ${seed.gender === g.value ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-                    disabled={autoRunning}
-                    onClick={() =>
-                      setSeed((s) => ({ ...s, gender: g.value, genderManual: true }))
-                    }
-                  >
-                    {g.label}
-                  </button>
-                ))}
-              </div>
-              {seedInferredGender &&
-                seed.gender === seedInferredGender &&
-                !seed.genderManual &&
-                seed.styleArtistPick?.name && (
-                  <p class="mt-1 text-[11px] text-base-content/45">
-                    {ARTIST_GENDER_LABELS[seedInferredGender]} proposé d’après{" "}
-                    {seed.styleArtistPick.name} — tu peux changer.
-                  </p>
-                )}
-            </fieldset>
-            <input
-              class="input input-bordered bg-base-200 md:col-span-2"
-              placeholder="Personnalité / univers (optionnel) — pas le style musical"
-              value={seed.bioHint}
-              disabled={autoRunning}
-              onInput={(e) => setSeed((s) => ({ ...s, bioHint: e.currentTarget.value }))}
-            />
           </div>
 
           {(autoRunning || log.length > 0) && (
@@ -1569,6 +1408,20 @@ export default function Dashboard() {
         <div class="mb-4 border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">{error}</div>
       )}
 
+      {!showHomePipeline && !project.artist?.name && (
+        <div class="mb-4 border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
+          Ce morceau n’a pas d’artiste.{" "}
+          <a class="link" href="/artistes">
+            Choisis-en un
+          </a>
+          {" · "}
+          <a class="link" href="/artiste/nouveau">
+            Crée un profil
+          </a>
+          .
+        </div>
+      )}
+
       {trackUiLoading && !autoRunning && (
         <div
           class="mb-4 flex items-center gap-3 border border-primary/30 bg-primary/10 px-4 py-3"
@@ -1600,7 +1453,7 @@ export default function Dashboard() {
               <p class="mt-1 text-xs text-base-content/55">{stepProgress.percent}%</p>
             )}
           </div>
-          {step === 4 || trackBusy ? (
+          {stepKey === "tracks" || trackBusy ? (
             <button
               type="button"
               class="btn btn-ghost btn-sm shrink-0 text-error"
@@ -1614,16 +1467,20 @@ export default function Dashboard() {
 
       <nav class="mb-8 flex gap-2 overflow-x-auto pb-2" aria-label="Étapes de création">
         {STEPS.map((s) => {
-          const Icon = ICONS[s.id];
+          const Icon = ICONS[s.key];
           const active = step === s.id;
-          const done = doneMap[s.id];
+          const done = doneMap[s.key];
           return (
             <button
               key={s.id}
               type="button"
               onClick={() => {
-                if (s.id > 4 && (project.track?.status === "preview-ready" || project.track?.status === "pending-review")) {
-                  setStep(4);
+                if (
+                  s.id > stepIdOf("tracks") &&
+                  (project.track?.status === "preview-ready" ||
+                    project.track?.status === "pending-review")
+                ) {
+                  setStep(stepIdOf("tracks"));
                   setError("Génère d’abord le morceau complet (l’extrait ne suffit pas) avant de continuer.");
                   return;
                 }
@@ -1650,7 +1507,7 @@ export default function Dashboard() {
       </nav>
 
       <div class="border border-base-content/10 bg-base-100/70 p-5 backdrop-blur-sm md:p-8">
-        {step === 1 && (
+        {stepKey === "stats" && (
           <StatsStep
             track={project.track}
             artist={project.artist}
@@ -1659,36 +1516,7 @@ export default function Dashboard() {
             projectId={projectId}
           />
         )}
-        {step === 2 && (
-          <ArtistStep
-            artist={project.artist}
-            trends={project.trends}
-            loading={loading}
-            initialMode={artistMode || undefined}
-            onGenerate={(payload) =>
-              runStep(() => api.artist({ ...payload, trends: project.trends }), "artist", 2)
-            }
-            onPatchArtist={(patch) => {
-              setProject((prev) => {
-                const next = { ...prev, artist: { ...(prev.artist || {}), ...patch } };
-                void persist(
-                  next,
-                  {
-                    stepKey: "artist",
-                    eventType: "artist-patch",
-                    message:
-                      Array.isArray(patch.photos) || "imageUrl" in patch
-                        ? "Photos artiste mises à jour"
-                        : "Profil artiste mis à jour",
-                  },
-                  { skipLocalUpdate: true },
-                );
-                return next;
-              });
-            }}
-          />
-        )}
-        {step === 3 && (
+        {stepKey === "lyrics" && (
           <LyricsStep
             lyrics={project.lyrics}
             versions={project.lyricsVersions || []}
@@ -1704,7 +1532,7 @@ export default function Dashboard() {
                     trends: project.trends,
                   }),
                 "lyrics",
-                3,
+                stepIdOf("lyrics"),
               )
             }
             onSelectVersion={(id) => {
@@ -1727,7 +1555,7 @@ export default function Dashboard() {
             }}
           />
         )}
-        {step === 4 && (
+        {stepKey === "tracks" && (
           <TracksStep
             track={project.track}
             versions={project.trackVersions || []}
@@ -1736,7 +1564,7 @@ export default function Dashboard() {
             artist={project.artist}
             musicArrange={project.musicArrange}
             loading={trackUiLoading}
-            progress={step === 4 || trackBusy ? stepProgress : null}
+            progress={stepKey === "tracks" || trackBusy ? stepProgress : null}
             projectId={projectId}
             distrokid={project.distrokid}
             onOpenSettings={() => {
@@ -1783,26 +1611,29 @@ export default function Dashboard() {
               if (!data?.styleLock) throw new Error("Style lock vide");
               setProject((prev) => {
                 if (!prev.artist) return prev;
-                const mergedLock = {
-                  ...(prev.artist.styleLock || {}),
-                  ...data.styleLock,
-                };
+                const lock = data.styleLock;
+                const refName = lock.matchedName || lock.seedTrack?.artistName || "";
+                const styleTrack = lock.seedTrack?.title
+                  ? `${lock.seedTrack.title}${
+                      lock.seedTrack.artistName ? ` — ${lock.seedTrack.artistName}` : ""
+                    }`
+                  : prev.artist.styleTrack;
                 const next = {
                   ...prev,
                   artist: {
                     ...prev.artist,
-                    styleLock: mergedLock,
-                    styleTrack: data.styleLock.seedTrack?.title
-                      ? `${data.styleLock.seedTrack.title}${
-                          data.styleLock.seedTrack.artistName
-                            ? ` — ${data.styleLock.seedTrack.artistName}`
-                            : ""
-                        }`
-                      : prev.artist.styleTrack,
+                    styleLock: lock,
+                    styleTrack,
+                    ...(refName
+                      ? { styleArtist: refName, styleArtists: [refName] }
+                      : {}),
+                    ...(lock.genreSummary ? { genre: lock.genreSummary } : {}),
+                    ...(Array.isArray(lock.genres) && lock.genres.length
+                      ? { genres: lock.genres }
+                      : {}),
                   },
                   styleTrackPick: pick,
-                  // Pré-sélection arrangement comme pour les styles (titre prime)
-                  musicArrange: musicArrangeFromStyleLock(mergedLock),
+                  musicArrange: musicArrangeFromStyleLock(lock),
                 };
                 persist(next, {
                   stepKey: "artist",
@@ -1931,7 +1762,7 @@ export default function Dashboard() {
             }}
           />
         )}
-        {step === 5 && (
+        {stepKey === "covers" && (
           <CoverStep
             cover={project.cover}
             versions={project.coverVersions || []}
@@ -1959,23 +1790,23 @@ export default function Dashboard() {
             }}
             onGenerate={(payload) => {
               if (!isTrackAudioFinal(project.track)) {
-                setStep(4);
+                setStep(stepIdOf("tracks"));
                 setError(
                   (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
-                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas pour la jaquette."
-                    : "Crée d'abord le morceau audio (étape 4) avant la jaquette.",
+                    ? "Génère d’abord le morceau complet (étape Morceaux) — l’extrait ne suffit pas pour la jaquette."
+                    : "Crée d'abord le morceau audio (étape Morceaux) avant la jaquette.",
                 );
                 return;
               }
               return runStep(
                 () => api.cover({ ...payload, artist: project.artist, track: project.track }),
                 "cover",
-                5,
+                stepIdOf("covers"),
               );
             }}
           />
         )}
-        {step === 6 && (
+        {stepKey === "distrokid" && (
           <DistroKidStep
             distrokid={project.distrokid}
             track={project.track}
@@ -1986,14 +1817,14 @@ export default function Dashboard() {
             onConfigure={() => {
               window.location.href = "/parametres?section=distribution";
             }}
-            onGoToCover={() => setStep(5)}
+            onGoToCover={() => setStep(stepIdOf("covers"))}
             onPrepare={() => {
               if (!isTrackAudioFinal(project.track)) {
-                setStep(4);
+                setStep(stepIdOf("tracks"));
                 setError(
                   (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
-                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas pour ONCE."
-                    : "Crée d'abord le morceau audio (étape 4) avant ONCE.",
+                    ? "Génère d’abord le morceau complet (étape Morceaux) — l’extrait ne suffit pas pour ONCE."
+                    : "Crée d'abord le morceau audio (étape Morceaux) avant ONCE.",
                 );
                 return;
               }
@@ -2019,16 +1850,16 @@ export default function Dashboard() {
                     reuseRelease: false,
                   }),
                 "distrokid",
-                6,
+                stepIdOf("distrokid"),
               );
             }}
             onReuse={() => {
               if (!isTrackAudioFinal(project.track)) {
-                setStep(4);
+                setStep(stepIdOf("tracks"));
                 setError(
                   (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
-                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas pour ONCE."
-                    : "Crée d'abord le morceau audio (étape 4) avant ONCE.",
+                    ? "Génère d’abord le morceau complet (étape Morceaux) — l’extrait ne suffit pas pour ONCE."
+                    : "Crée d'abord le morceau audio (étape Morceaux) avant ONCE.",
                 );
                 return;
               }
@@ -2055,12 +1886,12 @@ export default function Dashboard() {
                     releaseId: project.distrokid?.releaseId,
                   }),
                 "distrokid",
-                6,
+                stepIdOf("distrokid"),
               );
             }}
           />
         )}
-        {step === 7 && (
+        {stepKey === "clip" && (
           <ClipStep
             projectId={projectId}
             social={project.social}
@@ -2072,10 +1903,15 @@ export default function Dashboard() {
             cover={project.cover || (project.artist?.imageUrl ? { imageUrl: project.artist.imageUrl } : null)}
             lyrics={project.lyrics}
             loading={loading}
-            onGoToTracks={() => setStep(4)}
-            onGoToArtist={() => setStep(2)}
-            onGoToCover={() => setStep(5)}
-            onGoToSocial={() => setStep(8)}
+            onGoToTracks={() => setStep(stepIdOf("tracks"))}
+            onGoToArtist={() => {
+              const slug = project.artist?.slug;
+              window.location.href = slug
+                ? `/artiste/${encodeURIComponent(slug)}/editer`
+                : "/artistes";
+            }}
+            onGoToCover={() => setStep(stepIdOf("covers"))}
+            onGoToSocial={() => setStep(stepIdOf("social"))}
             onSelectClip={(clipId) => {
               // Différé : évite les violations « click handler took Xs »
               requestAnimationFrame(() => {
@@ -2097,11 +1933,11 @@ export default function Dashboard() {
             }}
             onGeneratePack={() => {
               if (!isTrackAudioFinal(project.track)) {
-                setStep(4);
+                setStep(stepIdOf("tracks"));
                 setError(
                   (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
-                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas pour le clip."
-                    : "Crée d'abord le morceau audio (étape 4) avant le clip.",
+                    ? "Génère d’abord le morceau complet (étape Morceaux) — l’extrait ne suffit pas pour le clip."
+                    : "Crée d'abord le morceau audio (étape Morceaux) avant le clip.",
                 );
                 return;
               }
@@ -2114,7 +1950,7 @@ export default function Dashboard() {
                     cover: project.cover,
                   }),
                 "social",
-                7,
+                stepIdOf("clip"),
               );
             }}
             onClipReady={(nextClip, _blob, storageKey) => {
@@ -2158,7 +1994,7 @@ export default function Dashboard() {
             }}
           />
         )}
-        {step === 8 && (
+        {stepKey === "social" && (
           <SocialStep
             projectId={projectId}
             social={project.social}
@@ -2170,7 +2006,7 @@ export default function Dashboard() {
             cover={project.cover || (project.artist?.imageUrl ? { imageUrl: project.artist.imageUrl } : null)}
             loading={loading}
             published={published}
-            onGoToClip={() => setStep(7)}
+            onGoToClip={() => setStep(stepIdOf("clip"))}
             onConfigure={() => {
               window.location.href = "/parametres?section=reseaux";
             }}
@@ -2194,11 +2030,11 @@ export default function Dashboard() {
             }}
             onGenerate={() => {
               if (!isTrackAudioFinal(project.track)) {
-                setStep(4);
+                setStep(stepIdOf("tracks"));
                 setError(
                   (project.track?.status === "preview-ready" || project.track?.status === "pending-review")
-                    ? "Génère d’abord le morceau complet (étape 4) — l’extrait ne suffit pas."
-                    : "Crée d'abord le morceau audio (étape 4).",
+                    ? "Génère d’abord le morceau complet (étape Morceaux) — l’extrait ne suffit pas."
+                    : "Crée d'abord le morceau audio (étape Morceaux).",
                 );
                 return;
               }
@@ -2211,7 +2047,7 @@ export default function Dashboard() {
                     cover: project.cover,
                   }),
                 "social",
-                8,
+                stepIdOf("social"),
               );
             }}
             onPublish={() => setPublished(true)}
@@ -2243,7 +2079,7 @@ export default function Dashboard() {
             class="btn btn-primary btn-sm gap-1"
             disabled={step >= STEPS.length}
             onClick={() => {
-              if (step === 4 && (project.track?.status === "preview-ready" || project.track?.status === "pending-review")) {
+              if (stepKey === "tracks" && (project.track?.status === "preview-ready" || project.track?.status === "pending-review")) {
                 setError("Génère d’abord le morceau complet (l’extrait ne suffit pas) avant de continuer.");
                 return;
               }

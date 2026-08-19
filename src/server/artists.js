@@ -1077,59 +1077,19 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
     projectId: saved.id,
     slug: artist.slug,
     theme: themeHint || "Nouveau single",
-    studioUrl: `/?project=${saved.id}&step=3`,
+    studioUrl: `/?project=${saved.id}&step=2`,
   };
 }
 
 /**
- * Ouvre le studio à l’étape Artiste pour éditer genre / références / DNA style.
- * Réutilise le projet le plus récent (profil hub resynchronisé), sinon en crée un.
+ * Page d’édition du profil (hors Studio).
  */
 export async function openArtistStyleEditor(slug) {
   const artist = await getArtistBySlug(slug);
   if (!artist) throw new Error("Artiste introuvable");
-
-  const richProfile = await resolveArtistProfileForRelease(artist.slug, artist.name);
-  if (richProfile) {
-    await upsertArtistFromProject(richProfile, { preferredSlug: artist.slug });
-  }
-
-  const releases = await listArtistReleases(slug, 1);
-  if (releases[0]?.id) {
-    const existing = await getProject(releases[0].id);
-    if (existing?.project) {
-      const next = {
-        ...existing.project,
-        artist: withResolvedArtistGender({
-          ...existing.project.artist,
-          ...(richProfile || artist.profile),
-          slug: artist.slug,
-          name: artist.name,
-        }),
-      };
-      await saveProject({
-        id: existing.id,
-        project: next,
-        event: {
-          stepKey: "artist",
-          eventType: "edit-style",
-          message: `Édition style — ${artist.name}`,
-        },
-      });
-    }
-    return {
-      projectId: releases[0].id,
-      slug,
-      created: false,
-      studioUrl: `/?project=${releases[0].id}&step=2`,
-    };
-  }
-  const created = await createArtistRelease(slug, {});
   return {
-    projectId: created.projectId,
     slug,
-    created: true,
-    studioUrl: `/?project=${created.projectId}&step=2`,
+    editorUrl: `/artiste/${encodeURIComponent(slug)}/editer`,
   };
 }
 

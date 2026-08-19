@@ -1,10 +1,12 @@
 import { json, error, readBody } from "../../../server/http.js";
 import {
   getArtistHub,
+  getArtistBySlug,
   createArtistRelease,
   openArtistStyleEditor,
   computeArtistStats,
   adviseArtistCareer,
+  upsertArtistFromProject,
 } from "../../../server/artists.js";
 import { previewCareerSchedule, runCareerSchedule } from "../../../server/careerSchedule.js";
 import { getUserKeys } from "../../../server/db.js";
@@ -88,6 +90,22 @@ export async function POST({ params, request }) {
     if (action === "edit-style") {
       const opened = await openArtistStyleEditor(slug);
       return json(opened);
+    }
+
+    if (action === "save-profile") {
+      const existing = await getArtistBySlug(slug);
+      if (!existing) return error("Artiste introuvable", 404);
+      const profile = body.profile || body.artist;
+      if (!profile || typeof profile !== "object") {
+        return error("Profil manquant", 400);
+      }
+      const name = String(profile.name || existing.name || "").trim();
+      if (!name) return error("Nom d’artiste manquant", 400);
+      const saved = await upsertArtistFromProject(
+        { ...profile, slug, name },
+        { preferredSlug: slug },
+      );
+      return json({ ok: true, artist: saved });
     }
 
     return error("Action inconnue", 400);

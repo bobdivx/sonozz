@@ -10,6 +10,9 @@ import {
   Languages,
   Sparkles,
   Heart,
+  Search,
+  X,
+  Save,
 } from "lucide-preact";
 import {
   MUSIC_STYLES,
@@ -19,7 +22,8 @@ import {
   songGenLanguageHint,
   languageEngineLabel,
   catalogGenresToStyleValues,
-  styleGenreChips,
+  styleLabelForValue,
+  uniqueGenreLabels,
   inferLanguageFromStyleRef,
   parseGenres,
 } from "../../lib/studio.js";
@@ -31,18 +35,41 @@ import PhotoUpload from "../PhotoUpload.jsx";
 import VoiceSampleUpload from "../VoiceSampleUpload.jsx";
 import { resolveArtistGender, inferGenderFromStyleRef, ARTIST_GENDER_OPTIONS, ARTIST_GENDER_LABELS } from "../../lib/artistGender.js";
 import { artistPhotoSyncKey, normalizeArtistPhotos } from "../../lib/artistPhotos.js";
-import { buildArtistDraftPatch, isUnchangedArtistDraft } from "../../lib/artistDraft.js";
+import { buildArtistDraftPatch, isUnchangedArtistDraft, styleTrackKey, lockHasSonicDna, artistPatchFromStyleLock } from "../../lib/artistDraft.js";
+import { api } from "../../lib/apiClient.js";
 
-export default function ArtistStep({ artist, trends, loading, onGenerate, onPatchArtist, initialMode }) {
+function ProfileSection({ step, icon: Icon, title, hint, children }) {
+  return (
+    <section class="space-y-4 rounded-2xl border border-base-content/10 bg-base-300/25 p-4 sm:p-5">
+      <header class="space-y-1">
+        <h2 class="flex items-center gap-2 font-display text-lg font-semibold tracking-tight">
+          {step ? (
+            <span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">
+              {step}
+            </span>
+          ) : null}
+          {Icon ? <Icon size={18} class="shrink-0 text-primary" /> : null}
+          {title}
+        </h2>
+        {hint ? <p class="text-sm text-base-content/60">{hint}</p> : null}
+      </header>
+      <div class="space-y-4">{children}</div>
+    </section>
+  );
+}
+
+export default function ArtistStep({ artist, trends, loading, onGenerate, onSave, onPatchArtist, initialMode }) {
   const [mode, setMode] = useState(() =>
     initialMode === "self" || artist?.mode === "self" ? "self" : "fiction",
   );
   const [name, setName] = useState(artist?.name || "");
   const [allowTakenName, setAllowTakenName] = useState(false);
   const [nameStatus, setNameStatus] = useState(null);
-  const [genres, setGenres] = useState(() => parseGenres(artist?.genres || artist?.genre));
-  const [customGenre, setCustomGenre] = useState("");
-  const [showCustom, setShowCustom] = useState(false);
+  const [genres, setGenres] = useState(() =>
+    catalogGenresToStyleValues(parseGenres(artist?.genres || artist?.genre)),
+  );
+  const [styleQuery, setStyleQuery] = useState("");
+  const [styleSearchOpen, setStyleSearchOpen] = useState(false);
   const [language, setLanguage] = useState(artist?.language || "fr");
   const [bioHint, setBioHint] = useState(artist?.bioHint || "");
   const [styleArtist, setStyleArtist] = useState(artist?.styleArtist || "");
@@ -92,18 +119,22 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
   const [photos, setPhotos] = useState(() => normalizeArtistPhotos(artist?.photos, artist?.imageUrl));
   const [voiceSample, setVoiceSample] = useState(() => artist?.voiceSample || null);
   const [pickError, setPickError] = useState("");
+  const [styleBusy, setStyleBusy] = useState(false);
   const languageManualRef = useRef(false);
   const genderManualRef = useRef(Boolean(resolveArtistGender(artist)?.code));
   const skipHydrateRef = useRef(false);
+  const prevInferredKeyRef = useRef("");
   const persistTimerRef = useRef(null);
   const draftReadyRef = useRef(false);
   const loadingRef = useRef(Boolean(loading));
   const artistRef = useRef(artist);
   const onPatchRef = useRef(onPatchArtist);
   const draftRef = useRef({});
+  const onSaveRef = useRef(onSave);
   loadingRef.current = Boolean(loading);
   artistRef.current = artist;
   onPatchRef.current = onPatchArtist;
+  onSaveRef.current = onSave;
   const keysSnap = loadKeys();
   const langOptions = languagesForProvider(
     keysSnap.musicProvider,
@@ -134,17 +165,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     setNameStatus(null);
     if (artist.mode === "self" || artist.mode === "fiction") setMode(artist.mode);
     const parsed = parseGenres(artist.genres || artist.genre);
-    const presetValues = new Set(MUSIC_STYLES.map((s) => s.value).filter(Boolean));
-    const known = parsed.filter((g) => presetValues.has(g));
-    const unknown = parsed.filter((g) => !presetValues.has(g));
-    setGenres(known);
-    if (unknown.length) {
-      setShowCustom(true);
-      setCustomGenre(unknown.join(" × "));
-    } else {
-      setShowCustom(false);
-      setCustomGenre("");
-    }
+    setGenres(catalogGenresToStyleValues(parsed));
     if (artist.language) setLanguage(artist.language);
     setStyleArtist(artist.styleArtist || "");
     setAge(artist.age != null ? String(artist.age) : "");
@@ -202,24 +223,67 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     });
   }
 
-  function toggleStyle(value) {
-    if (!value) {
-      setGenres([]);
-      setShowCustom(false);
-      setCustomGenre("");
-      return;
-    }
-    setGenres((prev) =>
-      prev.includes(value) ? prev.filter((g) => g !== value) : [...prev, value],
-    );
+  function addStyle(value) {
+    const v = String(value || "").trim();
+    if (!v) return;
+    setGenres((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    setStyleQuery("");
+    setStyleSearchOpen(false);
   }
 
-  const resolvedGenres = [
-    ...genres,
-    ...(showCustom && customGenre.trim() ? [customGenre.trim()] : []),
-  ];
-  const resolvedGenre = formatGenres(resolvedGenres);
+  function removeStyle(value) {
+    setGenres((prev) => prev.filter((g) => g !== value));
+  }
+
   const isSelf = mode === "self";
+
+  const artistRefGenres = (() => {
+    const raw = [];
+    if (isSelf) {
+      for (const p of styleArtistPicks || []) {
+        if (Array.isArray(p.genres)) raw.push(...p.genres);
+      }
+    } else if (Array.isArray(styleArtistPick?.genres)) {
+      raw.push(...styleArtistPick.genres);
+    }
+    return [...new Set(raw.map((g) => String(g || "").trim()).filter(Boolean))];
+  })();
+
+  const trackRefGenres = (() => {
+    if (!styleTrackPick?.id) return [];
+    const fromTrack = Array.isArray(styleTrackPick.genres)
+      ? styleTrackPick.genres.map((g) => String(g || "").trim()).filter(Boolean)
+      : [];
+    if (fromTrack.length) return [...new Set(fromTrack)];
+    if (artistRefGenres.length) return artistRefGenres;
+    return [];
+  })();
+
+  const trackStyleValues = new Set(catalogGenresToStyleValues(trackRefGenres));
+  const artistOnlyStyleValues = new Set(
+    catalogGenresToStyleValues(artistRefGenres).filter((v) => !trackStyleValues.has(v)),
+  );
+  const inferredStyleValues = new Set([...trackStyleValues, ...artistOnlyStyleValues]);
+  const inferredKey = [...inferredStyleValues].sort().join("\n");
+  const resolvedGenres = genres;
+  const resolvedGenre = formatGenres(resolvedGenres);
+  const styleOptions = MUSIC_STYLES.filter((s) => s.value);
+
+  useEffect(() => {
+    const inferred = inferredKey ? inferredKey.split("\n").filter(Boolean) : [];
+    const inferredSet = new Set(inferred);
+    const prevInferred = new Set(
+      prevInferredKeyRef.current ? prevInferredKeyRef.current.split("\n").filter(Boolean) : [],
+    );
+    prevInferredKeyRef.current = inferredKey;
+    setGenres((prev) => {
+      const extras = prev.filter((g) => !inferredSet.has(g) && !prevInferred.has(g));
+      const next = [...inferred, ...extras];
+      if (next.length === prev.length && next.every((v, i) => v === prev[i])) return prev;
+      return next;
+    });
+  }, [inferredKey]);
+
   draftRef.current = {
     mode,
     name,
@@ -244,7 +308,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     );
     if (isUnchangedArtistDraft(patch, prev)) return;
     skipHydrateRef.current = true;
+    const next = { ...prev, ...patch };
+    artistRef.current = next;
     onPatchRef.current?.(patch);
+    return next;
   }
 
   function queueDraft(overrides = {}, immediate = false) {
@@ -293,45 +360,6 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
       true,
     );
   }
-  const hasStyleRef = Boolean(
-    styleTrackPick?.id ||
-      styleArtistPick?.id ||
-      (Array.isArray(styleArtistPicks) && styleArtistPicks.length > 0),
-  );
-
-  /** Genres catalogue issus des artistes sélectionnés. */
-  const artistRefGenres = (() => {
-    const raw = [];
-    if (isSelf) {
-      for (const p of styleArtistPicks || []) {
-        if (Array.isArray(p.genres)) raw.push(...p.genres);
-      }
-    } else if (Array.isArray(styleArtistPick?.genres)) {
-      raw.push(...styleArtistPick.genres);
-    }
-    return [...new Set(raw.map((g) => String(g || "").trim()).filter(Boolean))];
-  })();
-
-  /** Genres issus du titre (ou fallback artiste si le titre n’en a pas). */
-  const trackRefGenres = (() => {
-    if (!styleTrackPick?.id) return [];
-    const fromTrack = Array.isArray(styleTrackPick.genres)
-      ? styleTrackPick.genres.map((g) => String(g || "").trim()).filter(Boolean)
-      : [];
-    if (fromTrack.length) return [...new Set(fromTrack)];
-    // Deezer sans genre → reprendre ceux de l’artiste ref
-    if (artistRefGenres.length) return artistRefGenres;
-    return [];
-  })();
-
-  const trackStyleValues = new Set(catalogGenresToStyleValues(trackRefGenres));
-  const artistOnlyStyleValues = new Set(
-    catalogGenresToStyleValues(artistRefGenres).filter((v) => !trackStyleValues.has(v)),
-  );
-  const trackGenreChips = styleGenreChips(trackRefGenres);
-  const artistGenreChips = styleGenreChips(artistRefGenres).filter(
-    (chip) => !trackGenreChips.some((t) => t.label === chip.label),
-  );
   const nameBlocked = isArtistNameBlocked(name, nameStatus, allowTakenName);
 
   useEffect(() => {
@@ -492,6 +520,69 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     });
   }
 
+  async function applyStyleTrackDna(pick = styleTrackPick) {
+    if (!pick?.source || pick.id == null) {
+      setPickError("Choisis et valide un titre de référence.");
+      return null;
+    }
+    const data = await api.resolveStyleTrack(pick);
+    if (!data?.styleLock) throw new Error("DNA sonore vide");
+    const patch = artistPatchFromStyleLock(data.styleLock, artistRef.current || {});
+    skipHydrateRef.current = true;
+    const next = { ...(artistRef.current || {}), ...patch };
+    artistRef.current = next;
+    onPatchRef.current?.(patch);
+    return next;
+  }
+
+  async function handleApplyStyleTrack() {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    flushDraft();
+    setStyleBusy(true);
+    setPickError("");
+    try {
+      const next = await applyStyleTrackDna(styleTrackPick);
+      if (onSaveRef.current && next) await onSaveRef.current(next);
+    } catch (e) {
+      setPickError(e.message || "Impossible d’appliquer ce titre");
+    } finally {
+      setStyleBusy(false);
+    }
+  }
+
+  async function handleSaveProfile() {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    flushDraft();
+    if (!onSaveRef.current) return;
+    setStyleBusy(true);
+    setPickError("");
+    try {
+      let next = artistRef.current || {};
+      const pickKey = styleTrackKey(
+        styleTrackPick
+          ? { source: styleTrackPick.source, sourceId: styleTrackPick.id }
+          : null,
+      );
+      const lockKey = styleTrackKey(next.styleLock?.seedTrack);
+      const needsDna = Boolean(pickKey && (pickKey !== lockKey || !lockHasSonicDna(next.styleLock)));
+      if (needsDna) {
+        const resolved = await applyStyleTrackDna(styleTrackPick);
+        if (resolved) next = resolved;
+      }
+      await onSaveRef.current(next);
+    } catch (e) {
+      setPickError(e.message || "Sauvegarde impossible");
+    } finally {
+      setStyleBusy(false);
+    }
+  }
+
   const vi = artist?.visualIdentity;
   const displayGenres = parseGenres(artist?.genres || artist?.genre);
   const savedGenderLabel = resolveArtistGender(artist)?.label;
@@ -500,21 +591,23 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
     (Array.isArray(artist?.styleLock?.refs)
       ? artist.styleLock.refs.map((r) => r.matchedName).filter(Boolean)
       : null);
+  const pickKey = styleTrackKey(
+    styleTrackPick
+      ? { source: styleTrackPick.source, sourceId: styleTrackPick.id }
+      : null,
+  );
+  const lockKey = styleTrackKey(artist?.styleLock?.seedTrack);
+  const dnaStale = Boolean(
+    pickKey && (pickKey !== lockKey || !lockHasSonicDna(artist?.styleLock)),
+  );
 
   return (
     <section class="animate-rise space-y-6">
-      <header class="space-y-2">
-        <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">
-          {isSelf ? "Créer mon profil artiste" : "Créer un artiste complet"}
-        </h2>
-        <p class="max-w-xl text-base-content/70">
-          {isSelf
-            ? "Tes photos, ton identité, ta voix si tu veux, et les artistes que tu aimes — les morceaux colleront à ce son."
-            : "Choisis un ou plusieurs styles musicaux et la langue — puis génère profil + portrait."}
+      <div class="space-y-2">
+        <p class="text-xs font-medium uppercase tracking-[0.16em] text-base-content/45">
+          Type de profil
         </p>
-      </header>
-
-      <div class="flex flex-wrap gap-2" role="tablist" aria-label="Type de profil">
+        <div class="flex flex-wrap gap-2" role="tablist" aria-label="Type de profil">
         <button
           type="button"
           role="tab"
@@ -537,9 +630,24 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
           <Heart size={14} />
           C’est moi
         </button>
+        </div>
+        <p class="text-sm text-base-content/60">
+          {isSelf
+            ? "Profil réel : toi, tes photos, ta voix. Le style musical se règle dans le bloc suivant."
+            : "Profil fictionnel : un personnage inventé. Identité et style musical sont séparés ci-dessous."}
+        </p>
       </div>
 
-      <div class="flex flex-col gap-5">
+      <ProfileSection
+        step="1"
+        icon={UserRound}
+        title="Identité"
+        hint={
+          isSelf
+            ? "Qui tu es sur la fiche : nom de scène, photos, présentation. Pas le son des morceaux."
+            : "Qui est cet artiste : nom, présentation, univers. Pas le genre ni le DNA sonore."
+        }
+      >
         <ArtistNameField
           value={name}
           disabled={loading}
@@ -597,6 +705,65 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
           </>
         )}
 
+        <fieldset class="space-y-2">
+          <legend class="mb-1 text-sm text-base-content/60">Sexe / présentation</legend>
+          <p class="text-xs text-base-content/45">
+            Voix, portrait et bio collent à ce choix — ce n’est pas le style musical.
+          </p>
+          <div class="flex flex-wrap gap-2">
+            {ARTIST_GENDER_OPTIONS.map((g) => (
+              <button
+                key={g.value}
+                type="button"
+                class={`btn btn-sm ${gender === g.value ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+                disabled={loading}
+                onClick={() => {
+                  genderManualRef.current = true;
+                  setGender(g.value);
+                }}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+          {(() => {
+            const pick = isSelf ? styleArtistPicks[0] : styleArtistPick;
+            const inferred = inferGenderFromStyleRef(pick);
+            if (!inferred || inferred !== gender || genderManualRef.current || !pick?.name) {
+              return null;
+            }
+            return (
+              <p class="text-xs text-base-content/45">
+                {ARTIST_GENDER_LABELS[inferred]} proposé d’après {pick.name} — tu peux changer.
+              </p>
+            );
+          })()}
+        </fieldset>
+
+        <label class="form-control w-full">
+          <span class="label-text mb-1 text-sm text-base-content/60">
+            {isSelf ? "Univers / personnalité (optionnel)" : "Personnalité / univers (optionnel)"}
+          </span>
+          <textarea
+            class="textarea textarea-bordered w-full bg-base-200"
+            rows={3}
+            placeholder={
+              isSelf
+                ? "Histoire, vibe, thèmes que tu veux chanter…"
+                : "Origines, look, histoire… (le style musical est dans le bloc suivant)"
+            }
+            value={bioHint}
+            onInput={(e) => setBioHint(e.currentTarget.value)}
+          />
+        </label>
+      </ProfileSection>
+
+      <ProfileSection
+        step="2"
+        icon={Music2}
+        title="Style musical"
+        hint="Le son des morceaux : références, DNA, genres, langue. Ça ne change pas le portrait."
+      >
         <fieldset class="space-y-3">
           <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
             <Music2 size={14} class="text-primary" />
@@ -666,6 +833,26 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                 setPickError("");
               }}
             />
+            {styleTrackPick?.id && (
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="btn btn-primary btn-sm gap-2"
+                  disabled={loading || styleBusy}
+                  onClick={handleApplyStyleTrack}
+                >
+                  {styleBusy ? (
+                    <span class="loading loading-spinner loading-xs" />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                  Appliquer ce titre au DNA
+                </button>
+                <p class="text-xs text-base-content/45">
+                  Recalcule timbre, groove, tempo et instruments à partir de la preview — pas le portrait.
+                </p>
+              </div>
+            )}
             {pickError && <p class="text-xs text-warning">{pickError}</p>}
           </div>
         </fieldset>
@@ -673,110 +860,114 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
         <fieldset class="space-y-2">
           <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
             <Palette size={14} class="text-primary" />
-            Styles musicaux (optionnel)
+            Styles musicaux
           </legend>
-
-          {hasStyleRef && (trackGenreChips.length > 0 || artistGenreChips.length > 0) && (
-            <div class="space-y-2 rounded-lg border border-base-content/10 bg-base-200/40 p-3">
-              <p class="text-xs text-base-content/55">Déduit de ta référence — pas besoin de recocher :</p>
-              <div class="flex flex-wrap gap-2">
-                {trackGenreChips.map((chip) => (
-                    <span
-                      key={`track-${chip.label}`}
-                      class="badge badge-lg gap-1 border-0 bg-info/25 font-medium text-info"
-                      title="Depuis le titre de référence"
+          <p class="text-xs text-base-content/45">
+            {styleTrackPick?.name
+              ? `Prérempli d’après le titre « ${styleTrackPick.name} »${
+                  styleTrackPick.artistName ? ` — ${styleTrackPick.artistName}` : ""
+                }. Cherche pour en ajouter, croix pour retirer.`
+              : "Cherche un style, ou choisis un titre de référence pour préremplir."}
+          </p>
+          {genres.length > 0 && (
+            <div class="flex flex-wrap gap-2">
+              {genres.map((value) => {
+                const fromTrack = trackStyleValues.has(value);
+                const fromArtist = artistOnlyStyleValues.has(value);
+                const source = fromTrack ? "titre" : fromArtist ? "artiste" : "";
+                return (
+                  <span
+                    key={value}
+                    class={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${
+                      fromTrack
+                        ? "border-info/40 bg-info/15 text-info"
+                        : fromArtist
+                          ? "border-secondary/40 bg-secondary/15 text-secondary"
+                          : "border-primary/40 bg-primary/15 text-primary"
+                    }`}
+                  >
+                    {styleLabelForValue(value)}
+                    {source ? <span class="opacity-60">· {source}</span> : null}
+                    <button
+                      type="button"
+                      class="ml-0.5 rounded-full p-0.5 opacity-70 hover:opacity-100"
+                      aria-label={`Retirer ${styleLabelForValue(value)}`}
+                      onClick={() => removeStyle(value)}
                     >
-                      {chip.label}
-                      <span class="opacity-70">· titre</span>
-                    </span>
-                ))}
-                {artistGenreChips.map((chip) => (
-                    <span
-                      key={`artist-${chip.label}`}
-                      class="badge badge-lg gap-1 border-0 bg-secondary/25 font-medium text-secondary"
-                      title="Depuis l’artiste de référence"
-                    >
-                      {chip.label}
-                      <span class="opacity-70">· artiste</span>
-                    </span>
-                ))}
-              </div>
-              <p class="text-[11px] text-base-content/45">
-                <span class="text-info">Bleu = titre</span>
-                {" · "}
-                <span class="text-secondary">Violet = artiste</span>
-                {" · "}
-                <span class="text-primary">Jaune = forçage manuel</span>
-              </p>
+                      <X size={12} />
+                    </button>
+                  </span>
+                );
+              })}
             </div>
           )}
-
-          {hasStyleRef ? (
-            <p class="text-xs text-base-content/45">
-              Ne coche un style jaune que si tu veux <strong>forcer</strong> un genre différent de la
-              référence.
-            </p>
-          ) : (
-            <p class="text-xs text-base-content/45">
-              Utile si tu n’as pas encore choisi d’artiste / titre — sinon laisse vide et utilise les
-              références ci-dessus.
-            </p>
-          )}
-          <div class="flex flex-wrap gap-2">
-            {MUSIC_STYLES.map((s) => {
-              const manual = s.value
-                ? genres.includes(s.value)
-                : genres.length === 0 && !showCustom && !hasStyleRef;
-              const fromTrack = s.value && trackStyleValues.has(s.value);
-              const fromArtist = s.value && artistOnlyStyleValues.has(s.value);
-              let cls = "btn btn-sm btn-ghost border border-base-content/15";
-              if (manual) cls = "btn btn-sm btn-primary";
-              else if (fromTrack) cls = "btn btn-sm border-0 bg-info/25 text-info hover:bg-info/35";
-              else if (fromArtist)
-                cls = "btn btn-sm border-0 bg-secondary/25 text-secondary hover:bg-secondary/35";
-              return (
-                <button
-                  key={s.label}
-                  type="button"
-                  class={cls}
-                  title={
-                    fromTrack
-                      ? "Déjà couvert par le titre de référence"
-                      : fromArtist
-                        ? "Déjà couvert par l’artiste de référence"
-                        : undefined
+          <div class="relative">
+            <label class="input input-bordered flex w-full items-center gap-2 bg-base-200">
+              <Search size={16} class="shrink-0 opacity-50" />
+              <input
+                class="grow bg-transparent"
+                type="search"
+                placeholder="Rechercher un style (metal, rap, folk…)"
+                value={styleQuery}
+                disabled={loading}
+                onFocus={() => setStyleSearchOpen(true)}
+                onBlur={() => {
+                  window.setTimeout(() => setStyleSearchOpen(false), 150);
+                }}
+                onInput={(e) => {
+                  setStyleQuery(e.currentTarget.value);
+                  setStyleSearchOpen(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  const q = styleQuery.trim().toLowerCase();
+                  const hit = styleOptions.find(
+                    (s) =>
+                      !genres.includes(s.value) &&
+                      (s.label.toLowerCase().includes(q) ||
+                        s.value.toLowerCase().includes(q)),
+                  );
+                  if (hit) addStyle(hit.value);
+                }}
+              />
+            </label>
+            {styleSearchOpen && (
+              <ul class="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-base-content/15 bg-base-200 py-1 shadow-lg">
+                {(() => {
+                  const q = styleQuery.trim().toLowerCase();
+                  const hits = styleOptions.filter((s) => {
+                    if (genres.includes(s.value)) return false;
+                    if (!q) return true;
+                    return (
+                      s.label.toLowerCase().includes(q) ||
+                      s.value.toLowerCase().includes(q)
+                    );
+                  });
+                  const shown = q ? hits.slice(0, 8) : hits.slice(0, 6);
+                  if (!shown.length) {
+                    return (
+                      <li class="px-3 py-2 text-xs text-base-content/50">
+                        {q ? `Aucun style pour « ${styleQuery.trim()} »` : "Tous les styles sont déjà ajoutés"}
+                      </li>
+                    );
                   }
-                  onClick={() => toggleStyle(s.value)}
-                >
-                  {s.label}
-                  {fromTrack && !manual ? " · titre" : ""}
-                  {fromArtist && !manual && !fromTrack ? " · artiste" : ""}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              class={`btn btn-sm ${showCustom ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-              onClick={() => {
-                setShowCustom((v) => !v);
-                if (showCustom) setCustomGenre("");
-              }}
-            >
-              Personnalisé
-            </button>
+                  return shown.map((s) => (
+                    <li key={s.value}>
+                      <button
+                        type="button"
+                        class="w-full px-3 py-2 text-left text-sm hover:bg-primary/15"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => addStyle(s.value)}
+                      >
+                        {s.label}
+                      </button>
+                    </li>
+                  ));
+                })()}
+              </ul>
+            )}
           </div>
-          {resolvedGenres.length > 0 && (
-            <p class="text-xs text-primary">Forçage manuel : {formatGenres(resolvedGenres)}</p>
-          )}
-          {showCustom && (
-            <input
-              class="input input-bordered mt-2 w-full bg-base-200"
-              type="text"
-              placeholder="Ex. duo électro-rap aux influences orientales"
-              value={customGenre}
-              onInput={(e) => setCustomGenre(e.currentTarget.value)}
-            />
-          )}
         </fieldset>
 
         <fieldset class="space-y-2">
@@ -839,91 +1030,58 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
             );
           })()}
         </fieldset>
+      </ProfileSection>
 
-        <fieldset class="space-y-2">
-          <legend class="mb-1 text-sm text-base-content/60">Sexe / présentation</legend>
-          <p class="text-xs text-base-content/45">
-            Voix, portrait et bio collent à ce choix — ce n’est pas le style musical.
-          </p>
-          <div class="flex flex-wrap gap-2">
-            {ARTIST_GENDER_OPTIONS.map((g) => (
-              <button
-                key={g.value}
-                type="button"
-                class={`btn btn-sm ${gender === g.value ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-                disabled={loading}
-                onClick={() => {
-                  genderManualRef.current = true;
-                  setGender(g.value);
-                }}
-              >
-                {g.label}
-              </button>
-            ))}
-          </div>
-          {(() => {
-            const pick = isSelf ? styleArtistPicks[0] : styleArtistPick;
-            const inferred = inferGenderFromStyleRef(pick);
-            if (!inferred || inferred !== gender || genderManualRef.current || !pick?.name) {
-              return null;
+      <div class="space-y-3 rounded-2xl border border-base-content/10 bg-base-300/25 p-4 sm:p-5">
+        <h2 class="font-display text-lg font-semibold tracking-tight">Enregistrer</h2>
+        <p class="text-sm text-base-content/60">
+          {onSave
+            ? "Sauvegarder enregistre identité et style, sans toucher au portrait. Régénérer relance le visuel."
+            : "La création génère le profil et le portrait à partir de l’identité et du style ci-dessus."}
+        </p>
+        <div class="flex flex-wrap items-center gap-2">
+          {onSave && (
+            <button
+              type="button"
+              class="btn btn-primary gap-2"
+              disabled={loading || styleBusy || nameBlocked || !name.trim()}
+              onClick={handleSaveProfile}
+            >
+              {styleBusy ? <span class="loading loading-spinner loading-sm" /> : <Save size={18} />}
+              Sauvegarder
+            </button>
+          )}
+          <button
+            class={`btn gap-2 ${onSave ? "btn-ghost border border-base-content/15" : "btn-primary"}`}
+            disabled={
+              loading ||
+              styleBusy ||
+              nameBlocked ||
+              (isSelf &&
+                (!name.trim() ||
+                  !gender ||
+                  !age ||
+                  !photos.length ||
+                  !styleArtistPicks.length))
             }
-            return (
-              <p class="text-xs text-base-content/45">
-                {ARTIST_GENDER_LABELS[inferred]} proposé d’après {pick.name} — tu peux changer.
-              </p>
-            );
-          })()}
-        </fieldset>
-
-        <label class="form-control w-full">
-          <span class="label-text mb-1 text-sm text-base-content/60">
-            {isSelf ? "Univers / personnalité (optionnel)" : "Personnalité / univers (optionnel)"}
-          </span>
-          <textarea
-            class="textarea textarea-bordered w-full bg-base-200"
-            rows={3}
-            placeholder={
-              isSelf
-                ? "Histoire, vibe, thèmes que tu veux chanter…"
-                : "Origines, look, histoire… (pas le style musical — déjà choisi au-dessus)"
-            }
-            value={bioHint}
-            onInput={(e) => setBioHint(e.currentTarget.value)}
-          />
-        </label>
-
-        <button
-          class="btn btn-primary gap-2 self-start"
-          disabled={
-            loading ||
-            nameBlocked ||
-            (showCustom &&
-              !customGenre.trim() &&
-              genres.length === 0 &&
-              !isSelf &&
-              !hasStyleRef) ||
-            (isSelf &&
-              (!name.trim() ||
-                !gender ||
-                !age ||
-                !photos.length ||
-                !styleArtistPicks.length))
-          }
-          onClick={handleGenerate}
-        >
-          {loading ? <span class="loading loading-spinner loading-sm" /> : <UserRound size={18} />}
-          {loading
-            ? isSelf
-              ? "Création de ton profil…"
-              : "Profil + portrait…"
-            : isSelf
-              ? "Créer mon profil artiste"
-              : "Générer le profil & le visuel"}
-        </button>
+            onClick={handleGenerate}
+          >
+            {loading ? <span class="loading loading-spinner loading-sm" /> : <UserRound size={18} />}
+            {loading
+              ? isSelf
+                ? "Création du profil…"
+                : "Profil + portrait…"
+              : isSelf
+                ? "Créer le profil"
+                : onSave
+                  ? "Régénérer le profil & le visuel"
+                  : "Générer le profil & le visuel"}
+          </button>
+        </div>
       </div>
 
       {artist && (
-        <article class="animate-rise space-y-5 border-t border-base-content/10 pt-5">
+        <ProfileSection title="Aperçu" hint="Ce qui est déjà sur la fiche — portrait, DNA, look.">
           <div class="grid gap-6 md:grid-cols-[240px_1fr] md:items-start">
             <figure class="space-y-2">
               {(() => {
@@ -1078,16 +1236,26 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                   ) : null}
                 </p>
               )}
-              {artist.styleLock?.genreSummary && (
+              {artist.styleLock?.genreSummary && !dnaStale && (
                 <p class="text-sm text-base-content/55">
                   Style verrouillé :{" "}
-                  <span class="text-secondary">{artist.styleLock.genreSummary}</span>
+                  <span class="text-secondary">
+                    {uniqueGenreLabels(artist.styleLock.genreSummary).join(" · ") ||
+                      artist.styleLock.genreSummary}
+                  </span>
                   {artist.styleLock.audioListened ? (
                     <span class="ml-2 text-xs text-success">· preview écouté</span>
                   ) : null}
                 </p>
               )}
-              {(artist.styleLock?.timbre ||
+              {dnaStale && (
+                <p class="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                  Le DNA sonore n’est plus celui de ce titre. Clique « Appliquer ce titre au DNA »
+                  pour recalculer timbre, groove et tempo à partir de la preview.
+                </p>
+              )}
+              {!dnaStale &&
+                (artist.styleLock?.timbre ||
                 artist.styleLock?.rhythmFeel ||
                 artist.styleLock?.bpm ||
                 (artist.styleLock?.instruments || []).length > 0) && (
@@ -1136,7 +1304,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
                   )}
                 </div>
               )}
-              {artist.styleLock?.production && (
+              {!dnaStale && artist.styleLock?.production && (
                 <p class="text-xs text-base-content/45">{artist.styleLock.production}</p>
               )}
 
@@ -1181,7 +1349,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onPatc
               )}
             </div>
           </div>
-        </article>
+        </ProfileSection>
       )}
     </section>
   );

@@ -1,0 +1,13 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import ArtistCreatePage from "../../components/ArtistCreatePage.jsx";
+
+export const prerender = false;
+
+const modeParam = Astro.url.searchParams.get("mode");
+const initialMode = modeParam === "self" || modeParam === "fiction" ? modeParam : undefined;
+---
+
+<Layout title="SONOZZ — Profil artiste" description="Profil artiste SONOZZ : identité et style musical.">
+  <ArtistCreatePage client:load initialMode={initialMode} />
+</Layout>

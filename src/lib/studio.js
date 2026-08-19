@@ -2,14 +2,50 @@ import { isMetalLane } from "./musicLane.js";
 
 export const STEPS = [
   { id: 1, key: "stats", label: "Stats", short: "Analytics" },
-  { id: 2, key: "artist", label: "Artiste", short: "Profil" },
-  { id: 3, key: "lyrics", label: "Paroles", short: "Texte" },
-  { id: 4, key: "tracks", label: "Morceaux", short: "Audio" },
-  { id: 5, key: "covers", label: "Jaquettes", short: "Visuel" },
-  { id: 6, key: "distrokid", label: "ONCE", short: "Release" },
-  { id: 7, key: "clip", label: "Clips", short: "Vidéo" },
-  { id: 8, key: "social", label: "Réseaux", short: "Pub" },
+  { id: 2, key: "lyrics", label: "Paroles", short: "Texte" },
+  { id: 3, key: "tracks", label: "Morceaux", short: "Audio" },
+  { id: 4, key: "covers", label: "Jaquettes", short: "Visuel" },
+  { id: 5, key: "distrokid", label: "ONCE", short: "Release" },
+  { id: 6, key: "clip", label: "Clips", short: "Vidéo" },
+  { id: 7, key: "social", label: "Réseaux", short: "Pub" },
 ];
+
+/** Ids d’étape Studio (sans création d’artiste). */
+export const STUDIO_STEP = {
+  stats: 1,
+  lyrics: 2,
+  tracks: 3,
+  covers: 4,
+  distrokid: 5,
+  clip: 6,
+  social: 7,
+};
+
+export function studioHref(projectId, stepKey = "tracks") {
+  const step = STUDIO_STEP[stepKey] || STUDIO_STEP.tracks;
+  const q = new URLSearchParams();
+  if (projectId) q.set("project", String(projectId));
+  q.set("step", String(step));
+  return `/?${q.toString()}`;
+}
+
+export function artistHubHref(slug) {
+  const s = String(slug || "").trim();
+  return s ? `/artiste/${encodeURIComponent(s)}` : "/artistes";
+}
+
+export function artistEditHref(slug) {
+  const s = String(slug || "").trim();
+  return s ? `/artiste/${encodeURIComponent(s)}/editer` : "/artiste/nouveau";
+}
+
+/** Fiche artiste, onglet Album (création) ou album ouvert dans le catalogue. */
+export function artistAlbumHref(slug, leadId = "") {
+  const base = artistHubHref(slug);
+  const id = String(leadId || "").trim();
+  if (base === "/artistes") return base;
+  return id ? `${base}#album-${id}` : `${base}#album`;
+}
 
 /** Styles musicaux proposés à la création d'artiste (valeur = hint IA). */
 export const MUSIC_STYLES = [
@@ -141,7 +177,7 @@ function looksLikeGenreToken(raw) {
 export function styleGenreChips(rawList = []) {
   const chips = [];
   const seen = new Set();
-  for (const raw of Array.isArray(rawList) ? rawList : [rawList]) {
+  for (const raw of parseGenres(rawList)) {
     const g = String(raw || "").trim();
     if (!g || !looksLikeGenreToken(g)) continue;
     const mapped = matchMusicStyleFromGenre(g);
@@ -158,15 +194,39 @@ export function styleGenreChips(rawList = []) {
   return chips;
 }
 
-/** Normalise genres (tableau ou string legacy) → string[]. */
+function displayGenreToken(token) {
+  const t = String(token || "").trim();
+  if (/[A-Z]/.test(t)) return t;
+  return t.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Labels d’affichage : découpe « a × b », ignore la casse, une pastille par genre.
+ */
+export function uniqueGenreLabels(rawList = [], { limit = 8 } = {}) {
+  const seen = new Map();
+  for (const token of parseGenres(rawList)) {
+    if (!looksLikeGenreToken(token)) continue;
+    const key = token.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!key) continue;
+    const prev = seen.get(key);
+    const next = displayGenreToken(token);
+    if (!prev || ((next.match(/[A-Z]/g) || []).length > (prev.match(/[A-Z]/g) || []).length)) {
+      seen.set(key, next);
+    }
+  }
+  return [...seen.values()].slice(0, limit);
+}
+
+/** Normalise genres (tableau ou string legacy) → string[]. Découpe aussi « a × b ». */
 export function parseGenres(genreOrGenres) {
   if (Array.isArray(genreOrGenres)) {
-    return genreOrGenres.map((g) => String(g || "").trim()).filter(Boolean);
+    return genreOrGenres.flatMap((g) => parseGenres(g));
   }
   const raw = String(genreOrGenres || "").trim();
   if (!raw) return [];
   return raw
-    .split(/\s*[×xX|/]\s*|\s*,\s*/)
+    .split(/\s*[×/,|]\s*|\s+x\s+|\s+·\s+/i)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -174,6 +234,77 @@ export function parseGenres(genreOrGenres) {
 /** Affiche / prompt IA : "Rap × Électro". */
 export function formatGenres(genreOrGenres) {
   return parseGenres(genreOrGenres).join(" × ");
+}
+
+/** Label court d’une value MUSIC_STYLES (ou le texte tel quel). */
+export function styleLabelForValue(value) {
+  const v = String(value || "").trim();
+  if (!v) return "";
+  const hit = MUSIC_STYLES.find((s) => s.value === v);
+  return hit?.label || v;
+}
+
+/**
+ * Couches de mix UI : base (titre / artiste) + ajouts manuels / perso.
+ * Les ajouts déjà présents dans la base sont omis (pas de doublon).
+ */
+export function describeStyleMix({
+  trackChips = [],
+  artistChips = [],
+  extras = [],
+  custom = "",
+} = {}) {
+  const base = [
+    ...trackChips.map((c) => ({
+      label: c.label,
+      value: c.value,
+      source: "track",
+    })),
+    ...artistChips.map((c) => ({
+      label: c.label,
+      value: c.value,
+      source: "artist",
+    })),
+  ];
+  const baseKeys = new Set(
+    base.flatMap((c) => [
+      String(c.label || "").toLowerCase(),
+      String(c.value || "").toLowerCase(),
+    ]),
+  );
+  const extraItems = [];
+  const seen = new Set();
+  for (const raw of extras) {
+    const value = String(raw || "").trim();
+    if (!value) continue;
+    const label = styleLabelForValue(value);
+    const key = label.toLowerCase();
+    if (baseKeys.has(key) || baseKeys.has(value.toLowerCase()) || seen.has(key)) continue;
+    seen.add(key);
+    extraItems.push({ label, value, source: "extra" });
+  }
+  const customTrim = String(custom || "").trim();
+  if (customTrim) {
+    const key = customTrim.toLowerCase();
+    if (!baseKeys.has(key) && !seen.has(key)) {
+      extraItems.push({ label: customTrim, value: customTrim, source: "custom" });
+    }
+  }
+  return { base, extras: extraItems };
+}
+
+/** Résumé lisible du mix (base ∪ ajouts). */
+export function formatStyleMixSummary(mix) {
+  const base = (mix?.base || []).map((c) =>
+    c.source === "track" ? `${c.label} · titre` : `${c.label} · artiste`,
+  );
+  const extras = (mix?.extras || []).map((c) =>
+    c.source === "custom" ? `« ${c.label} »` : c.label,
+  );
+  if (!base.length && !extras.length) return "";
+  if (!extras.length) return `Base : ${base.join(" + ")}`;
+  if (!base.length) return `Ajouts : ${extras.join(" + ")}`;
+  return `Mix : ${base.join(" + ")}  +  ${extras.join(" + ")}`;
 }
 /** Langues des paroles / release. */
 export const MUSIC_LANGUAGES = [

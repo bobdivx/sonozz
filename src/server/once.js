@@ -618,7 +618,7 @@ async function resolveAudioFileUrl(token, track) {
 
   if (!audioUrl || !(audioUrl.startsWith("http://") || audioUrl.startsWith("https://"))) {
     throw new Error(
-      "Audio manquant ou non public — génère / importe un morceau (étape 4) avant de publier sur ONCE.",
+      "Audio manquant ou non public — génère / importe un morceau (étape Morceaux) avant de publier sur ONCE.",
     );
   }
 

@@ -22,7 +22,7 @@ import ArtistAlbumSection from "./ArtistAlbumSection.jsx";
 import { api } from "../lib/apiClient.js";
 import { loadKeys } from "../lib/keys.js";
 import { listArtistImageUrl } from "../lib/artistPhotos.js";
-import { confirmDeleteProject, languageLabel } from "../lib/studio.js";
+import { confirmDeleteProject, languageLabel, studioHref, artistEditHref, uniqueGenreLabels } from "../lib/studio.js";
 import { organizeArtistReleases } from "../lib/albumTracks.js";
 import { playTracks } from "../lib/playEngine.js";
 import {
@@ -32,7 +32,8 @@ import {
 } from "../lib/playSession.js";
 
 const TABS = [
-  { id: "titres", label: "Titres", icon: Music2 },
+  { id: "titres", label: "Catalogue", icon: Music2 },
+  { id: "album", label: "Album", icon: Library },
   { id: "coach", label: "Coach", icon: Sparkles },
   { id: "style", label: "Style", icon: Palette },
   { id: "chiffres", label: "Chiffres", icon: BarChart3 },
@@ -82,7 +83,7 @@ function releasePhase(release, delivery) {
   if (release.hasAudio) {
     return { label: "Audio prêt", cls: "bg-info/15 text-info" };
   }
-  return { label: "En studio", cls: "bg-base-content/10 text-base-content/55" };
+  return { label: "Brouillon", cls: "bg-base-content/10 text-base-content/55" };
 }
 
 function toPlayTracks(list, extras = {}) {
@@ -157,7 +158,7 @@ function CatalogTrackCard({
         </button>
       ) : (
         <a
-          href={`/?project=${r.id}`}
+          href={studioHref(r.id, "lyrics")}
           class="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-base-300 sm:h-20 sm:w-20"
         >
           {r.coverUrl ? (
@@ -207,8 +208,8 @@ function CatalogTrackCard({
               ONCE
             </a>
           )}
-          <a class="btn btn-ghost btn-xs rounded-full" href={`/?project=${r.id}`}>
-            Studio
+          <a class="btn btn-ghost btn-xs rounded-full" href={studioHref(r.id, "lyrics")}>
+            Ouvrir le morceau
           </a>
           <button
             type="button"
@@ -238,11 +239,13 @@ function readHashState() {
 
 function styleRowsFromProfile(profile = {}) {
   const lock = profile.styleLock || {};
-  const genres = Array.isArray(profile.genres)
-    ? profile.genres.filter(Boolean)
-    : profile.genre
-      ? [profile.genre]
-      : [];
+  const genres = uniqueGenreLabels(
+    [
+      ...(Array.isArray(profile.genres) ? profile.genres : profile.genre ? [profile.genre] : []),
+      lock.genreSummary,
+    ],
+    { limit: 6 },
+  );
   const refs =
     Array.isArray(profile.styleArtists) && profile.styleArtists.length
       ? profile.styleArtists
@@ -397,7 +400,7 @@ export default function ArtistHub({ slug }) {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Création impossible");
-      window.location.href = json.studioUrl || `/?project=${json.projectId}&step=3`;
+      window.location.href = json.studioUrl || studioHref(json.projectId, "lyrics");
     } catch (e) {
       setError(e.message);
       setBusy(false);
@@ -405,22 +408,7 @@ export default function ArtistHub({ slug }) {
   }
 
   async function openStyleEditor() {
-    setBusy(true);
-    setError("");
-    setMsg("");
-    try {
-      const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "edit-style" }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || "Ouverture impossible");
-      window.location.href = json.studioUrl || `/?project=${json.projectId}&step=2`;
-    } catch (e) {
-      setError(e.message);
-      setBusy(false);
-    }
+    window.location.href = artistEditHref(slug);
   }
 
   async function runCareerAdvice(force = false) {
@@ -581,6 +569,9 @@ export default function ArtistHub({ slug }) {
   const career = data?.career || stats.career || null;
   const releases = data?.releases || [];
   const { albums, singles } = organizeArtistReleases(releases);
+  const canCreateAlbum = releases.some(
+    (r) => r.hasAudio && r.hasLyrics && !r.albumStatus && !r.albumLeadId,
+  );
   const streams = stats.streams || {};
   const deliveryMap = stats.delivery || {};
   const releaseStreamsMap = stats.releaseStreams || {};
@@ -624,9 +615,9 @@ export default function ArtistHub({ slug }) {
     : !releases.length
       ? {
           kicker: "Premier pas",
-          title: "Pose le premier titre",
-          text: "Même voix, même univers — on enchaîne paroles puis audio dans le studio.",
-          cta: "Composer",
+          title: "Créer le premier titre",
+          text: "On ouvre le Studio pour les paroles et l’audio — le style reste celui de cette fiche.",
+          cta: "Nouveau titre",
           onClick: () => createTrack(),
         }
       : dueToday.some((i) => i.type === "promote") && schedulePreview?.canRun
@@ -642,7 +633,7 @@ export default function ArtistHub({ slug }) {
               kicker: "Le coach",
               title: career.nextSingle.titleHint || "Nouveau single",
               text: career.nextSingle.theme,
-              cta: "Lancer dans le studio",
+              cta: "Nouveau titre",
               onClick: () => createTrack(career.nextSingle.theme),
             }
           : career?.verdict === "publish" && unisonHref
@@ -700,12 +691,7 @@ export default function ArtistHub({ slug }) {
                 </figure>
                 <div class="flex flex-col justify-end gap-4 p-5 sm:p-7">
                   <div class="flex flex-wrap gap-1.5">
-                    {(style.genres.slice(0, 3).length
-                      ? style.genres.slice(0, 3)
-                      : style.genreSummary
-                        ? [style.genreSummary]
-                        : []
-                    ).map((g) => (
+                    {style.genres.slice(0, 4).map((g) => (
                       <span
                         key={g}
                         class="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary"
@@ -780,10 +766,17 @@ export default function ArtistHub({ slug }) {
                     <button
                       type="button"
                       class="btn btn-ghost rounded-full border border-base-content/15 gap-2"
+                      onClick={() => selectTab("album")}
+                    >
+                      <Library size={16} /> Créer un album
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost rounded-full border border-base-content/15 gap-2"
                       disabled={busy}
                       onClick={openStyleEditor}
                     >
-                      <Pencil size={14} /> Style
+                      <Pencil size={14} /> Modifier le profil
                     </button>
                   </div>
                 </div>
@@ -863,7 +856,7 @@ export default function ArtistHub({ slug }) {
                           ? `${albums.length ? `${albums.length} album${albums.length > 1 ? "s" : ""}` : ""}${
                               albums.length && singles.length ? " · " : ""
                             }${singles.length ? `${singles.length} single${singles.length > 1 ? "s" : ""}` : ""}`
-                          : "Rien pour l’instant. Le premier titre lance vraiment l’artiste."}
+                          : "Rien pour l’instant. Un titre s’écrit dans le Studio ; un album se lance ici, après un single audio."}
                       </p>
                     </div>
                     <button
@@ -872,7 +865,7 @@ export default function ArtistHub({ slug }) {
                       disabled={busy}
                       onClick={() => createTrack()}
                     >
-                      <Plus size={14} /> Ajouter
+                      <Plus size={14} /> Nouveau titre
                     </button>
                   </div>
 
@@ -886,9 +879,9 @@ export default function ArtistHub({ slug }) {
                       <span class="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/20 text-primary">
                         <AudioLines size={26} />
                       </span>
-                      <span class="font-display text-xl font-bold">Composer le premier titre</span>
+                      <span class="font-display text-xl font-bold">Créer le premier titre</span>
                       <span class="max-w-sm text-sm text-base-content/55">
-                        Paroles, voix, pochette — tout reste calé sur cet artiste.
+                        Ouvre le Studio (paroles, puis audio). L’album se crée ensuite dans l’onglet Album.
                       </span>
                     </button>
                   ) : (
@@ -1048,9 +1041,42 @@ export default function ArtistHub({ slug }) {
                     </div>
                   )}
                 </section>
-
-                <ArtistAlbumSection slug={data.slug} releases={releases} createOnly />
               </div>
+            )}
+
+            {tab === "album" && (
+              <section class="space-y-4">
+                <div>
+                  <h2 class="font-display text-2xl font-bold">Album</h2>
+                  <p class="text-sm text-base-content/55">
+                    Part d’un single déjà enregistré (paroles + audio). Les pistes se fabriquent ici ;
+                    pour peaufiner un titre, ouvre-le dans le Studio.
+                  </p>
+                </div>
+                {canCreateAlbum ? (
+                  <ArtistAlbumSection
+                    slug={data.slug}
+                    releases={releases}
+                    createOnly
+                    embedded
+                  />
+                ) : (
+                  <div class="rounded-3xl border border-dashed border-base-content/15 bg-base-300/20 px-5 py-8 text-center">
+                    <p class="text-sm text-base-content/60">
+                      Il faut d’abord un single avec paroles et audio. L’album part de ce titre, sur
+                      cette fiche — pas dans le Studio.
+                    </p>
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-sm mt-4 gap-1 rounded-full"
+                      disabled={busy}
+                      onClick={() => createTrack()}
+                    >
+                      <Plus size={14} /> Nouveau titre
+                    </button>
+                  </div>
+                )}
+              </section>
             )}
 
             {tab === "coach" && (
@@ -1119,13 +1145,13 @@ export default function ArtistHub({ slug }) {
                               disabled={busy}
                               onClick={() => createTrack(career.nextSingle.theme)}
                             >
-                              Studio
+                              Ouvrir le Studio
                             </button>
                           )}
                           {item.type === "promote" && career?.releaseFocus?.id && (
                             <a
                               class="btn btn-outline btn-xs rounded-full"
-                              href={`/?project=${career.releaseFocus.id}&step=7`}
+                              href={studioHref(career.releaseFocus.id, "clip")}
                             >
                               Clip
                             </a>
@@ -1259,7 +1285,7 @@ export default function ArtistHub({ slug }) {
                           disabled={busy}
                           onClick={() => createTrack(career.nextSingle.theme)}
                         >
-                          <AudioLines size={14} /> Lancer ce single
+                          <AudioLines size={14} /> Nouveau titre
                         </button>
                       )}
                     </div>
@@ -1283,11 +1309,11 @@ export default function ArtistHub({ slug }) {
                     disabled={busy}
                     onClick={openStyleEditor}
                   >
-                    <Pencil size={14} /> Modifier
+                    <Pencil size={14} /> Modifier le profil
                   </button>
                 </div>
 
-                {!style.genreSummary && !style.refs.length ? (
+                {!style.genreSummary && !style.refs.length && !style.genres.length ? (
                   <button
                     type="button"
                     class="w-full rounded-3xl border border-dashed border-base-content/20 px-6 py-12 text-center"
@@ -1297,18 +1323,13 @@ export default function ArtistHub({ slug }) {
                     <Palette size={22} class="mx-auto mb-2 text-primary" />
                     <p class="font-display text-lg font-bold">Définir le style</p>
                     <p class="mx-auto mt-1 max-w-sm text-sm text-base-content/55">
-                      Choisis un artiste ou un titre de référence dans le studio.
+                      Références, voix et photos se règlent sur Modifier le profil — pas dans le Studio.
                     </p>
                   </button>
                 ) : (
                   <div class="space-y-5 rounded-3xl border border-base-content/10 bg-base-300/40 p-5">
                     <div class="flex flex-wrap gap-2">
-                      {(style.genres.length
-                        ? style.genres
-                        : style.genreSummary
-                          ? [style.genreSummary]
-                          : []
-                      ).map((g) => (
+                      {style.genres.map((g) => (
                         <span
                           key={g}
                           class="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary"

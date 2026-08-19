@@ -33,7 +33,7 @@ import { detectBeatsFromUrl, pickCutPoints } from "./beatDetect.js";
 import { resolveVideoBlobUrl, resolveVideoBlobUrls } from "./videoResolve.js";
 import { extractTrackExcerpt } from "./audioExcerpt.js";
 import { persistAudioRemote } from "./audioResolve.js";
-import { emptyProject } from "./studio.js";
+import { emptyProject, studioHref } from "./studio.js";
 import { runAlbumJob } from "./runAlbumJob.js";
 import { appendVersion, normalizeProjectVersions } from "./versionsModel.js";
 import { cancelledAlbumState } from "./albumTracks.js";
@@ -390,7 +390,7 @@ export function continueVeoAfterStart({
     label: label || `Short Veo${ctx.track?.title ? ` · ${ctx.track.title}` : ""}`,
     projectId: ctx.projectId,
     clipId: ctx.clipId,
-    href: ctx.projectId ? `/?project=${ctx.projectId}&step=7` : "/?step=7",
+    href: studioHref(ctx.projectId, "clip"),
     operationName: started.operationName,
     model: started.model,
     mode: started.mode,
@@ -430,7 +430,7 @@ export function startSeedanceJob({
     label: label || `Seedance${ctx.track?.title ? ` · ${ctx.track.title}` : ""}`,
     projectId: ctx.projectId,
     clipId: ctx.clipId,
-    href: ctx.projectId ? `/?project=${ctx.projectId}&step=7` : "/?step=7",
+    href: studioHref(ctx.projectId, "clip"),
     predictionId: null,
     shotIndex: 0,
     shotTotal,
@@ -474,7 +474,7 @@ export function startWan2gpJob({
     label: label || `Wan2GP${ctx.track?.title ? ` · ${ctx.track.title}` : ""}`,
     projectId: ctx.projectId,
     clipId: ctx.clipId,
-    href: ctx.projectId ? `/?project=${ctx.projectId}&step=7` : "/?step=7",
+    href: studioHref(ctx.projectId, "clip"),
     predictionId: null,
     shotIndex: 0,
     shotTotal,
@@ -637,7 +637,7 @@ export function startAlbumJob({
     projectId,
     totalCount,
     resume: Boolean(resume),
-    href: href || `/?project=${projectId}&step=4`,
+    href: href || studioHref(projectId, "tracks"),
     remoteAlbum: false,
   });
   ensureRunning(id);
@@ -862,7 +862,7 @@ export function startMusicTrackJob({
     generationId: null,
     musicKind: null,
     draft: null,
-    href: href || `/?project=${projectId}&step=4`,
+    href: href || studioHref(projectId, "tracks"),
   });
   ensureRunning(id);
   return id;

@@ -5,6 +5,7 @@
  */
 
 import { isAlbumStale } from "./albumTracks.js";
+import { artistAlbumHref, studioHref } from "./studio.js";
 import { getJob, listJobs, patchJob, removeJobsWhere, upsertJob } from "./jobStore.js";
 
 /** Sans live Turso depuis ce délai, le miroir n’affiche plus « en cours ». */
@@ -126,8 +127,16 @@ export function albumLiveSummary(album) {
   };
 }
 
+function albumDockHref(projectId, artistSlug, existingHref) {
+  const slug = String(artistSlug || "").trim();
+  if (slug) return artistAlbumHref(slug, projectId);
+  if (existingHref && String(existingHref).includes("/artiste/")) return existingHref;
+  return studioHref(projectId, "tracks");
+}
+
 function applyMirrorFields(album, projectId, summary, extra = {}) {
-  const href = projectId ? `/?project=${projectId}&step=4` : "/?step=4";
+  const { artistSlug, ...rest } = extra;
+  const href = albumDockHref(projectId, artistSlug, extra.href);
   return {
     id: canonicalAlbumJobId(album, projectId),
     type: extra.type || "album",
@@ -135,10 +144,10 @@ function applyMirrorFields(album, projectId, summary, extra = {}) {
     message: summary.message,
     progress: summary.percent,
     projectId: projectId || undefined,
-    stepKey: "4",
-    href,
+    stepKey: "tracks",
     albumId: album.id,
-    ...extra,
+    ...rest,
+    href,
   };
 }
 
@@ -147,8 +156,9 @@ function applyMirrorFields(album, projectId, summary, extra = {}) {
  * Sur le client qui génère (job local sans remoteAlbum), on ne flippe pas le flag.
  * @param {object|null} album
  * @param {string|null} projectId
+ * @param {string} [artistSlug]
  */
-export function mirrorAlbumJob(album, projectId) {
+export function mirrorAlbumJob(album, projectId, artistSlug) {
   if (!album?.id) return null;
   const id = canonicalAlbumJobId(album, projectId);
   const summary = albumLiveSummary(album);
@@ -167,7 +177,7 @@ export function mirrorAlbumJob(album, projectId) {
         progress: summary.percent,
         message: summary.message,
         label: summary.label,
-        href: projectId ? `/?project=${projectId}&step=4` : "/?step=4",
+        href: albumDockHref(projectId, artistSlug, existing.href),
         albumId: album.id,
       });
     }
@@ -202,6 +212,7 @@ export function mirrorAlbumJob(album, projectId) {
         type: "album",
         status: "running",
         remoteAlbum: true,
+        artistSlug,
       }),
     );
   }
@@ -219,6 +230,7 @@ export function mirrorAlbumJob(album, projectId) {
       phase: status === "done" ? "done" : status,
       progress: stale ? summary.percent : 100,
       remoteAlbum: true,
+      artistSlug,
     }),
   );
 }

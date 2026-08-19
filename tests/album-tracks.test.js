@@ -19,15 +19,15 @@ describe("albumTracks", () => {
   it("Ouvrir pointe vers le projet enfant, pas le lead", () => {
     assert.equal(
       albumStudioHref({ role: "lead" }, "proj_lead"),
-      "/?project=proj_lead&step=4",
+      "/?project=proj_lead&step=3",
     );
     assert.equal(
       albumStudioHref({ role: "album", projectId: "proj_child" }, "proj_lead"),
-      "/?project=proj_child&step=4",
+      "/?project=proj_child&step=3",
     );
     assert.equal(
       albumStudioHref({ role: "album" }, "proj_lead"),
-      "/?project=proj_lead&step=4",
+      "/?project=proj_lead&step=3",
     );
   });
 

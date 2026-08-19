@@ -27,23 +27,39 @@ export default function ArtistsIndex() {
     <AppShell
       active="artistes"
       title="Tes artistes"
-      subtitle="Ouvre une fiche pour écouter, enchaîner un titre, ou suivre les stores."
+      subtitle="Ouvre une fiche pour le profil, le catalogue et les albums. Un morceau s’écrit dans le Studio."
     >
       <div class="mx-auto max-w-5xl space-y-8">
+        <div class="space-y-4">
         <a
-          href="/?step=2&mode=self"
+          href="/artiste/nouveau?mode=self"
           class="group flex items-center gap-4 overflow-hidden rounded-3xl border border-primary/30 bg-gradient-to-r from-primary/20 via-accent/10 to-secondary/15 p-4 transition hover:border-primary/60 sm:p-5"
         >
           <div class="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/25 text-primary transition group-hover:scale-105">
             <Plus size={26} />
           </div>
           <div class="min-w-0 flex-1">
-            <p class="font-display text-lg font-semibold sm:text-xl">Créer mon profil</p>
+            <p class="font-display text-lg font-semibold sm:text-xl">Profil artiste</p>
             <p class="text-sm text-base-content/60">
-              Photos, artistes aimés, ta voix — les morceaux colleront à ton son.
+              Identité (toi) d’un côté, style musical de l’autre.
             </p>
           </div>
         </a>
+        <a
+          href="/artiste/nouveau"
+          class="flex items-center gap-4 rounded-3xl border border-base-content/10 bg-base-200/40 p-4 transition hover:border-primary/40 sm:p-5"
+        >
+          <div class="flex h-16 w-16 items-center justify-center rounded-2xl bg-base-content/10 text-base-content/70">
+            <UserRound size={24} />
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="font-display text-lg font-semibold">Profil artiste fictionnel</p>
+            <p class="text-sm text-base-content/60">
+              Identité et style musical séparés — ensuite un titre (Studio) ou un album (fiche).
+            </p>
+          </div>
+        </a>
+        </div>
 
         {loading && (
           <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -97,7 +113,8 @@ export default function ArtistsIndex() {
 
         {!loading && artists.length === 0 && (
           <p class="rounded-2xl border border-dashed border-base-content/15 px-5 py-10 text-center text-base-content/55">
-            Aucun artiste pour l’instant — crée ton profil ou lance un pipeline depuis le Studio.
+            Aucun artiste pour l’instant — crée un profil ici. Les titres s’écrivent dans le Studio ;
+            les albums se lancent sur la fiche.
           </p>
         )}
       </div>

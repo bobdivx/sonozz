@@ -11,6 +11,7 @@ import {
 import { downloadBlob } from "../../lib/renderShort.js";
 import { api } from "../../lib/apiClient.js";
 import { loadKeys, saveKeysAsync } from "../../lib/keys.js";
+import { studioHref } from "../../lib/studio.js";
 import {
   ensureClipStorageKey,
   resolveClipBlob,
@@ -241,10 +242,10 @@ export default function SocialStep({
       type: "publish",
       label: "Diffusion réseaux",
       projectId,
-      stepKey: "8",
+      stepKey: "social",
       message: "Publication en cours…",
       progress: 15,
-      href: projectId ? `/?project=${projectId}&step=8` : "/?step=8",
+      href: studioHref(projectId, "social"),
     });
     try {
       const useRemoteOnly =

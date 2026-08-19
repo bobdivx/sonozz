@@ -121,6 +121,19 @@ describe("albumJobMirror", () => {
     assert.equal(listJobs().length, 0);
   });
 
+  it("pointe le dock vers la fiche artiste si slug fourni", () => {
+    const album = {
+      id: "alb_href",
+      title: "X",
+      status: "running",
+      updatedAt: new Date().toISOString(),
+      tracks: [],
+      live: { message: "go", percent: 10, label: "Album" },
+    };
+    const next = mirrorAlbumJob(album, "proj_href", "kaelen");
+    assert.equal(next.href, "/artiste/kaelen#album-proj_href");
+  });
+
   it("déduplique au boot les cartes déjà stockées", () => {
     upsertJob({
       id: "album-remote-alb_1",

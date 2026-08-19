@@ -110,7 +110,7 @@ function loadAudio(src) {
     a.onerror = () =>
       reject(
         new Error(
-          "Impossible de charger l’audio du morceau — lien mort ? Régénère/réimporte à l’étape 4.",
+          "Impossible de charger l’audio du morceau — lien mort ? Régénère/réimporte à l’étape Morceaux.",
         ),
       );
     a.src = src;
@@ -380,7 +380,7 @@ export async function assemblePromoShort({
   } catch (e) {
     throw new Error(
       e.message ||
-        "Impossible de charger l’audio du morceau — régénère ou réimporte à l’étape 4.",
+        "Impossible de charger l’audio du morceau — régénère ou réimporte à l’étape Morceaux.",
     );
   }
   audioEl.currentTime = 0;

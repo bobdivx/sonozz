@@ -31,6 +31,80 @@ function normalizeAge(value) {
   return Math.round(n);
 }
 
+/** Champs DNA hérités d’un ancien titre — à jeter dès que le seed change. */
+export const STYLE_LOCK_DNA_KEYS = [
+  "query",
+  "genreSummary",
+  "musicPrompt",
+  "vocalStyle",
+  "vocalRegister",
+  "timbre",
+  "rhythmFeel",
+  "tempoFeel",
+  "bpm",
+  "energy",
+  "mood",
+  "instruments",
+  "production",
+  "sonicKeywords",
+  "writingStyle",
+  "visualVibe",
+  "doNot",
+  "audioListened",
+  "previewUrl",
+  "albums",
+  "related",
+  "topTracks",
+  "genres",
+  "influences",
+];
+
+export function styleTrackKey(track) {
+  if (!track?.source || track.sourceId == null) return "";
+  return `${track.source}:${track.sourceId}`;
+}
+
+export function lockHasSonicDna(lock) {
+  if (!lock || typeof lock !== "object") return false;
+  return Boolean(
+    lock.timbre ||
+      lock.rhythmFeel ||
+      lock.tempoFeel ||
+      lock.bpm ||
+      (Array.isArray(lock.instruments) && lock.instruments.length) ||
+      lock.production,
+  );
+}
+
+export function stripStyleLockDna(lock = {}) {
+  const next = { ...lock };
+  for (const key of STYLE_LOCK_DNA_KEYS) delete next[key];
+  return next;
+}
+
+/** Applique un styleLock résolu (écoute preview) sans perdre les refs artistes. */
+export function artistPatchFromStyleLock(lock, prevArtist = {}) {
+  const prevRefs = prevArtist.styleLock?.refs;
+  const mergedLock = {
+    ...lock,
+    refs: Array.isArray(prevRefs) && prevRefs.length ? prevRefs : lock.refs,
+  };
+  const refName = mergedLock.matchedName || mergedLock.seedTrack?.artistName || "";
+  const styleNames = (Array.isArray(mergedLock.refs) ? mergedLock.refs : [])
+    .map((r) => r?.matchedName)
+    .filter(Boolean);
+  const patch = { styleLock: mergedLock };
+  if (refName || styleNames.length) {
+    patch.styleArtist = styleNames.length ? styleNames.join(" × ") : refName;
+    patch.styleArtists = styleNames.length ? styleNames : refName ? [refName] : [];
+  }
+  if (mergedLock.genreSummary) patch.genre = mergedLock.genreSummary;
+  if (Array.isArray(mergedLock.genres) && mergedLock.genres.length) {
+    patch.genres = mergedLock.genres;
+  }
+  return patch;
+}
+
 /**
  * Patch brouillon du profil artiste (mode + identité + refs).
  * Fusionne le styleLock existant pour ne pas perdre le DNA déjà généré.
@@ -69,7 +143,14 @@ export function buildArtistDraftPatch(fields = {}, prevArtist = {}) {
   }
 
   if (seedTrack) {
+    const prevKey = styleTrackKey(prevLock.seedTrack);
+    const nextKey = styleTrackKey(seedTrack);
     styleLock.seedTrack = seedTrack;
+    if (nextKey && prevKey !== nextKey) {
+      for (const key of STYLE_LOCK_DNA_KEYS) delete styleLock[key];
+      if (seedTrack.artistName) styleLock.matchedName = seedTrack.artistName;
+      if (seedTrack.image) styleLock.image = seedTrack.image;
+    }
   } else if (fields.styleTrackPick === null) {
     delete styleLock.seedTrack;
   }
@@ -121,11 +202,6 @@ function refKey(refs = []) {
     .join("|");
 }
 
-function trackKey(track) {
-  if (!track?.source || track.sourceId == null) return "";
-  return `${track.source}:${track.sourceId}`;
-}
-
 /** True si le patch ne change rien d’utile (évite un save au simple re-mount). */
 export function isUnchangedArtistDraft(patch = {}, prevArtist = {}) {
   const prev = prevArtist || {};
@@ -143,6 +219,9 @@ export function isUnchangedArtistDraft(patch = {}, prevArtist = {}) {
     if (nextGenres.join("\0") !== prevGenres.join("\0")) return false;
   }
   if (patch.styleLock?.refs && refKey(patch.styleLock.refs) !== refKey(prev.styleLock?.refs)) return false;
-  if (trackKey(patch.styleLock?.seedTrack) !== trackKey(prev.styleLock?.seedTrack)) return false;
+  if (styleTrackKey(patch.styleLock?.seedTrack) !== styleTrackKey(prev.styleLock?.seedTrack)) return false;
+  if (lockHasSonicDna(prev.styleLock) && !lockHasSonicDna(patch.styleLock) && patch.styleLock) {
+    return false;
+  }
   return true;
 }

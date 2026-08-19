@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { catalogGenresToStyleValues, matchMusicStyleFromGenre, inferLanguageFromStyleRef, styleGenreChips } from "../src/lib/studio.js";
+import { catalogGenresToStyleValues, matchMusicStyleFromGenre, inferLanguageFromStyleRef, styleGenreChips, uniqueGenreLabels, describeStyleMix, formatStyleMixSummary } from "../src/lib/studio.js";
 
 describe("matchMusicStyleFromGenre", () => {
   it("mappe alternative metal vers Metal, pas Indie", () => {
@@ -33,6 +33,30 @@ describe("styleGenreChips", () => {
       chips.map((c) => c.label),
       ["Death metal", "Metal"],
     );
+  });
+
+  it("découpe un résumé collé avec ×", () => {
+    const chips = styleGenreChips(
+      "hard rock ballad × acoustic rock × Hard Rock Ballad × Melodic Metal × Acoustic Rock",
+    );
+    const labels = chips.map((c) => c.label);
+    assert.ok(labels.includes("Metal"));
+    assert.equal(labels.filter((l) => /^rock$/i.test(l)).length, 0);
+    assert.equal(new Set(labels.map((l) => l.toLowerCase())).size, labels.length);
+  });
+});
+
+describe("uniqueGenreLabels", () => {
+  it("ignore la casse et découpe les ×", () => {
+    const labels = uniqueGenreLabels(
+      "hard rock ballad × acoustic rock × melancholic rock × Hard Rock Ballad × Melodic Metal × Acoustic Rock",
+    );
+    assert.deepEqual(labels, [
+      "Hard Rock Ballad",
+      "Acoustic Rock",
+      "Melancholic Rock",
+      "Melodic Metal",
+    ]);
   });
 });
 
@@ -76,5 +100,39 @@ describe("inferLanguageFromStyleRef", () => {
 
   it("normalise United States MusicBrainz vers US → en", () => {
     assert.equal(inferLanguageFromStyleRef({ country: "United States" }), "en");
+  });
+});
+
+describe("describeStyleMix", () => {
+  it("mélange titre + artiste + ajouts sans écraser la base", () => {
+    const mix = describeStyleMix({
+      trackChips: [{ label: "Metal", value: "Metal / Hard rock" }],
+      artistChips: [{ label: "Rock", value: "Rock / Indie rock" }],
+      extras: ["Folk / Acoustique"],
+      custom: "groove oriental",
+    });
+    assert.deepEqual(
+      mix.base.map((c) => `${c.label}:${c.source}`),
+      ["Metal:track", "Rock:artist"],
+    );
+    assert.deepEqual(
+      mix.extras.map((c) => `${c.label}:${c.source}`),
+      ["Folk:extra", "groove oriental:custom"],
+    );
+    assert.equal(
+      formatStyleMixSummary(mix),
+      "Mix : Metal · titre + Rock · artiste  +  Folk + « groove oriental »",
+    );
+  });
+
+  it("n’ajoute pas un extra déjà présent dans la base", () => {
+    const mix = describeStyleMix({
+      trackChips: [{ label: "Metal", value: "Metal / Hard rock" }],
+      extras: ["Metal / Hard rock", "Folk / Acoustique"],
+    });
+    assert.deepEqual(
+      mix.extras.map((c) => c.label),
+      ["Folk"],
+    );
   });
 });

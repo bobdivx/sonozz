@@ -66,7 +66,7 @@ export default function AlbumAutonomePanel({
           </p>
           <p class="mt-1 text-xs text-base-content/60">
             {manageMode
-              ? "Ajoute, retire, reprends une génération ou ouvre chaque piste dans le studio."
+              ? "Ajoute, retire, reprends une génération ou ouvre chaque piste dans le Studio."
               : (
                 <>
                   À partir du single lead
@@ -216,7 +216,7 @@ export default function AlbumAutonomePanel({
                     class="btn btn-ghost btn-xs"
                     onClick={() => onOpenTrack(entry)}
                   >
-                    Ouvrir
+                    Ouvrir dans le Studio
                   </button>
                 )}
                 <button

@@ -3,6 +3,7 @@ import { llmJson, requireTextLlm } from "./llm.js";
 import { listenArtistPreviewDna } from "./musicListen.js";
 import { inferLanguageFromStyleRef, normalizeCatalogCountry } from "../lib/studio.js";
 import { parseGenderCode } from "../lib/artistGender.js";
+import { withKnownArtistLane } from "../lib/musicLane.js";
 
 function norm(s) {
   return String(s || "")
@@ -777,7 +778,8 @@ ${JSON.stringify(
 )}
 
 Genres déjà connus: ${uniqueGenres.join(", ") || "(aucun)"}
-ATTENTION catalogues: iTunes/Apple classent souvent le metal extrême (death, black, grind) comme « Rock ». Si l'artiste est du death/black/thrash metal, genres DOIT être le sous-genre précis (Death Metal, Brutal Death Metal…) — JAMAIS « Rock » ou « Pop » générique.
+ATTENTION catalogues: iTunes/Apple classent souvent le metal (death, black, thrash, heavy) comme « Rock ». Si l'artiste est Metallica, Slayer, Megadeth, Cannibal Corpse, etc., genres DOIT être le sous-genre réel (Thrash Metal, Heavy Metal, Death Metal…) — JAMAIS « Rock », « Pop », « acoustic rock » ou « hard rock ballad » comme genre principal.
+Si un titre SEED est une ballade atypique (ex. Nothing Else Matters, The Unforgiven), décris-la comme arrangement de CE titre, mais le genreSummary du GROUPE reste thrash/heavy metal (downpicking, palm mute, voix rhythmique Hetfield). Ne résume JAMAIS Metallica comme un groupe de ballades acoustiques.
 ${audioBlock}
 
 Retourne un LOCK STYLE strict pour un artiste FICTIONNEL dans EXACTEMENT la même lane sonore (groove, timbre, écriture, prod).
@@ -1010,7 +1012,7 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
 
   const bpm = lock.bpm || audioDna?.bpmEstimate || null;
 
-  return {
+  return withKnownArtistLane({
     query: query || catalog.name,
     matchedName: catalog.name,
     source: catalog.source,
@@ -1063,7 +1065,7 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
     ]
       .filter(Boolean)
       .join(", "),
-  };
+  });
 }
 
 function uniqStrings(items = [], max = 12) {
@@ -1713,7 +1715,7 @@ export async function resolveStyleTrackReference(keys, pick) {
     image: track.image || null,
   };
 
-  return {
+  return withKnownArtistLane({
     query: queryLabel,
     matchedName: catalog.name,
     source: track.source,
@@ -1761,7 +1763,7 @@ export async function resolveStyleTrackReference(keys, pick) {
     ]
       .filter(Boolean)
       .join(", "),
-  };
+  });
 }
 
 function httpPreviewUrl(raw) {

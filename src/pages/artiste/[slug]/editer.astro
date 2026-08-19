@@ -1,0 +1,12 @@
+---
+import Layout from "../../../layouts/Layout.astro";
+import ArtistCreatePage from "../../../components/ArtistCreatePage.jsx";
+
+export const prerender = false;
+
+const { slug } = Astro.params;
+---
+
+<Layout title={`SONOZZ — Profil artiste`} description={`Profil artiste ${slug} : identité et style musical.`}>
+  <ArtistCreatePage client:load slug={slug} />
+</Layout>

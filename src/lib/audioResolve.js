@@ -156,7 +156,7 @@ export async function resolveAudioAsset(audioUrl) {
       throw new Error(
         e.message ||
           lastErr?.message ||
-          "Impossible de charger l’audio — régénère ou réimporte le morceau (étape 4).",
+          "Impossible de charger l’audio — régénère ou réimporte le morceau (étape Morceaux).",
       );
     }
   }
@@ -173,7 +173,7 @@ export async function resolveAudioAsset(audioUrl) {
     throw new Error(
       e.message ||
         lastErr?.message ||
-        "Impossible de charger l’audio — régénère ou réimporte le morceau (étape 4).",
+        "Impossible de charger l’audio — régénère ou réimporte le morceau (étape Morceaux).",
     );
   }
 }

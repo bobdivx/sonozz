@@ -160,14 +160,14 @@ export async function resolveReferenceImage(imageUrl) {
     } catch {
       throw new Error(
         ephemeral
-          ? "Portrait/jaquette inaccessible (URL temporaire morte). Régénère l’étape Artiste ou Jaquette."
+          ? "Portrait/jaquette inaccessible (URL temporaire morte). Régénère le profil (Modifier le profil) ou la jaquette."
           : "Impossible de télécharger l’image de référence.",
       );
     }
     if (!res.ok) {
       throw new Error(
         ephemeral || res.status === 404
-          ? `Portrait/jaquette expiré (HTTP ${res.status}). Régénère l’étape Artiste (portrait) puis relance Veo.`
+          ? `Portrait/jaquette expiré (HTTP ${res.status}). Régénère le portrait (Modifier le profil) puis relance Veo.`
           : `Référence image HTTP ${res.status}`,
       );
     }

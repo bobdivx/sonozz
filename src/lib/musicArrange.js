@@ -1,6 +1,6 @@
 /** Réglages d’arrangement SongGen (projet) — défauts prudents = mix complet. */
 
-import { isMetalLane, metalBandInstruments, styleLockGenreBlob } from "./musicLane.js";
+import { isExtremeMetalLane, isMetalLane, isThrashLane, metalBandInstruments, styleLockGenreBlob } from "./musicLane.js";
 
 export const LEAD_INSTRUMENTS = [
   { id: "", label: "Auto (style artiste)" },
@@ -342,6 +342,8 @@ function ensureFullBandInstruments(bits, { gospel = false, metal = false } = {})
 export function musicArrangeToSongGen(arrange, { styleLockInstruments, styleLock } = {}) {
   const a = normalizeMusicArrange(arrange);
   const metal = isMetalLane(styleLockGenreBlob(styleLock, [a.notes, a.leadInstrument]));
+  const extreme = metal && isExtremeMetalLane(styleLockGenreBlob(styleLock, [a.notes, a.leadInstrument]));
+  const thrash = metal && !extreme && isThrashLane(styleLockGenreBlob(styleLock, [a.notes, a.leadInstrument]));
   const parts = [];
   const instrumentBits = [];
   const wantsChoir = !metal && a.choir && a.choir !== "none";
@@ -416,17 +418,25 @@ export function musicArrangeToSongGen(arrange, { styleLockInstruments, styleLock
   parts.unshift(
     gospel
       ? "commercial gospel-soul production quality, radio-ready full mix"
-      : metal
+      : extreme
         ? "brutal death metal production, crushing down-tuned guitars, blast beats"
-        : "commercial radio-ready full-band production, polished multi-instrument arrangement like a streaming hit",
+        : thrash
+          ? "American thrash / heavy metal production, palm-muted downpicked guitars, live kit, no pop polish"
+          : metal
+            ? "heavy metal production, distorted guitars, live drums, no synth pads"
+            : "commercial radio-ready full-band production, polished multi-instrument arrangement like a streaming hit",
   );
 
   parts.push(
     gospel
       ? "full mixed song: lead vocal + gospel choir + band, never drums-only or instrumental bed alone"
-      : metal
+      : extreme
         ? "harsh growled vocals over distorted guitars and drums — never pop, never clean singing, never synth pads"
-        : "full mixed song with lead vocals AND full band (bass, keys/guitar, drums, pads) — never a single instrument loop, never drums-only, never vocals-only",
+        : thrash
+          ? "barked rhythmic metal vocals over palm-muted guitars — never pop crooning, never synth pads, never Billboard"
+          : metal
+            ? "aggressive metal vocals over distorted guitars and drums — never pop, never synth pads"
+            : "full mixed song with lead vocals AND full band (bass, keys/guitar, drums, pads) — never a single instrument loop, never drums-only, never vocals-only",
   );
 
   return {

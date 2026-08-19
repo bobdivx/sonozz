@@ -5,7 +5,7 @@ import {
   isDefaultMusicArrange,
 } from "./musicArrange.js";
 import { resolveArtistGender } from "./artistGender.js";
-import { isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob } from "./musicLane.js";
+import { isExtremeMetalLane, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "./musicLane.js";
 
 function voiceHintFromArtist(artist) {
   const g = resolveArtistGender(artist)?.code;
@@ -26,7 +26,7 @@ export function buildSunoPrompt({
   musicArrange,
   vocalHint,
 } = {}) {
-  const lock = styleLock || artist?.styleLock || {};
+  const lock = withKnownArtistLane(styleLock || artist?.styleLock || {});
   const seed = lock.seedTrack;
 
   let arrange = normalizeMusicArrange(musicArrange ?? artist?.musicArrange);
@@ -38,10 +38,12 @@ export function buildSunoPrompt({
     styleLock: lock,
   });
 
-  const metal = isMetalLane(styleLockGenreBlob(lock, [artist?.genre]));
+  const genreBlob = styleLockGenreBlob(lock, [artist?.genre]);
+  const metal = isMetalLane(genreBlob);
+  const extreme = isExtremeMetalLane(genreBlob);
 
   const bpmNum = Number(
-    bpmGuess ?? arrange.bpm ?? lock.bpm ?? artist?.track?.bpm ?? (metal ? 170 : 110),
+    bpmGuess ?? arrange.bpm ?? lock.bpm ?? artist?.track?.bpm ?? (extreme ? 170 : metal ? 140 : 110),
   );
   const bpm =
     Number.isFinite(bpmNum) && bpmNum >= 60 && bpmNum <= 200 ? Math.round(bpmNum) : 110;
@@ -60,7 +62,14 @@ export function buildSunoPrompt({
     .slice(0, 8)
     .join(", ");
 
-  let production = String(lock.production || (metal ? "brutal death metal mix" : "contemporary polished mix")).trim();
+  let production = String(
+    lock.production ||
+      (extreme
+        ? "brutal death metal mix"
+        : metal
+          ? "thrash / heavy metal mix, palm-muted high-gain guitars, live kit"
+          : "contemporary polished mix"),
+  ).trim();
   if (!metal && /sparse|intimate|minimal/i.test(production)) {
     const focusMatch = production.match(/with a focus on\s+(.+?)(?:\.|$)/i);
     const focus = (focusMatch?.[1] || "organic textures and subtle electronic elements")
@@ -101,17 +110,17 @@ export function buildSunoPrompt({
     .slice(0, 10)
     .join(", ");
 
-  const voice = vocalHint || (metal ? metalVoiceHint(resolveArtistGender(artist)?.code) : voiceHintFromArtist(artist));
+  const voice = vocalHint || (metal ? metalVoiceHint(resolveArtistGender(artist)?.code, genreBlob) : voiceHintFromArtist(artist));
 
-  return `Style: ${artist?.genre || lock.genreSummary || (metal ? "brutal death metal" : "indie pop")}${
+  return `Style: ${lock.genreSummary || artist?.genre || (extreme ? "brutal death metal" : metal ? "heavy metal" : "indie pop")}${
     lock.matchedName || seed?.artistName
       ? ` (lane of ${lock.matchedName || seed.artistName})`
       : ""
-  }. ${voice}. Mood: ${artist?.mood || lock.mood || (metal ? "brutal aggressive" : "emotional")}.
+  }. ${voice}. Mood: ${artist?.mood || lock.mood || (extreme ? "brutal aggressive" : metal ? "aggressive" : "emotional")}.
 Production: ${production}
 Keywords: ${keywords}
 Instruments: ${instru}
-Groove: ${lock.rhythmFeel || arrange?.drums || (metal ? "blast beats, double kick" : "natural soft groove")} · BPM ${bpm}${
+Groove: ${lock.rhythmFeel || arrange?.drums || (extreme ? "blast beats, double kick" : metal ? "palm-muted chugs, live kit" : "natural soft groove")} · BPM ${bpm}${
     seed?.title ? ` · ref « ${seed.title} »` : ""
   }${arrangeLine ? `\nArrange: ${arrangeLine}` : ""}
 Title: ${lyrics?.title || "Untitled"}

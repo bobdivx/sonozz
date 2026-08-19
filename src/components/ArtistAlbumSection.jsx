@@ -3,7 +3,7 @@ import { Library } from "lucide-preact";
 import AlbumAutonomePanel from "./AlbumAutonomePanel.jsx";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, isStudioEnabled } from "../lib/keys.js";
-import { emptyProject, isTrackAudioFinal } from "../lib/studio.js";
+import { emptyProject, isTrackAudioFinal, studioHref, artistAlbumHref } from "../lib/studio.js";
 import { cancelAlbumJob, startAlbumJob } from "../lib/jobRunner.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
 import {
@@ -237,7 +237,7 @@ export default function ArtistAlbumSection({
       projectId,
       totalCount: total,
       resume,
-      href: `/artiste/${encodeURIComponent(slug)}`,
+      href: artistAlbumHref(slug, projectId),
       label: `Album · ${total} titres`,
     });
     setProject((prev) =>
@@ -331,7 +331,7 @@ export default function ArtistAlbumSection({
       {!embedded && (
       <div class="flex flex-wrap items-end justify-between gap-3">
         <h2 class="font-display flex items-center gap-2 text-xl font-bold">
-          <Library size={20} /> {createOnly ? "Créer un album" : "Composer un album"}
+          <Library size={20} /> {createOnly ? "Créer un album" : "Gérer l’album"}
         </h2>
         {!pinnedLeadId && leadCandidates.length > 1 && (
           <label class="form-control w-full max-w-xs">
@@ -385,7 +385,7 @@ export default function ArtistAlbumSection({
           onClear={clearAlbum}
           onRemoveTrack={removeTrack}
           onOpenTrack={openTrack}
-          studioHref={embedded ? null : projectId ? `/?project=${projectId}&step=4` : null}
+          studioHref={embedded ? null : studioHref(projectId, "tracks")}
           manageMode={Boolean(pinnedLeadId || project?.album)}
         />
       )}

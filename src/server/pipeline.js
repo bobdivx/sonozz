@@ -30,13 +30,13 @@ import {
   isAceStepMusicProvider,
 } from "./aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
-import { coalesceGenres, defaultBpmForGenre, isMetalLane, metalVoiceHint, styleLockGenreBlob } from "../lib/musicLane.js";
+import { coalesceGenres, defaultBpmForGenre, isExtremeMetalLane, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "../lib/musicLane.js";
 import { normalizeArtistPhotos } from "../lib/artistPhotos.js";
 import { isStudioEnabled } from "../lib/keys.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
 import { materializeAudioForStorage } from "./audioPersist.js";
 import { isS3Configured } from "./s3.js";
-import { slugify, getArtistBySlug } from "./artists.js";
+import { slugify, getArtistBySlug, resolveArtistProfileForRelease } from "./artists.js";
 import { llmJson, requireTextLlm } from "./llm.js";
 import {
   musicArrangeToSongGen,
@@ -593,14 +593,25 @@ export async function runArtist({
     .trim()
     .slice(0, 120);
 
-  // Styles finaux : référence artiste = vérité ; styles user en complément optionnel
+  // Mix : DNA de référence (lock) ∪ styles ajoutés par l'utilisateur (jamais un remplacement)
+  const lockGenres = Array.isArray(styleLock?.genres) ? styleLock.genres : [];
   const finalGenres = styleLock
-    ? coalesceGenres(
-        userStyles.length ? [...(styleLock.genres || []), ...userStyles] : styleLock.genres,
-      )
+    ? coalesceGenres([...lockGenres, ...userStyles])
     : coalesceGenres(userStyles);
+  const extrasOnly = userStyles.filter(
+    (g) => !lockGenres.some((lg) => String(lg).toLowerCase() === String(g).toLowerCase()),
+  );
+  const extraStyleNote =
+    styleLock && extrasOnly.length
+      ? `
+STYLES AJOUTÉS PAR L'UTILISATEUR (supplément — à MÉLANGER à la DNA ci-dessus, JAMAIS un remplacement) :
+${JSON.stringify(extrasOnly)}
+Le mix final = DNA de référence ∪ ces ajouts.`
+      : "";
   const finalGenre = styleLock
-    ? styleLock.genreSummary || finalGenres.join(" × ")
+    ? extrasOnly.length
+      ? `${styleLock.genreSummary || lockGenres.join(" × ") || finalGenres.join(" × ")} + ${extrasOnly.join(" + ")}`
+      : styleLock.genreSummary || finalGenres.join(" × ")
     : finalGenres.join(" × ");
   const stylePrompt = finalGenres.length
     ? finalGenres.length === 1
@@ -652,7 +663,7 @@ PARAMÈTRES VERROUILLÉS :
 - INTERDIT: ${JSON.stringify(styleLock.doNot)}
 ${styleLock.audioListened ? "- DNA audio: extrait preview réellement écouté" : ""}`
     : ""
-}
+}${extraStyleNote}
 ═══════════════════════════════════════════════════════════════════════════
 
 Langue des chansons: ${langName} (code ${lang}).
@@ -733,6 +744,7 @@ PARAMÈTRES VERROUILLÉS (copie / respecte STRICTEMENT) :
 - influences OBLIGATOIRES (dans cet ordre): ${JSON.stringify(styleLock.influences)}
 - INTERDIT (doNot): ${JSON.stringify(styleLock.doNot)}
 ${styleLock.audioListened ? "- Un extrait preview a été ÉCOUTÉ — colle au timbre/groove/BPM ci-dessus." : ""}
+${extraStyleNote}
 
 Le nouvel artiste doit sonner comme s'il était dans la MÊME famille que "${styleLock.matchedName}" :
 même groove, même énergie, même type de prod, même approche d'écriture.
@@ -1002,7 +1014,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   const lang = resolveLanguage(lyrics?.language, artist);
   const langName = languagePromptName(lang);
   const genderLock = genderVisualLock(artist?.gender, artist?.age);
-  const styleLock = artist?.styleLock;
+  const styleLock = withKnownArtistLane(artist?.styleLock);
   const vocal = resolveVocalGender(artist);
   let arrange = normalizeMusicArrange(artist?.musicArrange);
   if (isDefaultMusicArrange(arrange) && styleLock) {
@@ -1013,9 +1025,9 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     styleLock,
   });
   const arrangeBits = packed.customFragments || [];
-  const metal = isMetalLane(
-    styleLockGenreBlob(styleLock, [artist?.genre, lyrics?.title, lyrics?.theme]),
-  );
+  const genreBlob = styleLockGenreBlob(styleLock, [artist?.genre, lyrics?.title, lyrics?.theme]);
+  const metal = isMetalLane(genreBlob);
+  const extreme = isExtremeMetalLane(genreBlob);
   // Arrangement (chœur…) EN TÊTE pour MiniMax aussi + qualité production
   const qualityBits = packed.gospel
     ? [
@@ -1025,10 +1037,10 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
       ]
     : metal
       ? [
-          "brutal death metal",
-          "down-tuned distorted guitars and blast beats",
-          "guttural growled vocals, harsh not clean pop singing",
-          "crushing dense mix, no synth pads, no radio-pop polish",
+          ...metalFlavorTags(genreBlob),
+          extreme
+            ? "crushing dense mix, no synth pads, no radio-pop polish"
+            : "no synth pads, no piano pop, no Billboard polish",
         ]
       : [
           "commercial radio-ready full-band production",
@@ -1050,7 +1062,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   };
 
   const safeMusicPrompt = scrubVoiceLeak(styleLock?.musicPrompt || "");
-  const voiceLine = metal ? metalVoiceHint(vocal.code) : vocal.voiceHint;
+  const voiceLine = metal ? metalVoiceHint(vocal.code, genreBlob) : vocal.voiceHint;
   const banBits = (Array.isArray(styleLock?.doNot) ? styleLock.doNot : [])
     .slice(0, 4)
     .map((d) => `avoid ${d}`);
@@ -1059,7 +1071,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     safeMusicPrompt
       ? metal
         ? [
-            styleLock?.genreSummary || "brutal death metal",
+            styleLock?.genreSummary || (extreme ? "brutal death metal" : "heavy metal"),
             voiceLine,
             ...qualityBits,
             safeMusicPrompt,
@@ -1081,7 +1093,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
         ? [
             voiceLine,
             ...qualityBits,
-            artist?.genre || "death metal",
+            artist?.genre || (extreme ? "death metal" : "heavy metal"),
             artist?.styleArtists?.length
               ? `in the sonic lane of ${artist.styleArtists.join(" and ")} (original, not a cover)`
               : artist?.styleArtist
@@ -1127,20 +1139,22 @@ function assembleTrackResult({
   vocal = null,
   arrange = null,
 }) {
+  const lock = withKnownArtistLane(styleLock);
   let arr = arrange || normalizeMusicArrange(artist?.musicArrange);
-  if (isDefaultMusicArrange(arr) && styleLock) {
-    arr = musicArrangeFromStyleLock(styleLock);
+  if (isDefaultMusicArrange(arr) && lock) {
+    arr = musicArrangeFromStyleLock(lock);
   }
   const voice = vocal || resolveVocalGender(artist);
-  const metal = isMetalLane(styleLockGenreBlob(styleLock, [artist?.genre, lyrics?.title]));
+  const genreBlob = styleLockGenreBlob(lock, [artist?.genre, lyrics?.title]);
+  const metal = isMetalLane(genreBlob);
 
   const sunoPrompt = buildSunoPrompt({
     lyrics,
     artist,
-    styleLock,
+    styleLock: lock,
     bpmGuess,
     musicArrange: arr,
-    vocalHint: metal ? metalVoiceHint(voice?.code) : voice?.voiceHint,
+    vocalHint: metal ? metalVoiceHint(voice?.code, genreBlob) : voice?.voiceHint,
   });
 
   const noteReady =
@@ -1182,7 +1196,7 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
   const resolvedGender = resolveArtistGender(artist);
   if (!resolvedGender) {
     throw new Error(
-      "Sexe / présentation manquant sur l’artiste — retourne à l’étape Artiste, choisis Homme/Femme, puis régénère le profil avant le morceau.",
+      "Sexe / présentation manquant sur l’artiste — ouvre Modifier le profil, choisis Homme/Femme, puis régénère avant le morceau.",
     );
   }
   artist = withResolvedArtistGender(artist);
@@ -1520,7 +1534,7 @@ export async function runCover({ keys, prompt, artist, track, album }) {
   const portraitUrl = artist?.imageUrl;
   if (!isUsableRasterImage(portraitUrl)) {
     throw new Error(
-      "Portrait artiste manquant ou SVG. Régénère l’étape Artiste (photo Gemini ou Replicate) avant la jaquette.",
+      "Portrait artiste manquant ou SVG. Ouvre Modifier le profil (photo Gemini ou Replicate) avant la jaquette.",
     );
   }
 
@@ -1658,10 +1672,9 @@ Règles:
   };
 }
 
-/** Étapes du pipeline A→Z (s'arrête à ONCE : l'utilisateur valide avant Spotify). */
+/** Étapes du pipeline A→Z (artiste déjà créé ; s'arrête à ONCE). */
 export const PIPELINE_STEPS = [
   { key: "trends", label: "Tendances", message: "Analyse Deezer + Gemini…" },
-  { key: "artist", label: "Artiste", message: "Génération profil artiste…" },
   { key: "lyrics", label: "Paroles", message: "Écriture des paroles…" },
   { key: "track", label: "Morceau", message: "Création morceau / brief audio…" },
   { key: "cover", label: "Jaquette", message: "Génération jaquette…" },
@@ -1671,25 +1684,10 @@ export const PIPELINE_STEPS = [
 
 export async function runFullPipeline({
   keys,
-  name,
-  bioHint,
   theme,
   market,
-  genre,
-  genres,
   language,
-  styleArtist,
-  styleArtistPick,
-  styleArtistPicks,
-  styleTrackPick,
-  allowTakenName = false,
-  mode,
-  age,
-  gender,
-  photos,
-  city,
-  legalName,
-  voiceSample,
+  artistSlug,
   onProgress,
 }) {
   const log = [];
@@ -1699,6 +1697,11 @@ export async function runFullPipeline({
   let lyrics = null;
   let track = null;
   let cover = null;
+
+  const slug = String(artistSlug || "").trim();
+  if (!slug) {
+    throw new Error("Choisis un artiste existant. Crée le profil sur /artiste/nouveau.");
+  }
 
   const emitSnapshot = (step) => {
     onProgress?.({
@@ -1719,36 +1722,15 @@ export async function runFullPipeline({
     onProgress?.({ ...entry, index, total });
   };
 
-  push("trends", "Analyse Deezer + Gemini…");
-  trends = await runTrends({ keys, market });
-  emitSnapshot("trends");
+  const profile = await resolveArtistProfileForRelease(slug);
+  if (!profile?.name) {
+    throw new Error("Artiste introuvable — crée-le d’abord depuis Artistes.");
+  }
+  artist = withResolvedArtistGender({ ...profile, slug });
 
-  push("artist", "Génération profil artiste…");
-  artist = await runArtist({
-    keys,
-    name,
-    bioHint,
-    trends,
-    genre,
-    genres,
-    language,
-    styleArtist,
-    styleArtistPick,
-    styleArtistPicks,
-    styleTrackPick,
-    allowTakenName,
-    mode,
-    age,
-    gender,
-    photos,
-    city,
-    legalName,
-    voiceSample,
-    onStatus: (message) => {
-      if (message) push("artist", message);
-    },
-  });
-  emitSnapshot("artist");
+  push("trends", "Analyse Deezer + Gemini…");
+  trends = await runTrends({ keys, market, artist, artistSlug: slug });
+  emitSnapshot("trends");
 
   push("lyrics", "Écriture des paroles…");
   lyrics = await runLyrics({ keys, theme, artist, trends, language: language || artist.language });

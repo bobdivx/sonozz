@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildArtistDraftPatch, isUnchangedArtistDraft } from "../src/lib/artistDraft.js";
+import {
+  buildArtistDraftPatch,
+  isUnchangedArtistDraft,
+  lockHasSonicDna,
+  artistPatchFromStyleLock,
+} from "../src/lib/artistDraft.js";
 
 describe("buildArtistDraftPatch", () => {
   it("enregistre le passage fiction → c’est moi sans perdre le DNA style", () => {
@@ -48,6 +53,90 @@ describe("buildArtistDraftPatch", () => {
       { styleLock: { seedTrack: { title: "X", source: "deezer", sourceId: "1" } } },
     );
     assert.equal(patch.styleLock?.seedTrack, undefined);
+  });
+
+  it("change de titre de référence sans garder le DNA de l’ancien", () => {
+    const patch = buildArtistDraftPatch(
+      {
+        mode: "fiction",
+        styleTrackPick: {
+          source: "deezer",
+          id: "99",
+          name: "Hammer Smashed Face",
+          artistName: "Cannibal Corpse",
+        },
+      },
+      {
+        styleLock: {
+          query: "Nothing Else Matters — Metallica",
+          matchedName: "Metallica",
+          genreSummary: "American thrash and heavy metal",
+          musicPrompt: "Hetfield barked vocals",
+          vocalStyle: "raspy baritone",
+          seedTrack: { title: "Nothing Else Matters", source: "deezer", sourceId: "1" },
+        },
+      },
+    );
+    assert.equal(patch.styleLock.seedTrack.artistName, "Cannibal Corpse");
+    assert.equal(patch.styleLock.matchedName, "Cannibal Corpse");
+    assert.equal(patch.styleLock.query, undefined);
+    assert.equal(patch.styleLock.genreSummary, undefined);
+    assert.equal(patch.styleLock.musicPrompt, undefined);
+    assert.equal(patch.styleLock.vocalStyle, undefined);
+    assert.equal(patch.styleLock.timbre, undefined);
+    assert.equal(patch.styleLock.rhythmFeel, undefined);
+    assert.equal(patch.styleLock.bpm, undefined);
+    assert.equal(patch.styleLock.instruments, undefined);
+    assert.equal(patch.styleLock.energy, undefined);
+    assert.equal(patch.styleLock.production, undefined);
+  });
+
+  it("remplace tout le DNA Metallica (ballade) au changement de titre", () => {
+    const patch = buildArtistDraftPatch(
+      {
+        mode: "fiction",
+        styleTrackPick: {
+          source: "deezer",
+          id: "99",
+          name: "Hammer Smashed Face",
+          artistName: "Cannibal Corpse",
+        },
+      },
+      {
+        styleLock: {
+          timbre: "deep, resonant baritone",
+          rhythmFeel: "slow, deliberate rock ballad",
+          bpm: 70,
+          energy: "low",
+          instruments: ["acoustic guitar", "electric guitar", "bass guitar", "drums"],
+          production: "arena rock ballad",
+          seedTrack: { title: "Nothing Else Matters", source: "deezer", sourceId: "1" },
+        },
+      },
+    );
+    assert.equal(lockHasSonicDna(patch.styleLock), false);
+    assert.equal(patch.styleLock.seedTrack.title, "Hammer Smashed Face");
+  });
+
+  it("fusionne un lock résolu sans perdre les refs artistes", () => {
+    const patch = artistPatchFromStyleLock(
+      {
+        matchedName: "Cannibal Corpse",
+        timbre: "guttural",
+        bpm: 180,
+        genres: ["Death Metal"],
+        genreSummary: "brutal death metal",
+        seedTrack: { title: "Hammer Smashed Face", artistName: "Cannibal Corpse" },
+      },
+      {
+        styleLock: {
+          refs: [{ source: "deezer", sourceId: "7", matchedName: "Cannibal Corpse" }],
+        },
+      },
+    );
+    assert.equal(patch.styleLock.timbre, "guttural");
+    assert.equal(patch.styleLock.refs[0].matchedName, "Cannibal Corpse");
+    assert.equal(patch.genre, "brutal death metal");
   });
 
   it("détecte un brouillon déjà identique au profil sauvé", () => {

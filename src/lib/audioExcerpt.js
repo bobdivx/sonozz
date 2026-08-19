@@ -52,7 +52,7 @@ export async function extractTrackExcerpt(audioUrl, durationSec = 28, offsetSec 
     decoded = await ctx.decodeAudioData(asset.buffer.slice(0));
   } catch {
     throw new Error(
-      "Impossible de décoder l’audio — lien mort ou format invalide. Va à l’étape 4 : régénère ou réimporte le mp3.",
+      "Impossible de décoder l’audio — lien mort ou format invalide. Va à l’étape Morceaux : régénère ou réimporte le mp3.",
     );
   } finally {
     await ctx.close().catch(() => {});

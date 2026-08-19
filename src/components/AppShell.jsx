@@ -13,8 +13,8 @@ import JobsDock, { JobsDockMobile } from "./JobsDock.jsx";
 import { ensureKeysHydrated } from "../lib/keys.js";
 
 const NAV = [
-  { href: "/", id: "studio", label: "Studio", icon: Waves },
-  { href: "/artistes", id: "artistes", label: "Artistes", icon: UserRound },
+  { href: "/", id: "studio", label: "Studio", icon: Waves, hint: "Un morceau : paroles, audio, jaquette, stores" },
+  { href: "/artistes", id: "artistes", label: "Artistes", icon: UserRound, hint: "Profils, catalogue et albums" },
   { href: "/play", id: "play", label: "Play", icon: Headphones },
   { href: "/parametres", id: "parametres", label: "Paramètres", icon: Settings2 },
 ];
@@ -177,6 +177,7 @@ export default function AppShell({ active, children, title, subtitle }) {
               <a
                 key={item.id}
                 href={item.href}
+                title={item.hint || item.label}
                 class={`flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition ${
                   isActive
                     ? "bg-primary/15 font-semibold text-primary"

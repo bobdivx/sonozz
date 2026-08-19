@@ -241,6 +241,11 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
 export const api = {
   trends: (seed = {}) => request("/api/trends", seed),
   artist: (payload) => request("/api/artist", payload),
+  saveArtistProfile: (slug, profile) =>
+    request(`/api/artists/${encodeURIComponent(slug)}`, {
+      action: "save-profile",
+      profile,
+    }),
   lyrics: (payload) => request("/api/lyrics", payload),
   track: (payload, onProgress, opts) => trackWithPoll(payload, onProgress, opts),
   /** Planifie les thèmes des pistes restantes d’un album (hors lead). */

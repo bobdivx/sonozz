@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { ImagePlus } from "lucide-preact";
 import VersionPicker from "../VersionPicker.jsx";
+import { artistEditHref } from "../../lib/studio.js";
 
 export default function CoverStep({
   cover,
@@ -25,6 +26,7 @@ export default function CoverStep({
     (/^https?:\/\//i.test(portraitUrl) || /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(portraitUrl));
   const portraitExpired = /replicate\.delivery|pb\.replicate\.com/i.test(portraitUrl);
   const hasVersions = versions.length > 0;
+  const profileHref = artistEditHref(artist?.slug);
 
   return (
     <section class="animate-rise space-y-6">
@@ -55,8 +57,24 @@ export default function CoverStep({
               {hasPortrait
                 ? "La jaquette partira de ce portrait (image-à-image)."
                 : portraitExpired
-                  ? "Portrait Replicate expiré — retourne à l’étape Artiste et régénère le profil."
-                  : "Régénère l’étape Artiste pour obtenir une vraie photo avant la jaquette."}
+                  ? (
+                    <>
+                      Portrait Replicate expiré — ouvre{" "}
+                      <a class="link link-primary" href={profileHref}>
+                        Modifier le profil
+                      </a>{" "}
+                      et régénère la photo.
+                    </>
+                  )
+                  : (
+                    <>
+                      Ouvre{" "}
+                      <a class="link link-primary" href={profileHref}>
+                        Modifier le profil
+                      </a>{" "}
+                      pour obtenir une vraie photo avant la jaquette.
+                    </>
+                  )}
             </p>
           </div>
         </div>
@@ -88,7 +106,11 @@ export default function CoverStep({
         {!artist && <p class="text-sm text-warning">Un profil artiste est requis.</p>}
         {artist && !hasPortrait && (
           <p class="text-sm text-warning">
-            Portrait manquant — retourne à l’étape Artiste et régénère le profil (photo Flux/Gemini).
+            Portrait manquant — ouvre{" "}
+            <a class="link link-primary" href={profileHref}>
+              Modifier le profil
+            </a>{" "}
+            et régénère la photo (Flux/Gemini).
           </p>
         )}
       </div>

@@ -216,7 +216,15 @@ export default function StatsStep({
           <p class="max-w-xl text-base-content/70">
             {slug
               ? `Métadonnées, livraisons stores et streams ONCE pour ${title}.`
-              : "Génère d’abord un artiste (étape 2) pour lier le catalogue et les analytics ONCE."}
+              : (
+                <>
+                  Lie un{" "}
+                  <a class="link" href="/artistes">
+                    artiste
+                  </a>{" "}
+                  à ce morceau pour le catalogue et les analytics ONCE.
+                </>
+              )}
           </p>
         </div>
         {slug && (
