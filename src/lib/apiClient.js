@@ -194,16 +194,29 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
       throwIfAborted();
       await sleep(intervalMs, signal);
       throwIfAborted();
-      const tick = await request(
-        "/api/track",
-        {
-          action: "poll",
-          generationId: started.generationId,
-          musicKind: started.musicKind,
-          draft: started.draft,
-        },
-        { signal },
-      );
+      let tick;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          tick = await request(
+            "/api/track",
+            {
+              action: "poll",
+              generationId: started.generationId,
+              musicKind: started.musicKind,
+              draft: started.draft,
+            },
+            { signal },
+          );
+          break;
+        } catch (e) {
+          if (e?.name === "AbortError") throw e;
+          const msg = String(e?.message || "");
+          const transient =
+            /404|pas encore|injoignable|timeout|ECONNRESET|fetch failed|HTTP 5\d\d/i.test(msg);
+          if (!transient || attempt === 2) throw e;
+          await sleep(1500, signal);
+        }
+      }
       if (tick?.done && tick.track) {
         onProgress?.({
           percent: 100,
@@ -227,12 +240,29 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     );
   } catch (e) {
     if (e?.name === "AbortError" && started?.generationId) {
-      // Best-effort : stoppe Replicate / marque l’arrêt côté serveur
       void request("/api/track", {
         action: "cancel",
         generationId: started.generationId,
         musicKind: started.musicKind,
       }).catch(() => {});
+      throw e;
+    }
+    if (
+      started?.musicKind === "acestep" &&
+      !payload?.skipStyleReference &&
+      /ACE_REF_UNUSABLE|invalid, unreadable, or silent|rejeté l’audio de référence/i.test(
+        String(e?.message || ""),
+      )
+    ) {
+      onProgress?.({
+        percent: 8,
+        message: "Référence audio refusée — relance sans cover…",
+      });
+      return trackWithPoll(
+        { ...payload, skipStyleReference: true },
+        onProgress,
+        { ...opts, generationId: undefined, musicKind: undefined, draft: undefined },
+      );
     }
     throw e;
   }
@@ -242,10 +272,12 @@ export const api = {
   trends: (seed = {}) => request("/api/trends", seed),
   artist: (payload) => request("/api/artist", payload),
   saveArtistProfile: (slug, profile) =>
-    request(`/api/artists/${encodeURIComponent(slug)}`, {
-      action: "save-profile",
-      profile,
-    }),
+    slug
+      ? request(`/api/artists/${encodeURIComponent(slug)}`, {
+          action: "save-profile",
+          profile,
+        })
+      : request("/api/artists", { action: "save-profile", profile }),
   lyrics: (payload) => request("/api/lyrics", payload),
   track: (payload, onProgress, opts) => trackWithPoll(payload, onProgress, opts),
   /** Planifie les thèmes des pistes restantes d’un album (hors lead). */

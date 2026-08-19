@@ -61,8 +61,9 @@ async function withFreshProbe(keys, result) {
 }
 
 export async function POST({ request }) {
+  let body = {};
   try {
-    const body = await readBody(request);
+    body = await readBody(request);
     const action = String(body?.action || "start").trim();
 
     if (action === "probe-acestep") {
@@ -252,6 +253,8 @@ export async function POST({ request }) {
     const data = await startTrack(body);
     return json(data);
   } catch (e) {
+    const action = String(body?.action || "start").trim();
+    console.error("[track]", action, e?.message || e);
     return error(e.message || "Erreur morceau", 500);
   }
 }

@@ -1192,7 +1192,7 @@ function assembleTrackResult({
  * Démarre la gen audio sans bloquer (évite Cloudflare 524 / proxy ~100s).
  * Le client poll via pollTrack.
  */
-export async function startTrack({ keys, lyrics, artist, preview = false }) {
+export async function startTrack({ keys, lyrics, artist, preview = false, skipStyleReference = false }) {
   const resolvedGender = resolveArtistGender(artist);
   if (!resolvedGender) {
     throw new Error(
@@ -1249,8 +1249,8 @@ export async function startTrack({ keys, lyrics, artist, preview = false }) {
       language: lang,
       bpm: bpmGuess,
       preview: isPreview,
-      referenceAudioUrl: styleRef.previewUrl,
-      referenceAudioTitle: refTitle,
+      referenceAudioUrl: skipStyleReference ? "" : styleRef.previewUrl,
+      referenceAudioTitle: skipStyleReference ? "" : refTitle,
     });
     return {
       pollNeeded: true,

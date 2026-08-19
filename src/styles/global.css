@@ -78,6 +78,15 @@ main {
   z-index: 1;
 }
 
+html[data-sonozz-fill-viewport],
+html[data-sonozz-fill-viewport] body,
+html[data-sonozz-fill-viewport] #root-app {
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 .font-display {
   font-family: var(--font-display);
 }

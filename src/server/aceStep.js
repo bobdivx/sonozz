@@ -1,5 +1,4 @@
 import { isStudioEnabled } from "../lib/keys.js";
-import { isS3Configured, uploadClipBuffer } from "./s3.js";
 
 /**
  * Client ACE-Step Studio (Pinokio).
@@ -465,8 +464,41 @@ export async function switchAceStepModel(keys, modelId) {
 const GRADIO_CACHE_ERROR_RE =
   /not uploaded by a user|check_in_upload_folder|InvalidPathError|gradio cache dir/i;
 
+const ACE_INVALID_REF_RE =
+  /reference audio is invalid|unreadable, or silent|invalid, unreadable|pas un fichier audio/i;
+
 export function isGradioReferenceCacheError(err) {
   return GRADIO_CACHE_ERROR_RE.test(String(err?.message || err || ""));
+}
+
+/** Réf. cover inutilisable : Gradio cache OU fichier silent/HTML/S3 illisible. */
+export function isUnusableAceReferenceError(err) {
+  const raw = String(err?.message || err || "");
+  return isGradioReferenceCacheError(raw) || ACE_INVALID_REF_RE.test(raw) || /ACE_REF_UNUSABLE/i.test(raw);
+}
+
+/** MP3 / WAV / OGG / M4A — pas une page HTML ni un XML S3. */
+export function looksLikeAudioBuffer(buffer, mimeType = "") {
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  if (bytes.length < 4096) return false;
+  const mime = String(mimeType || "");
+  if (/html|json|xml|text\/plain/i.test(mime) && !/audio|mpeg|mp4|ogg|wav/i.test(mime)) {
+    return false;
+  }
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return true;
+  if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) return true;
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) return true;
+  if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return true;
+  if (
+    bytes.length > 11 &&
+    bytes[4] === 0x66 &&
+    bytes[5] === 0x74 &&
+    bytes[6] === 0x79 &&
+    bytes[7] === 0x70
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** UI Studio = :3001, moteur Python Gradio = :8001 (Pinokio ACE-Step Studio). */
@@ -563,6 +595,9 @@ async function downloadPreviewBuffer(url) {
   const buffer = Buffer.from(await res.arrayBuffer());
   if (!buffer.length) throw new Error("Preview audio vide");
   const mimeType = res.headers.get("content-type") || "audio/mpeg";
+  if (!looksLikeAudioBuffer(buffer, mimeType)) {
+    throw new Error("Preview n’est pas un fichier audio (HTML / vide / silencieux)");
+  }
   return { buffer, mimeType };
 }
 
@@ -644,10 +679,8 @@ export async function uploadAceStepReference(keys, buffer, fileName = "style-ref
 
 /**
  * Prépare une URL de référence que Gradio / ACE peuvent vraiment charger.
- * 1. Upload officiel Gradio (même host que le Studio, puis :8001)
- * 2. S3 public (ACE fetch l’URL)
- * 3. URL catalogue distante (iTunes — souvent 403 depuis le GPU)
- * Jamais d’URL ACE `/audio/…` (copie `temp/gradio/ref-*` rejetée).
+ * Uniquement l’upload officiel Gradio — S3 / iTunes en cover → Gradio dit
+ * « invalid, unreadable, or silent » (HTML 403 ou fichier non décodable).
  */
 export async function ensureAceStepStyleReference(keys, previewUrl) {
   const url = String(previewUrl || "").trim();
@@ -662,8 +695,8 @@ export async function ensureAceStepStyleReference(keys, previewUrl) {
     buffer = downloaded.buffer;
     mimeType = downloaded.mimeType;
   } catch (e) {
-    console.warn("[acestep] download preview ignoré:", e.message);
-    return url;
+    console.warn("[acestep] preview réf. ignoré:", e.message);
+    return "";
   }
   const ext = extFromPreview(url, mimeType);
 
@@ -679,24 +712,8 @@ export async function ensureAceStepStyleReference(keys, previewUrl) {
     }
   }
 
-  if (isS3Configured()) {
-    try {
-      const uploaded = await uploadClipBuffer(buffer, {
-        projectId: "ace-style-ref",
-        mimeType: mimeType || "audio/mpeg",
-        key: `audio/ace-ref/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`,
-      });
-      if (uploaded?.url) {
-        console.info("[acestep] réf. via S3");
-        return uploaded.url;
-      }
-    } catch (e) {
-      console.warn("[acestep] upload S3 réf. ignoré:", e.message);
-    }
-  }
-
-  console.warn("[acestep] réf. URL distante (iTunes/Deezer) — ACE peut ne pas la télécharger");
-  return url;
+  console.warn("[acestep] cover ignoré — pas d’upload Gradio (S3 rejeté comme silent/unreadable)");
+  return "";
 }
 
 export async function startAceStep(keys, {
@@ -739,17 +756,15 @@ export async function startAceStep(keys, {
   if (isAceHostedAudioUrl(base, refUrl)) refUrl = "";
   if (/^https?:\/\//i.test(refUrl)) {
     try {
-      refUrl = (await ensureAceStepStyleReference(keys, refUrl)) || refUrl;
+      refUrl = (await ensureAceStepStyleReference(keys, refUrl)) || "";
     } catch (e) {
       console.warn("[acestep] preview référence ignoré:", e.message);
+      refUrl = "";
     }
   } else {
     refUrl = "";
   }
-  if (isAceHostedAudioUrl(base, refUrl)) {
-    refUrl = String(referenceAudioUrl || "").trim();
-    if (isAceHostedAudioUrl(base, refUrl)) refUrl = "";
-  }
+  if (isAceHostedAudioUrl(base, refUrl)) refUrl = "";
 
   const body = buildAceStepBody({
     title,
@@ -810,9 +825,28 @@ export async function pollAceStep(keys, generationId) {
   const jobId = String(generationId || "").trim();
   if (!jobId) throw new Error("generationId ACE-Step manquant");
 
-  const status = await withAuth(base, (token) =>
-    aceFetch(base, `/api/generate/status/${encodeURIComponent(jobId)}`, { token }),
-  );
+  let status;
+  try {
+    status = await withAuth(base, (token) =>
+      aceFetch(base, `/api/generate/status/${encodeURIComponent(jobId)}`, { token }),
+    );
+  } catch (e) {
+    const code = Number(e?.status) || 0;
+    const msg = String(e?.message || "");
+    if (
+      code === 404 ||
+      code === 409 ||
+      /HTTP 404|not found|unknown job|no such job/i.test(msg)
+    ) {
+      return {
+        done: false,
+        status: "queued",
+        message: "Job ACE-Step pas encore visible — on réessaie…",
+        generationId: jobId,
+      };
+    }
+    throw e;
+  }
   const st = String(status?.status || "").toLowerCase();
   if (st === "succeeded" || st === "completed" || st === "success") {
     const rawUrl = firstAudioUrl(status?.result);
@@ -849,9 +883,9 @@ export async function pollAceStep(keys, generationId) {
     if (/out of memory|CUDA|VRAM/i.test(raw)) {
       throw new Error(`VRAM insuffisante — ${raw}`);
     }
-    if (isGradioReferenceCacheError(raw)) {
+    if (isUnusableAceReferenceError(raw)) {
       throw new Error(
-        "Gradio a rejeté le fichier de référence (not uploaded by a user). Relance le morceau — l’extrait n’est plus envoyé via /audio/ local.",
+        "ACE_REF_UNUSABLE: ACE-Step a rejeté l’audio de référence (invalide, illisible ou silencieux). Relance sans cover.",
       );
     }
     throw new Error(raw);
@@ -891,8 +925,8 @@ export async function generateMusicWithAceStep(keys, opts = {}) {
   try {
     return await run();
   } catch (e) {
-    if (isGradioReferenceCacheError(e) && opts.referenceAudioUrl) {
-      console.warn("[acestep] réf. Gradio rejetée — retry sans audio");
+    if (isUnusableAceReferenceError(e) && opts.referenceAudioUrl) {
+      console.warn("[acestep] réf. rejetée — retry sans cover");
       return generateMusicWithAceStepOnce(keys, { ...opts, referenceAudioUrl: "" });
     }
     throw e;

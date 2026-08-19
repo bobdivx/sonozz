@@ -165,7 +165,7 @@ export default function StyleTrackPicker({
   }
 
   return (
-    <div class={`space-y-2 ${compact ? "" : "pt-1"}`}>
+    <div class={`min-w-0 space-y-2 ${compact ? "" : "pt-1"}`}>
       <div>
         <p class="text-sm text-base-content/70">{label}</p>
         {hint && (
@@ -208,7 +208,7 @@ export default function StyleTrackPicker({
       </div>
 
       {pick?.id && (
-        <div class="flex items-center gap-3 border border-primary/30 bg-primary/10 p-2">
+        <div class="flex min-w-0 items-center gap-3 overflow-hidden rounded-xl border border-primary/30 bg-primary/10 p-2">
           {pick.image ? (
             <img src={pick.image} alt="" class="h-10 w-10 shrink-0 object-cover" />
           ) : (

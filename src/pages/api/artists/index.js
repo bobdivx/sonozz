@@ -1,5 +1,5 @@
-import { json, error } from "../../../server/http.js";
-import { listArtists, syncArtistsFromProjects } from "../../../server/artists.js";
+import { json, error, readBody } from "../../../server/http.js";
+import { listArtists, syncArtistsFromProjects, upsertArtistFromProject } from "../../../server/artists.js";
 
 export const prerender = false;
 
@@ -17,8 +17,17 @@ export async function GET({ url }) {
   }
 }
 
-export async function POST() {
+export async function POST({ request }) {
   try {
+    const body = await readBody(request);
+    if (body.action === "save-profile") {
+      const profile = body.profile || body.artist;
+      const name = String(profile?.name || "").trim();
+      if (!name) return error("Nom d’artiste manquant", 400);
+      const saved = await upsertArtistFromProject({ ...profile, name });
+      if (!saved) return error("Sauvegarde impossible", 500);
+      return json({ ok: true, artist: saved });
+    }
     const synced = await syncArtistsFromProjects();
     const artists = await listArtists(80);
     return json({ synced: synced.length, artists });

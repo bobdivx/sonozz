@@ -7,6 +7,8 @@ import {
   interpretAceProbe,
   isAceHostedAudioUrl,
   isGradioReferenceCacheError,
+  isUnusableAceReferenceError,
+  looksLikeAudioBuffer,
   lyricsForAceStepPreview,
   pickAceStepModel,
   resolveAceAudioUrl,
@@ -210,6 +212,20 @@ describe("ACE-Step Studio client", () => {
       true,
     );
     assert.equal(isGradioReferenceCacheError("VRAM OOM"), false);
+    assert.equal(
+      isUnusableAceReferenceError(
+        "Gradio generation returned no audio files. Status: Reference audio is invalid, unreadable, or silent.",
+      ),
+      true,
+    );
+    assert.equal(isUnusableAceReferenceError("ACE_REF_UNUSABLE: foo"), true);
+    const id3 = Buffer.alloc(5000, 0);
+    id3[0] = 0x49;
+    id3[1] = 0x44;
+    id3[2] = 0x33;
+    assert.equal(looksLikeAudioBuffer(id3, "audio/mpeg"), true);
+    assert.equal(looksLikeAudioBuffer(Buffer.from("<!DOCTYPE html>....padding...."), "text/html"), false);
+    assert.equal(looksLikeAudioBuffer(Buffer.alloc(100), "audio/mpeg"), false);
   });
 
   it("détecte ACE totalement injoignable vs moteur Python down", () => {

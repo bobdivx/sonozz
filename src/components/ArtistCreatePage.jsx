@@ -9,11 +9,12 @@ import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
  * @param {{ slug?: string, initialMode?: "self" | "fiction" }} props
  */
 export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
-  const editing = Boolean(slug);
+  const [savedSlug, setSavedSlug] = useState(slug);
   const [artist, setArtist] = useState(null);
-  const [loading, setLoading] = useState(Boolean(editing));
+  const [loading, setLoading] = useState(Boolean(slug));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -28,7 +29,7 @@ export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
   }, []);
 
   useEffect(() => {
-    if (!editing) return;
+    if (!slug) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -54,7 +55,7 @@ export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
     return () => {
       cancelled = true;
     };
-  }, [editing, slug]);
+  }, [slug]);
 
   async function handleGenerate(payload) {
     if (!keysReady(loadKeys())) {
@@ -63,13 +64,14 @@ export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
     }
     setSaving(true);
     setError("");
+    setNotice("");
     try {
       const data = await api.artist({
         ...payload,
-        slug: slug || undefined,
+        slug: savedSlug || undefined,
         persist: true,
       });
-      const nextSlug = data.slug || slug;
+      const nextSlug = data.slug || savedSlug;
       if (!nextSlug) throw new Error("Profil généré mais slug manquant");
       window.location.href = `/artiste/${encodeURIComponent(nextSlug)}`;
     } catch (e) {
@@ -79,24 +81,36 @@ export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
   }
 
   async function handleSave(snapshot) {
-    if (!editing) return;
     const profile = snapshot || artist;
     if (!profile?.name) {
       setError("Nom d’artiste manquant");
-      return;
+      return false;
     }
     setSaving(true);
     setError("");
+    setNotice("");
     try {
-      const data = await api.saveArtistProfile(slug, profile);
+      const data = await api.saveArtistProfile(savedSlug || undefined, profile);
       const saved = data.artist || {};
+      const nextSlug = saved.slug || savedSlug;
       setArtist({
         ...(saved.profile || profile),
         name: saved.name || saved.profile?.name || profile.name,
-        slug: saved.slug || slug,
+        slug: nextSlug,
       });
+      if (nextSlug && nextSlug !== savedSlug) {
+        setSavedSlug(nextSlug);
+        window.history.replaceState(
+          {},
+          "",
+          `/artiste/${encodeURIComponent(nextSlug)}/editer`,
+        );
+      }
+      setNotice("Enregistré");
+      return true;
     } catch (e) {
       setError(e.message || "Sauvegarde impossible");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -106,13 +120,9 @@ export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
     <AppShell
       active="artistes"
       title="Profil artiste"
-      subtitle={
-        editing
-          ? "Identité d’un côté, style musical de l’autre. Le Studio sert ensuite à faire les morceaux."
-          : "Identité d’un côté, style musical de l’autre. Ensuite, depuis la fiche : Nouveau titre ou album."
-      }
+      subtitle="Onglets Identité et Style musical. Sauvegarde à tout moment — le Studio sert ensuite aux morceaux."
     >
-      <div class="mx-auto max-w-3xl space-y-4">
+      <div class="mx-auto w-full min-w-0 max-w-3xl space-y-4">
         {!ready && (
           <p class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
             Configure un LLM dans{" "}
@@ -123,6 +133,7 @@ export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
           </p>
         )}
         {error && <p class="text-sm text-error">{error}</p>}
+        {notice && !error && <p class="text-sm text-success">{notice}</p>}
         {loading ? (
           <div class="h-64 animate-pulse rounded-2xl bg-base-300/50" />
         ) : (
@@ -131,7 +142,7 @@ export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
             loading={saving}
             initialMode={initialMode || artist?.mode || undefined}
             onGenerate={handleGenerate}
-            onSave={editing ? handleSave : undefined}
+            onSave={handleSave}
             onPatchArtist={(patch) => {
               setArtist((prev) => ({ ...(prev || {}), ...patch }));
             }}

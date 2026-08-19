@@ -38,26 +38,6 @@ import { artistPhotoSyncKey, normalizeArtistPhotos } from "../../lib/artistPhoto
 import { buildArtistDraftPatch, isUnchangedArtistDraft, styleTrackKey, lockHasSonicDna, artistPatchFromStyleLock } from "../../lib/artistDraft.js";
 import { api } from "../../lib/apiClient.js";
 
-function ProfileSection({ step, icon: Icon, title, hint, children }) {
-  return (
-    <section class="space-y-4 rounded-2xl border border-base-content/10 bg-base-300/25 p-4 sm:p-5">
-      <header class="space-y-1">
-        <h2 class="flex items-center gap-2 font-display text-lg font-semibold tracking-tight">
-          {step ? (
-            <span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">
-              {step}
-            </span>
-          ) : null}
-          {Icon ? <Icon size={18} class="shrink-0 text-primary" /> : null}
-          {title}
-        </h2>
-        {hint ? <p class="text-sm text-base-content/60">{hint}</p> : null}
-      </header>
-      <div class="space-y-4">{children}</div>
-    </section>
-  );
-}
-
 export default function ArtistStep({ artist, trends, loading, onGenerate, onSave, onPatchArtist, initialMode }) {
   const [mode, setMode] = useState(() =>
     initialMode === "self" || artist?.mode === "self" ? "self" : "fiction",
@@ -120,6 +100,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
   const [voiceSample, setVoiceSample] = useState(() => artist?.voiceSample || null);
   const [pickError, setPickError] = useState("");
   const [styleBusy, setStyleBusy] = useState(false);
+  const [profileTab, setProfileTab] = useState("identity");
   const languageManualRef = useRef(false);
   const genderManualRef = useRef(Boolean(resolveArtistGender(artist)?.code));
   const skipHydrateRef = useRef(false);
@@ -545,7 +526,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
     setPickError("");
     try {
       const next = await applyStyleTrackDna(styleTrackPick);
-      if (onSaveRef.current && next) await onSaveRef.current(next);
+      await onSaveRef.current(next);
     } catch (e) {
       setPickError(e.message || "Impossible d’appliquer ce titre");
     } finally {
@@ -560,6 +541,11 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
     }
     flushDraft();
     if (!onSaveRef.current) return;
+    if (!String((artistRef.current || {}).name || name || "").trim()) {
+      setPickError("Indique un nom de scène avant de sauvegarder.");
+      setProfileTab("identity");
+      return;
+    }
     setStyleBusy(true);
     setPickError("");
     try {
@@ -602,16 +588,14 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
   );
 
   return (
-    <section class="animate-rise space-y-6">
+    <section class="animate-rise space-y-5">
       <div class="space-y-2">
         <p class="text-xs font-medium uppercase tracking-[0.16em] text-base-content/45">
           Type de profil
         </p>
-        <div class="flex flex-wrap gap-2" role="tablist" aria-label="Type de profil">
+        <div class="flex flex-wrap gap-2" role="group" aria-label="Type de profil">
         <button
           type="button"
-          role="tab"
-          aria-selected={!isSelf}
           class={`btn btn-sm gap-2 ${!isSelf ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
           disabled={loading}
           onClick={() => applyMode("fiction")}
@@ -621,8 +605,6 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={isSelf}
           class={`btn btn-sm gap-2 ${isSelf ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
           disabled={loading}
           onClick={() => applyMode("self")}
@@ -631,23 +613,69 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
           C’est moi
         </button>
         </div>
-        <p class="text-sm text-base-content/60">
-          {isSelf
-            ? "Profil réel : toi, tes photos, ta voix. Le style musical se règle dans le bloc suivant."
-            : "Profil fictionnel : un personnage inventé. Identité et style musical sont séparés ci-dessous."}
-        </p>
       </div>
 
-      <ProfileSection
-        step="1"
-        icon={UserRound}
-        title="Identité"
-        hint={
-          isSelf
-            ? "Qui tu es sur la fiche : nom de scène, photos, présentation. Pas le son des morceaux."
-            : "Qui est cet artiste : nom, présentation, univers. Pas le genre ni le DNA sonore."
-        }
+      <div class="w-full min-w-0 rounded-2xl border border-base-content/10 bg-base-300/25">
+      <div
+        role="tablist"
+        class="flex w-full min-w-0 border-b border-base-content/10"
       >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={profileTab === "identity"}
+          class={`flex min-w-0 flex-1 items-center justify-center gap-1.5 px-2 py-3 text-sm ${
+            profileTab === "identity"
+              ? "bg-base-200 font-medium text-primary"
+              : "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+          }`}
+          onClick={() => setProfileTab("identity")}
+        >
+          <UserRound size={14} class="shrink-0" />
+          Identité
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={profileTab === "style"}
+          class={`flex min-w-0 flex-1 items-center justify-center gap-1.5 px-2 py-3 text-sm ${
+            profileTab === "style"
+              ? "bg-base-200 font-medium text-primary"
+              : "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+          }`}
+          onClick={() => setProfileTab("style")}
+        >
+          <Music2 size={14} class="shrink-0" />
+          Style
+          {dnaStale ? <span class="badge badge-warning badge-xs shrink-0">DNA</span> : null}
+        </button>
+        {artist ? (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={profileTab === "preview"}
+            class={`flex min-w-0 flex-1 items-center justify-center px-2 py-3 text-sm ${
+              profileTab === "preview"
+                ? "bg-base-200 font-medium text-primary"
+                : "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+            }`}
+            onClick={() => setProfileTab("preview")}
+          >
+            Aperçu
+          </button>
+        ) : null}
+      </div>
+      <p class="px-4 pt-3 text-sm text-base-content/60 sm:px-5">
+        {profileTab === "identity"
+          ? isSelf
+            ? "Nom, photos, voix, présentation — pas le son des morceaux."
+            : "Nom, présentation, univers — pas le genre ni le DNA sonore."
+          : profileTab === "style"
+            ? "Références, DNA, genres et langue. Sauvegarde sans toucher au portrait."
+            : "Portrait, DNA et look déjà enregistrés sur la fiche."}
+      </p>
+
+      <div class={`min-w-0 space-y-4 p-4 sm:p-5 ${profileTab === "identity" ? "" : "hidden"}`}>
         <ArtistNameField
           value={name}
           disabled={loading}
@@ -750,25 +778,20 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
             placeholder={
               isSelf
                 ? "Histoire, vibe, thèmes que tu veux chanter…"
-                : "Origines, look, histoire… (le style musical est dans le bloc suivant)"
+                : "Origines, look, histoire… (le style musical est dans l’onglet Style)"
             }
             value={bioHint}
             onInput={(e) => setBioHint(e.currentTarget.value)}
           />
         </label>
-      </ProfileSection>
+      </div>
 
-      <ProfileSection
-        step="2"
-        icon={Music2}
-        title="Style musical"
-        hint="Le son des morceaux : références, DNA, genres, langue. Ça ne change pas le portrait."
-      >
-        <fieldset class="space-y-3">
-          <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
-            <Music2 size={14} class="text-primary" />
+      <div class={`min-w-0 space-y-4 p-4 sm:p-5 ${profileTab === "style" ? "" : "hidden"}`}>
+        <div class="min-w-0 space-y-3">
+          <p class="flex items-center gap-2 text-sm text-base-content/60">
+            <Music2 size={14} class="shrink-0 text-primary" />
             Références sonores
-          </legend>
+          </p>
           <p class="text-xs text-base-content/45">
             {isSelf
               ? "Choisis les artistes (et éventuellement un titre précis) — c’est la source principale du style."
@@ -855,13 +878,13 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
             )}
             {pickError && <p class="text-xs text-warning">{pickError}</p>}
           </div>
-        </fieldset>
+        </div>
 
-        <fieldset class="space-y-2">
-          <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
-            <Palette size={14} class="text-primary" />
+        <div class="min-w-0 space-y-2">
+          <p class="flex items-center gap-2 text-sm text-base-content/60">
+            <Palette size={14} class="shrink-0 text-primary" />
             Styles musicaux
-          </legend>
+          </p>
           <p class="text-xs text-base-content/45">
             {styleTrackPick?.name
               ? `Prérempli d’après le titre « ${styleTrackPick.name} »${
@@ -968,13 +991,13 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
               </ul>
             )}
           </div>
-        </fieldset>
+        </div>
 
-        <fieldset class="space-y-2">
-          <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">
-            <Languages size={14} class="text-primary" />
+        <div class="min-w-0 space-y-2">
+          <p class="flex items-center gap-2 text-sm text-base-content/60">
+            <Languages size={14} class="shrink-0 text-primary" />
             Langue des chansons
-          </legend>
+          </p>
           <p class="text-xs text-base-content/45">
             Langue des paroles, du chant et des métadonnées de release.
           </p>
@@ -1029,59 +1052,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
               </p>
             );
           })()}
-        </fieldset>
-      </ProfileSection>
-
-      <div class="space-y-3 rounded-2xl border border-base-content/10 bg-base-300/25 p-4 sm:p-5">
-        <h2 class="font-display text-lg font-semibold tracking-tight">Enregistrer</h2>
-        <p class="text-sm text-base-content/60">
-          {onSave
-            ? "Sauvegarder enregistre identité et style, sans toucher au portrait. Régénérer relance le visuel."
-            : "La création génère le profil et le portrait à partir de l’identité et du style ci-dessus."}
-        </p>
-        <div class="flex flex-wrap items-center gap-2">
-          {onSave && (
-            <button
-              type="button"
-              class="btn btn-primary gap-2"
-              disabled={loading || styleBusy || nameBlocked || !name.trim()}
-              onClick={handleSaveProfile}
-            >
-              {styleBusy ? <span class="loading loading-spinner loading-sm" /> : <Save size={18} />}
-              Sauvegarder
-            </button>
-          )}
-          <button
-            class={`btn gap-2 ${onSave ? "btn-ghost border border-base-content/15" : "btn-primary"}`}
-            disabled={
-              loading ||
-              styleBusy ||
-              nameBlocked ||
-              (isSelf &&
-                (!name.trim() ||
-                  !gender ||
-                  !age ||
-                  !photos.length ||
-                  !styleArtistPicks.length))
-            }
-            onClick={handleGenerate}
-          >
-            {loading ? <span class="loading loading-spinner loading-sm" /> : <UserRound size={18} />}
-            {loading
-              ? isSelf
-                ? "Création du profil…"
-                : "Profil + portrait…"
-              : isSelf
-                ? "Créer le profil"
-                : onSave
-                  ? "Régénérer le profil & le visuel"
-                  : "Générer le profil & le visuel"}
-          </button>
         </div>
       </div>
 
-      {artist && (
-        <ProfileSection title="Aperçu" hint="Ce qui est déjà sur la fiche — portrait, DNA, look.">
+      <div class={`min-w-0 space-y-4 p-4 sm:p-5 ${profileTab === "preview" && artist ? "" : "hidden"}`}>
           <div class="grid gap-6 md:grid-cols-[240px_1fr] md:items-start">
             <figure class="space-y-2">
               {(() => {
@@ -1349,8 +1323,64 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
               )}
             </div>
           </div>
-        </ProfileSection>
-      )}
+      </div>
+      </div>
+
+      <div
+        class="sticky z-20 rounded-2xl border border-base-content/15 bg-base-200/95 p-3 shadow-xl shadow-black/30 backdrop-blur"
+        style={{
+          bottom: "calc(var(--sonozz-now-playing, 5.25rem) + 0.5rem)",
+        }}
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="btn btn-primary gap-2"
+            disabled={loading || styleBusy || nameBlocked || !name.trim()}
+            onClick={handleSaveProfile}
+          >
+            {styleBusy || loading ? (
+              <span class="loading loading-spinner loading-sm" />
+            ) : (
+              <Save size={18} />
+            )}
+            Sauvegarder
+          </button>
+          {profileTab === "style" && styleTrackPick?.id ? (
+            <button
+              type="button"
+              class="btn btn-ghost border border-base-content/15"
+              disabled={loading || styleBusy}
+              onClick={handleApplyStyleTrack}
+            >
+              Appliquer le DNA
+            </button>
+          ) : null}
+          <button
+            type="button"
+            class="btn btn-ghost border border-base-content/15 gap-2"
+            disabled={
+              loading ||
+              styleBusy ||
+              nameBlocked ||
+              (isSelf &&
+                (!name.trim() ||
+                  !gender ||
+                  !age ||
+                  !photos.length ||
+                  !styleArtistPicks.length))
+            }
+            onClick={handleGenerate}
+          >
+            {loading ? <span class="loading loading-spinner loading-sm" /> : <UserRound size={18} />}
+            {artist ? "Régénérer le visuel" : "Générer le visuel"}
+          </button>
+        </div>
+        {pickError ? <p class="mt-2 text-xs text-warning">{pickError}</p> : null}
+        <p class="mt-2 text-xs text-base-content/50">
+          Sauvegarder enregistre Identité et Style. Le visuel se génère à part.
+        </p>
+      </div>
     </section>
   );
 }

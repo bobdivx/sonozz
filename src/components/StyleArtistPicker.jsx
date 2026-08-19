@@ -208,7 +208,7 @@ export default function StyleArtistPicker({
       : "Tape un nom, clique sur la loupe (ou Entrée), puis choisis le bon résultat.");
 
   return (
-    <div class={`space-y-2 ${compact ? "" : "w-full"}`}>
+    <div class={`min-w-0 space-y-2 ${compact ? "" : "w-full"}`}>
       <span class={`label-text mb-1 block ${compact ? "text-xs" : "text-sm"} text-base-content/55`}>
         {title}
       </span>
@@ -247,7 +247,7 @@ export default function StyleArtistPicker({
           {selected.map((p) => (
             <li
               key={pickKey(p)}
-              class="flex items-center gap-3 border border-primary/30 bg-primary/10 p-2"
+              class="flex min-w-0 items-center gap-3 overflow-hidden rounded-xl border border-primary/30 bg-primary/10 p-2"
             >
               {p.image ? (
                 <img src={p.image} alt="" class="h-10 w-10 shrink-0 object-cover" />
@@ -281,7 +281,7 @@ export default function StyleArtistPicker({
       )}
 
       {!multiple && single ? (
-        <div class="flex items-center gap-3 border border-primary/30 bg-primary/10 p-2.5">
+        <div class="flex min-w-0 items-center gap-3 overflow-hidden rounded-xl border border-primary/30 bg-primary/10 p-2.5">
           {single.image ? (
             <img src={single.image} alt="" class="h-12 w-12 shrink-0 object-cover" />
           ) : (

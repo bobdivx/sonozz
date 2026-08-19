@@ -53,9 +53,9 @@ function BottomChromeSpacer({ includeJobs = false }) {
 
 /**
  * Shell app avec sidebar (si connecté) ou bandeau logo public (écoute /play).
- * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres', children: any, title?: string, subtitle?: string }} props
+ * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres', children: any, title?: string, subtitle?: string, fillViewport?: boolean }} props
  */
-export default function AppShell({ active, children, title, subtitle }) {
+export default function AppShell({ active, children, title, subtitle, fillViewport = false }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   // false jusqu’à confirmation — évite d’afficher la nav studio aux visiteurs
   const [authed, setAuthed] = useState(false);
@@ -78,6 +78,14 @@ export default function AppShell({ active, children, title, subtitle }) {
     };
   }, [authed]);
 
+  useEffect(() => {
+    if (!fillViewport) return undefined;
+    document.documentElement.dataset.sonozzFillViewport = "1";
+    return () => {
+      delete document.documentElement.dataset.sonozzFillViewport;
+    };
+  }, [fillViewport]);
+
   async function logout() {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
@@ -87,10 +95,15 @@ export default function AppShell({ active, children, title, subtitle }) {
     location.assign("/login");
   }
 
+  const chromePad = {
+    paddingBottom:
+      "calc(var(--sonozz-jobs-dock, 0px) + var(--sonozz-now-playing, 5.25rem))",
+  };
+
   if (!authed) {
     return (
-      <div class="min-h-screen">
-        <header class="sticky top-0 z-30 border-b border-base-content/10 bg-base-200/90 backdrop-blur">
+      <div class={fillViewport ? "flex h-dvh flex-col overflow-hidden" : "min-h-screen"}>
+        <header class="shrink-0 sticky top-0 z-30 border-b border-base-content/10 bg-base-200/90 backdrop-blur">
           <div class="mx-auto flex max-w-4xl items-center gap-3 px-4 py-3 sm:px-6">
             <a href="/play" class="inline-flex items-center gap-3" aria-label="SONOZZ — Play">
               <img
@@ -108,29 +121,46 @@ export default function AppShell({ active, children, title, subtitle }) {
         </header>
 
         {(title || subtitle) && (
-          <div class="mx-auto max-w-4xl border-b border-base-content/10 px-4 py-4 sm:px-6 sm:py-6">
+          <div
+            class={`mx-auto w-full max-w-4xl shrink-0 border-b border-base-content/10 px-4 sm:px-6 ${
+              fillViewport ? "py-3" : "py-4 sm:py-6"
+            }`}
+          >
             {title && (
-              <h1 class="font-display text-2xl font-extrabold tracking-tight sm:text-3xl">
+              <h1
+                class={`font-display font-extrabold tracking-tight ${
+                  fillViewport ? "text-xl sm:text-2xl" : "text-2xl sm:text-3xl"
+                }`}
+              >
                 {title}
               </h1>
             )}
             {subtitle && (
-              <p class="mt-1 max-w-2xl text-sm text-base-content/60">{subtitle}</p>
+              <p class={`max-w-2xl text-sm text-base-content/60 ${fillViewport ? "mt-0.5 line-clamp-1" : "mt-1"}`}>
+                {subtitle}
+              </p>
             )}
           </div>
         )}
 
-        <div class="mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6">
+        <div
+          class={
+            fillViewport
+              ? "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col overflow-hidden px-3 pt-3 sm:px-6"
+              : "mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6"
+          }
+          style={fillViewport ? chromePad : undefined}
+        >
           {children}
-          <BottomChromeSpacer />
+          {!fillViewport && <BottomChromeSpacer />}
         </div>
       </div>
     );
   }
 
   return (
-    <div class="min-h-screen md:flex">
-      <div class="sticky top-0 z-30 flex items-center justify-between border-b border-base-content/10 bg-base-200/90 px-4 py-3 backdrop-blur md:hidden">
+    <div class={fillViewport ? "flex h-dvh flex-col overflow-hidden md:flex-row" : "min-h-screen md:flex"}>
+      <div class="sticky top-0 z-30 flex shrink-0 items-center justify-between border-b border-base-content/10 bg-base-200/90 px-4 py-3 backdrop-blur md:hidden">
         <a href="/" class="inline-flex items-center" aria-label="SONOZZ — Accueil">
           <img src="/logo.png" alt="SONOZZ" class="h-9 w-9 rounded-lg object-cover" width="36" height="36" />
         </a>
@@ -153,7 +183,7 @@ export default function AppShell({ active, children, title, subtitle }) {
       )}
 
       <aside
-        class={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-base-content/10 bg-base-200/95 backdrop-blur transition-transform md:static md:translate-x-0 md:bg-base-200/40 ${
+        class={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-base-content/10 bg-base-200/95 backdrop-blur transition-transform md:static md:h-full md:shrink-0 md:translate-x-0 md:bg-base-200/40 ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -215,22 +245,45 @@ export default function AppShell({ active, children, title, subtitle }) {
         </div>
       </aside>
 
-      <div class="min-w-0 flex-1">
+      <div class={`min-w-0 flex-1 ${fillViewport ? "flex min-h-0 flex-col overflow-hidden" : ""}`}>
         {(title || subtitle) && (
-          <header class="border-b border-base-content/10 px-4 py-4 sm:py-6 md:px-8 md:py-8">
+          <header
+            class={`shrink-0 border-b border-base-content/10 px-4 md:px-8 ${
+              fillViewport ? "py-3 sm:py-4" : "py-4 sm:py-6 md:py-8"
+            }`}
+          >
             {title && (
-              <h1 class="font-display text-2xl font-extrabold tracking-tight sm:text-3xl md:text-4xl">
+              <h1
+                class={`font-display font-extrabold tracking-tight ${
+                  fillViewport
+                    ? "text-xl sm:text-2xl"
+                    : "text-2xl sm:text-3xl md:text-4xl"
+                }`}
+              >
                 {title}
               </h1>
             )}
             {subtitle && (
-              <p class="mt-1 max-w-2xl text-sm text-base-content/60 md:text-base">{subtitle}</p>
+              <p
+                class={`max-w-2xl text-sm text-base-content/60 md:text-base ${
+                  fillViewport ? "mt-0.5 line-clamp-1" : "mt-1"
+                }`}
+              >
+                {subtitle}
+              </p>
             )}
           </header>
         )}
-        <div class="px-3 py-4 sm:px-4 sm:py-6 md:px-8 md:py-8">
+        <div
+          class={
+            fillViewport
+              ? "flex min-h-0 flex-1 flex-col overflow-hidden px-3 pt-3 sm:px-4 md:px-8"
+              : "px-3 py-4 sm:px-4 sm:py-6 md:px-8 md:py-8"
+          }
+          style={fillViewport ? chromePad : undefined}
+        >
           {children}
-          <BottomChromeSpacer includeJobs />
+          {!fillViewport && <BottomChromeSpacer includeJobs />}
         </div>
       </div>
 

@@ -279,24 +279,25 @@ export default function PlayerPage() {
       active="play"
       title="Play"
       subtitle="Lecteur tactile — tous les titres, un artiste, ou ta file d’attente."
+      fillViewport
     >
-      <div class="mx-auto max-w-4xl">
+      <div class="flex min-h-0 flex-1 flex-col">
         {/* Filtres / actions */}
-        <div class="mb-4 flex flex-wrap items-center gap-2 sm:mb-6 sm:gap-3">
+        <div class="mb-3 flex shrink-0 flex-wrap items-center gap-2 sm:mb-4 sm:gap-3">
           <button
             type="button"
-            class="btn btn-primary min-h-12 gap-2 px-5 text-sm touch-manipulation sm:min-h-16 sm:gap-3 sm:px-8 sm:text-base"
+            class="btn btn-primary min-h-11 gap-2 px-5 text-sm touch-manipulation sm:min-h-12 sm:gap-3 sm:px-6 sm:text-base"
             disabled={!visibleTracks.length}
             onClick={playAll}
           >
-            <Play size={22} fill="currentColor" />
+            <Play size={20} fill="currentColor" />
             Tout lire
             {filterArtist ? " (artiste)" : ""}
           </button>
           {filterArtist && (
             <button
               type="button"
-              class="btn btn-ghost min-h-12 px-4 text-sm touch-manipulation sm:min-h-16 sm:px-6 sm:text-base"
+              class="btn btn-ghost min-h-11 px-4 text-sm touch-manipulation sm:min-h-12 sm:px-5 sm:text-base"
               onClick={() => setFilterArtist("")}
             >
               Effacer filtre
@@ -309,7 +310,7 @@ export default function PlayerPage() {
 
         {/* Onglets */}
         <div
-          class="mb-5 grid grid-cols-3 gap-1 rounded-xl border border-base-content/10 bg-base-200/50 p-1 sm:gap-1.5 sm:p-1.5"
+          class="mb-3 grid shrink-0 grid-cols-3 gap-1 rounded-xl border border-base-content/10 bg-base-200/50 p-1 sm:mb-4 sm:gap-1.5 sm:p-1.5"
           role="tablist"
         >
           {[
@@ -325,14 +326,14 @@ export default function PlayerPage() {
                 type="button"
                 role="tab"
                 aria-selected={active}
-                class={`flex min-h-12 items-center justify-center gap-1.5 rounded-lg text-sm font-semibold touch-manipulation transition sm:min-h-16 sm:gap-2.5 sm:text-base ${
+                class={`flex min-h-11 items-center justify-center gap-1.5 rounded-lg text-sm font-semibold touch-manipulation transition sm:min-h-12 sm:gap-2 sm:text-base ${
                   active
                     ? "bg-primary/20 text-primary"
                     : "text-base-content/60 active:bg-base-content/5"
                 }`}
                 onClick={() => setTab(t.id)}
               >
-                <Icon size={20} class="shrink-0" />
+                <Icon size={18} class="shrink-0" />
                 <span class="truncate">{t.label}</span>
               </button>
             );
@@ -340,16 +341,16 @@ export default function PlayerPage() {
         </div>
 
         {loading && (
-          <div class="flex justify-center py-16">
+          <div class="flex min-h-0 flex-1 items-center justify-center">
             <span class="loading loading-spinner loading-lg text-primary" />
           </div>
         )}
-        {error && <p class="text-error">{error}</p>}
-        {audioError && <p class="mb-3 text-sm text-warning">{audioError}</p>}
+        {error && <p class="shrink-0 text-error">{error}</p>}
+        {audioError && <p class="mb-2 shrink-0 text-sm text-warning">{audioError}</p>}
 
         {/* Liste titres */}
         {!loading && tab === "titres" && (
-          <ul class="divide-y divide-base-content/8 border border-base-content/10 bg-base-200/30">
+          <ul class="min-h-0 flex-1 divide-y divide-base-content/8 overflow-y-auto overscroll-contain border border-base-content/10 bg-base-200/30">
             {visibleTracks.map((t, i) => {
               const isCurrent = current?.id === t.id;
               return (
@@ -408,7 +409,7 @@ export default function PlayerPage() {
 
         {/* Artistes */}
         {!loading && tab === "artistes" && (
-          <ul class="space-y-2 sm:space-y-3">
+          <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain sm:space-y-3">
             {artistGroups.map((a) => (
               <li key={a.slug}>
                 <div class="flex items-stretch gap-0 border border-base-content/10 bg-base-200/30">
@@ -461,7 +462,7 @@ export default function PlayerPage() {
 
         {/* File d'attente */}
         {!loading && tab === "file" && (
-          <ul class="divide-y divide-base-content/8 border border-base-content/10 bg-base-200/30">
+          <ul class="min-h-0 flex-1 divide-y divide-base-content/8 overflow-y-auto overscroll-contain border border-base-content/10 bg-base-200/30">
             {queue.map((t, i) => (
               <li key={`${t.id}-${i}`}>
                 <button
@@ -493,44 +494,46 @@ export default function PlayerPage() {
         )}
       </div>
 
-      {/* Now playing plein écran */}
+      {/* Now playing plein écran — tout tient dans le viewport, sans scroll */}
       {current && expanded && (
         <div class="fixed inset-x-0 top-0 bottom-[var(--sonozz-now-playing,5.25rem)] z-[60] flex flex-col overflow-hidden bg-base-200/98 backdrop-blur-xl animate-rise">
-          <div class="flex shrink-0 items-center justify-between px-2 pb-1 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-4 sm:pb-2 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
+          <div class="flex h-12 shrink-0 items-center justify-between px-1 pt-[env(safe-area-inset-top)] sm:h-14 sm:px-3">
             <button
               type="button"
-              class="btn btn-ghost btn-square min-h-12 min-w-12 touch-manipulation sm:min-h-16 sm:min-w-16"
+              class="btn btn-ghost btn-square h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:h-12 sm:min-h-12 sm:w-12 sm:min-w-12"
               aria-label="Réduire"
               onClick={() => setExpanded(false)}
             >
-              <ChevronDown size={28} />
+              <ChevronDown size={26} />
             </button>
-            <p class="font-display text-xs font-semibold tracking-wide text-base-content/60 sm:text-base">
+            <p class="font-display text-xs font-semibold tracking-wide text-base-content/60 sm:text-sm">
               EN LECTURE
             </p>
             <button
               type="button"
-              class="btn btn-ghost btn-square min-h-12 min-w-12 touch-manipulation sm:min-h-16 sm:min-w-16"
+              class="btn btn-ghost btn-square h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:h-12 sm:min-h-12 sm:w-12 sm:min-w-12"
               aria-label="File d’attente"
               onClick={() => {
                 setExpanded(false);
                 setTab("file");
               }}
             >
-              <ListMusic size={24} />
+              <ListMusic size={22} />
             </button>
           </div>
 
-          <div class="flex min-h-0 flex-1 flex-col justify-between gap-3 overflow-y-auto overscroll-contain px-4 pb-4 sm:justify-center sm:gap-0 sm:px-6 sm:pb-6 md:px-16">
+          <div class="flex min-h-0 flex-1 flex-col px-4 pb-2 sm:px-6 md:px-16">
             <div
-              class="mx-auto w-full max-w-lg shrink-0 touch-manipulation select-none"
+              class="flex min-h-0 flex-1 items-center justify-center touch-manipulation select-none"
+              style={{ containerType: "size" }}
               onTouchStart={onCoverTouchStart}
               onTouchEnd={onCoverTouchEnd}
             >
               <div
-                class={`mx-auto aspect-square w-[min(100%,52vw,38vh)] overflow-hidden shadow-2xl shadow-black/40 ring-1 ring-base-content/10 sm:w-full ${
+                class={`overflow-hidden shadow-2xl shadow-black/40 ring-1 ring-base-content/10 ${
                   playing ? "play-cover-playing" : ""
                 }`}
+                style={{ width: "min(100%, 100cqh)", aspectRatio: "1 / 1" }}
               >
                 {cover ? (
                   <img
@@ -543,31 +546,28 @@ export default function PlayerPage() {
                 ) : (
                   <div class="flex h-full w-full items-center justify-center bg-gradient-to-br from-secondary/40 to-base-300">
                     <Disc3
-                      size={72}
-                      class={`opacity-30 sm:h-24 sm:w-24 ${playing ? "animate-pulse-soft" : ""}`}
+                      size={64}
+                      class={`opacity-30 sm:h-20 sm:w-20 ${playing ? "animate-pulse-soft" : ""}`}
                     />
                   </div>
                 )}
               </div>
-              <p class="mt-2 hidden text-center text-sm text-base-content/40 sm:mt-3 sm:block">
-                Glisse la jaquette ← → pour changer de titre
-              </p>
             </div>
 
-            <div class="mx-auto w-full max-w-lg shrink-0 text-center sm:mt-6">
-              <h2 class="font-display line-clamp-2 text-2xl font-extrabold tracking-tight sm:text-3xl md:text-4xl">
+            <div class="mx-auto w-full max-w-lg shrink-0 py-2 text-center sm:py-3">
+              <h2 class="font-display line-clamp-1 text-xl font-extrabold tracking-tight sm:text-2xl md:text-3xl">
                 {current.trackTitle}
               </h2>
-              <p class="mt-1 truncate text-base text-base-content/55 sm:mt-2 sm:text-lg">
+              <p class="mt-0.5 truncate text-sm text-base-content/55 sm:text-base">
                 {current.artistName}
               </p>
             </div>
 
             {/* Seek tactile */}
-            <div class="mx-auto w-full max-w-lg shrink-0 sm:mt-8">
+            <div class="mx-auto w-full max-w-lg shrink-0">
               <div
                 ref={seekRef}
-                class="relative h-11 cursor-pointer touch-manipulation sm:h-14"
+                class="relative h-9 cursor-pointer touch-manipulation sm:h-11"
                 role="slider"
                 aria-valuemin={0}
                 aria-valuemax={duration || 0}
@@ -589,80 +589,80 @@ export default function PlayerPage() {
                   seekingRef.current = false;
                 }}
               >
-                <div class="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-base-content/15 sm:h-2.5">
+                <div class="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-base-content/15 sm:h-2">
                   <div
                     class="h-full rounded-full bg-primary"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
                 <div
-                  class="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary shadow-md sm:h-7 sm:w-7"
+                  class="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary shadow-md sm:h-5 sm:w-5"
                   style={{ left: `${progress}%` }}
                 />
               </div>
-              <div class="mt-0.5 flex justify-between text-xs tabular-nums text-base-content/45 sm:mt-1 sm:text-sm">
+              <div class="flex justify-between text-[11px] tabular-nums text-base-content/45 sm:text-xs">
                 <span>{formatTime(currentTime)}</span>
                 <span>{formatTime(duration)}</span>
               </div>
             </div>
 
             {/* Contrôles */}
-            <div class="mx-auto flex w-full max-w-lg shrink-0 items-center justify-between gap-1 px-0 sm:mt-8 sm:gap-3 sm:px-1">
+            <div class="mx-auto flex w-full max-w-lg shrink-0 items-center justify-between gap-1 py-1 sm:py-2">
               <button
                 type="button"
-                class={`btn btn-ghost btn-square h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:min-h-16 sm:min-w-16 ${
+                class={`btn btn-ghost btn-square h-10 min-h-10 w-10 min-w-10 touch-manipulation sm:h-12 sm:min-h-12 sm:w-12 sm:min-w-12 ${
                   shuffle ? "text-primary" : "text-base-content/50"
                 }`}
                 aria-label="Aléatoire"
                 aria-pressed={shuffle}
                 onClick={toggleShuffle}
               >
-                <Shuffle size={22} class="sm:h-7 sm:w-7" />
+                <Shuffle size={20} class="sm:h-6 sm:w-6" />
               </button>
 
               <button
                 type="button"
-                class="btn btn-ghost btn-circle h-12 min-h-12 w-12 min-w-12 touch-manipulation sm:min-h-20 sm:min-w-20"
+                class="btn btn-ghost btn-circle h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14"
                 aria-label="Précédent"
                 onClick={goPrev}
               >
-                <SkipBack size={28} fill="currentColor" class="sm:h-9 sm:w-9" />
+                <SkipBack size={24} fill="currentColor" class="sm:h-7 sm:w-7" />
               </button>
 
               <button
                 type="button"
-                class="btn btn-primary btn-circle h-16 w-16 min-h-16 min-w-16 touch-manipulation shadow-lg shadow-primary/25 sm:h-24 sm:w-24 sm:min-h-24 sm:min-w-24"
+                class="btn btn-primary btn-circle h-14 w-14 min-h-14 min-w-14 touch-manipulation shadow-lg shadow-primary/25 sm:h-16 sm:w-16 sm:min-h-16 sm:min-w-16"
                 aria-label={playing ? "Pause" : "Lecture"}
                 onClick={() => togglePlay()}
               >
                 {playing ? (
-                  <Pause size={32} fill="currentColor" class="sm:h-11 sm:w-11" />
+                  <Pause size={28} fill="currentColor" class="sm:h-8 sm:w-8" />
                 ) : (
-                  <Play size={32} fill="currentColor" class="ml-0.5 sm:ml-1 sm:h-11 sm:w-11" />
+                  <Play size={28} fill="currentColor" class="ml-0.5 sm:h-8 sm:w-8" />
                 )}
               </button>
 
               <button
                 type="button"
-                class="btn btn-ghost btn-circle h-12 min-h-12 w-12 min-w-12 touch-manipulation sm:min-h-20 sm:min-w-20"
+                class="btn btn-ghost btn-circle h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14"
                 aria-label="Suivant"
                 onClick={goNext}
               >
-                <SkipForward size={28} fill="currentColor" class="sm:h-9 sm:w-9" />
+                <SkipForward size={24} fill="currentColor" class="sm:h-7 sm:w-7" />
               </button>
 
               <button
                 type="button"
-                class={`btn btn-ghost btn-square h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:min-h-16 sm:min-w-16 ${
+                class={`btn btn-ghost btn-square h-10 min-h-10 w-10 min-w-10 touch-manipulation sm:h-12 sm:min-h-12 sm:w-12 sm:min-w-12 ${
                   repeat !== "off" ? "text-primary" : "text-base-content/50"
                 }`}
                 aria-label="Répéter"
                 onClick={cycleRepeat}
               >
                 {repeat === "one" ? (
-                  <Repeat1 size={22} class="sm:h-7 sm:w-7" />
+                  <Repeat1 size={20} class="sm:h-6 sm:w-6" />
                 ) : (
-                  <Repeat size={22} class="sm:h-7 sm:w-7" />
+                  <Repeat size={20} class="sm:h-6 sm:w-6" />
                 )}
               </button>
             </div>
