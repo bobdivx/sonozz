@@ -778,8 +778,9 @@ ${JSON.stringify(
 )}
 
 Genres déjà connus: ${uniqueGenres.join(", ") || "(aucun)"}
-ATTENTION catalogues: iTunes/Apple classent souvent le metal (death, black, thrash, heavy) comme « Rock ». Si l'artiste est Metallica, Slayer, Megadeth, Cannibal Corpse, etc., genres DOIT être le sous-genre réel (Thrash Metal, Heavy Metal, Death Metal…) — JAMAIS « Rock », « Pop », « acoustic rock » ou « hard rock ballad » comme genre principal.
-Si un titre SEED est une ballade atypique (ex. Nothing Else Matters, The Unforgiven), décris-la comme arrangement de CE titre, mais le genreSummary du GROUPE reste thrash/heavy metal (downpicking, palm mute, voix rhythmique Hetfield). Ne résume JAMAIS Metallica comme un groupe de ballades acoustiques.
+ATTENTION catalogues: iTunes/Apple classent souvent un sous-genre (metal, rap, électronique…) sous une ombrelle « Rock » ou « Pop ». genres DOIT reprendre le sous-genre réel de CET artiste — jamais l’ombrelle si un tag plus précis existe.
+Si le titre SEED est atypique (ballade, acoustique, remix), décris CET arrangement dans production / rhythmFeel / bpmEstimate, mais genreSummary et genres restent la lane principale de l’artiste, pas un résumé du seul titre atypique.
+"doNot" = dérives à éviter par rapport à CETTE lane (ex. vocoder si la voix du DNA est organique).
 ${audioBlock}
 
 Retourne un LOCK STYLE strict pour un artiste FICTIONNEL dans EXACTEMENT la même lane sonore (groove, timbre, écriture, prod).

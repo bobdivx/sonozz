@@ -30,7 +30,7 @@ import {
   isAceStepMusicProvider,
 } from "./aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
-import { coalesceGenres, defaultBpmForGenre, isExtremeMetalLane, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "../lib/musicLane.js";
+import { artefactGuardsFromLock, coalesceGenres, defaultBpmForGenre, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "../lib/musicLane.js";
 import { normalizeArtistPhotos } from "../lib/artistPhotos.js";
 import { isStudioEnabled } from "../lib/keys.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
@@ -1027,7 +1027,6 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   const arrangeBits = packed.customFragments || [];
   const genreBlob = styleLockGenreBlob(styleLock, [artist?.genre, lyrics?.title, lyrics?.theme]);
   const metal = isMetalLane(genreBlob);
-  const extreme = isExtremeMetalLane(genreBlob);
   // Arrangement (chœur…) EN TÊTE pour MiniMax aussi + qualité production
   const qualityBits = packed.gospel
     ? [
@@ -1036,12 +1035,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
         "radio-ready streaming quality",
       ]
     : metal
-      ? [
-          ...metalFlavorTags(genreBlob),
-          extreme
-            ? "crushing dense mix, no synth pads, no radio-pop polish"
-            : "no synth pads, no piano pop, no Billboard polish",
-        ]
+      ? [...metalFlavorTags(styleLock), ...artefactGuardsFromLock(styleLock)]
       : [
           "commercial radio-ready full-band production",
           "polished multi-instrument arrangement like a Billboard hit",
@@ -1062,7 +1056,9 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   };
 
   const safeMusicPrompt = scrubVoiceLeak(styleLock?.musicPrompt || "");
-  const voiceLine = metal ? metalVoiceHint(vocal.code, genreBlob) : vocal.voiceHint;
+  const voiceLine = metal
+    ? metalVoiceHint(vocal.code, genreBlob, styleLock)
+    : vocal.voiceHint;
   const banBits = (Array.isArray(styleLock?.doNot) ? styleLock.doNot : [])
     .slice(0, 4)
     .map((d) => `avoid ${d}`);
@@ -1071,12 +1067,12 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     safeMusicPrompt
       ? metal
         ? [
-            styleLock?.genreSummary || (extreme ? "brutal death metal" : "heavy metal"),
+            styleLock?.genreSummary || artist?.genre || "metal",
             voiceLine,
             ...qualityBits,
             safeMusicPrompt,
             ...banBits,
-            `${artist?.mood || styleLock.mood || "brutal"} mood`,
+            `${artist?.mood || styleLock.mood || "aggressive"} mood`,
             `vocals and lyrics in ${langName}`,
             "original composition inspired by that lane, not a cover",
           ]
@@ -1093,13 +1089,13 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
         ? [
             voiceLine,
             ...qualityBits,
-            artist?.genre || (extreme ? "death metal" : "heavy metal"),
+            artist?.genre || styleLock?.genreSummary || "metal",
             artist?.styleArtists?.length
               ? `in the sonic lane of ${artist.styleArtists.join(" and ")} (original, not a cover)`
               : artist?.styleArtist
                 ? `in the sonic lane of ${artist.styleArtist} (original, not a cover)`
                 : "",
-            `${artist?.mood || "brutal"} mood`,
+            `${artist?.mood || styleLock?.mood || "aggressive"} mood`,
             `vocals and lyrics in ${langName}`,
             "original composition, not a cover",
           ]
@@ -1154,7 +1150,7 @@ function assembleTrackResult({
     styleLock: lock,
     bpmGuess,
     musicArrange: arr,
-    vocalHint: metal ? metalVoiceHint(voice?.code, genreBlob) : voice?.voiceHint,
+    vocalHint: metal ? metalVoiceHint(voice?.code, genreBlob, lock) : voice?.voiceHint,
   });
 
   const noteReady =
@@ -1251,6 +1247,7 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
       preview: isPreview,
       referenceAudioUrl: skipStyleReference ? "" : styleRef.previewUrl,
       referenceAudioTitle: skipStyleReference ? "" : refTitle,
+      styleLock,
     });
     return {
       pollNeeded: true,

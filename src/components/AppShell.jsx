@@ -53,9 +53,9 @@ function BottomChromeSpacer({ includeJobs = false }) {
 
 /**
  * Shell app avec sidebar (si connecté) ou bandeau logo public (écoute /play).
- * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres', children: any, title?: string, subtitle?: string, fillViewport?: boolean }} props
+ * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres', children: any, title?: string, subtitle?: string, fillViewport?: boolean, actions?: any }} props
  */
-export default function AppShell({ active, children, title, subtitle, fillViewport = false }) {
+export default function AppShell({ active, children, title, subtitle, fillViewport = false, actions }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   // false jusqu’à confirmation — évite d’afficher la nav studio aux visiteurs
   const [authed, setAuthed] = useState(false);
@@ -120,26 +120,29 @@ export default function AppShell({ active, children, title, subtitle, fillViewpo
           </div>
         </header>
 
-        {(title || subtitle) && (
+        {(title || subtitle || actions) && (
           <div
-            class={`mx-auto w-full max-w-4xl shrink-0 border-b border-base-content/10 px-4 sm:px-6 ${
+            class={`mx-auto flex w-full max-w-4xl shrink-0 items-start justify-between gap-3 border-b border-base-content/10 px-4 sm:px-6 ${
               fillViewport ? "py-3" : "py-4 sm:py-6"
             }`}
           >
-            {title && (
-              <h1
-                class={`font-display font-extrabold tracking-tight ${
-                  fillViewport ? "text-xl sm:text-2xl" : "text-2xl sm:text-3xl"
-                }`}
-              >
-                {title}
-              </h1>
-            )}
-            {subtitle && (
-              <p class={`max-w-2xl text-sm text-base-content/60 ${fillViewport ? "mt-0.5 line-clamp-1" : "mt-1"}`}>
-                {subtitle}
-              </p>
-            )}
+            <div class="min-w-0">
+              {title && (
+                <h1
+                  class={`font-display font-extrabold tracking-tight ${
+                    fillViewport ? "text-xl sm:text-2xl" : "text-2xl sm:text-3xl"
+                  }`}
+                >
+                  {title}
+                </h1>
+              )}
+              {subtitle && (
+                <p class={`max-w-2xl text-sm text-base-content/60 ${fillViewport ? "mt-0.5 line-clamp-1" : "mt-1"}`}>
+                  {subtitle}
+                </p>
+              )}
+            </div>
+            {actions ? <div class="shrink-0">{actions}</div> : null}
           </div>
         )}
 
@@ -246,32 +249,35 @@ export default function AppShell({ active, children, title, subtitle, fillViewpo
       </aside>
 
       <div class={`min-w-0 flex-1 ${fillViewport ? "flex min-h-0 flex-col overflow-hidden" : ""}`}>
-        {(title || subtitle) && (
+        {(title || subtitle || actions) && (
           <header
-            class={`shrink-0 border-b border-base-content/10 px-4 md:px-8 ${
+            class={`flex shrink-0 items-start justify-between gap-3 border-b border-base-content/10 px-4 md:px-8 ${
               fillViewport ? "py-3 sm:py-4" : "py-4 sm:py-6 md:py-8"
             }`}
           >
-            {title && (
-              <h1
-                class={`font-display font-extrabold tracking-tight ${
-                  fillViewport
-                    ? "text-xl sm:text-2xl"
-                    : "text-2xl sm:text-3xl md:text-4xl"
-                }`}
-              >
-                {title}
-              </h1>
-            )}
-            {subtitle && (
-              <p
-                class={`max-w-2xl text-sm text-base-content/60 md:text-base ${
-                  fillViewport ? "mt-0.5 line-clamp-1" : "mt-1"
-                }`}
-              >
-                {subtitle}
-              </p>
-            )}
+            <div class="min-w-0">
+              {title && (
+                <h1
+                  class={`font-display font-extrabold tracking-tight ${
+                    fillViewport
+                      ? "text-xl sm:text-2xl"
+                      : "text-2xl sm:text-3xl md:text-4xl"
+                  }`}
+                >
+                  {title}
+                </h1>
+              )}
+              {subtitle && (
+                <p
+                  class={`max-w-2xl text-sm text-base-content/60 md:text-base ${
+                    fillViewport ? "mt-0.5 line-clamp-1" : "mt-1"
+                  }`}
+                >
+                  {subtitle}
+                </p>
+              )}
+            </div>
+            {actions ? <div class="shrink-0">{actions}</div> : null}
           </header>
         )}
         <div

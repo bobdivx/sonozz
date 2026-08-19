@@ -1,7 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  artefactGuardsFromLock,
   coalesceGenres,
+  composeAceStepStyle,
   defaultBpmForGenre,
   isExtremeMetalLane,
   isMetalLane,
@@ -15,7 +17,7 @@ import { musicArrangeFromStyleLock, musicArrangeToSongGen } from "../src/lib/mus
 import { buildSunoPrompt } from "../src/lib/sunoPrompt.js";
 import { matchMusicStyleFromGenre } from "../src/lib/studio.js";
 
-const cannibalLock = {
+const deathLock = {
   matchedName: "Cannibal Corpse",
   genres: ["Rock", "Death Metal"],
   genreSummary: "Brutal Death Metal",
@@ -30,7 +32,18 @@ const cannibalLock = {
   doNot: ["pop", "clean singing", "synth pads"],
 };
 
-const metallicaLock = {
+const thrashLock = {
+  matchedName: "Metallica",
+  genres: ["Thrash Metal", "Heavy Metal"],
+  genreSummary: "American thrash and heavy metal, palm-muted downpicked riffs, live kit",
+  vocalStyle: "barked rhythmic vocals, raspy baritone",
+  sonicKeywords: ["palm-muted guitars", "downpicking"],
+  production: "high-gain thrash mix, live kit",
+  doNot: ["death growl", "synth pads", "pop crooning"],
+  seedTrack: { title: "Battery", artistName: "Metallica" },
+};
+
+const balladLock = {
   matchedName: "Metallica",
   query: "Nothing Else Matters (Remastered 2021) — Metallica",
   genres: ["hard rock ballad", "acoustic rock", "melancholic rock"],
@@ -38,8 +51,19 @@ const metallicaLock = {
   mood: "melancholic",
   energy: "low",
   bpm: 72,
+  vocalStyle: "emotive raspy baritone",
   musicPrompt: "hard rock ballad, acoustic foundation, Nothing Else Matters",
   seedTrack: { title: "Nothing Else Matters (Remastered 2021)", artistName: "Metallica" },
+};
+
+const industrialLock = {
+  matchedName: "Rammstein",
+  genres: ["Industrial Metal"],
+  genreSummary: "Industrial metal, tight riffs, staged shouted vocals",
+  vocalStyle: "shouted industrial male vocals, slight processing",
+  production: "industrial metal mix, drum machine + guitars",
+  sonicKeywords: ["industrial", "drum machine"],
+  doNot: ["death growl", "blast beats"],
 };
 
 describe("lane metal / iTunes Rock", () => {
@@ -47,7 +71,7 @@ describe("lane metal / iTunes Rock", () => {
     assert.equal(mapGenreForStudio("Rock"), "Rock");
     assert.equal(mapGenreForStudio("Death Metal"), "Metal");
     assert.equal(mapGenreForStudio("Rock, Death Metal"), "Metal");
-    assert.equal(mapGenreForStudio("Brutal Death Metal · Cannibal Corpse"), "Metal");
+    assert.equal(mapGenreForStudio("Brutal Death Metal"), "Metal");
   });
 
   it("droppe l’ombrelle iTunes Rock quand un sous-genre metal est là", () => {
@@ -55,12 +79,13 @@ describe("lane metal / iTunes Rock", () => {
     assert.deepEqual(coalesceGenres(["Rock / Indie rock", "Metal / Hard rock"]), [
       "Metal / Hard rock",
     ]);
-    assert.equal(isExtremeMetalLane("Cannibal Corpse brutal death metal"), true);
+    assert.equal(isExtremeMetalLane("brutal death metal"), true);
     assert.equal(isMetalLane("indie pop"), false);
   });
 
-  it("BPM death metal ~170, pas 110 pop", () => {
+  it("BPM depuis le genre du DNA, pas un nom de groupe", () => {
     assert.equal(defaultBpmForGenre("Death Metal"), 170);
+    assert.equal(defaultBpmForGenre("Thrash Metal"), 140);
     assert.equal(defaultBpmForGenre("Rock"), 110);
   });
 
@@ -70,80 +95,97 @@ describe("lane metal / iTunes Rock", () => {
   });
 });
 
-describe("arrangement / prompts death metal", () => {
-  it("n’injecte ni piano ni pads ni radio-ready", () => {
-    const arr = musicArrangeFromStyleLock(cannibalLock);
+describe("arrangement / prompts depuis le DNA", () => {
+  it("death : reprend vocalStyle / production / doNot du lock", () => {
+    const arr = musicArrangeFromStyleLock(deathLock);
     assert.equal(arr.leadInstrument, "electric guitar");
     assert.equal(arr.drums, "live kit");
     assert.equal(arr.choir, "none");
     assert.equal(arr.density, "dense");
 
     const packed = musicArrangeToSongGen(arr, {
-      styleLockInstruments: cannibalLock.instruments,
-      styleLock: cannibalLock,
+      styleLockInstruments: deathLock.instruments,
+      styleLock: deathLock,
     });
     const blob = `${packed.instruments} ${packed.customFragments.join(" ")}`.toLowerCase();
-    assert.match(blob, /guitar|blast|death metal|growl/);
-    assert.doesNotMatch(blob, /\bpiano\b|billboard|radio-ready|soft drums/);
-    assert.match(blob, /never synth pads|never pop/);
+    assert.match(blob, /guttural death growl/);
+    assert.match(blob, /crushing dense death metal mix/);
+    assert.match(blob, /never pop|never clean singing|never synth/);
+    assert.match(blob, /never vocoder/);
     assert.ok(!metalFlavorTags("pop").length);
-    assert.ok(metalFlavorTags("brutal death metal").includes("guttural growls"));
+    const tags = metalFlavorTags(deathLock).join(" ");
+    assert.match(tags, /guttural death growl|blast beats|Brutal Death Metal/i);
   });
 
-  it("prompt Suno sans pads atmosphériques", () => {
+  it("prompt Suno recopie le DNA, sans bible Florida / Hetfield", () => {
     const prompt = buildSunoPrompt({
       lyrics: { title: "Vile Adulteress", text: "[Verse]\nFlesh" },
       artist: { name: "SLOWP-KE", genre: "Death Metal", gender: "male" },
-      styleLock: cannibalLock,
+      styleLock: deathLock,
       bpmGuess: 170,
     });
-    assert.match(prompt, /death metal|growl|blast/i);
+    assert.match(prompt, /Brutal Death Metal|guttural death growl|blast beats/i);
+    assert.doesNotMatch(prompt, /Florida|George Fisher|Hetfield|Rammstein/i);
     assert.doesNotMatch(prompt, /atmospheric pads|soft drums|subtle electronic/);
+  });
+
+  it("industriel : pas de growls death ni de ban industrial", () => {
+    const packed = musicArrangeToSongGen(musicArrangeFromStyleLock(industrialLock), {
+      styleLock: industrialLock,
+    });
+    const blob = packed.customFragments.join(" ").toLowerCase();
+    assert.match(blob, /industrial/);
+    assert.doesNotMatch(blob, /guttural/);
+    assert.match(blob, /never blast beats/);
+    assert.equal(artefactGuardsFromLock(industrialLock).length, 0);
+    const voice = metalVoiceHint("male", "Industrial Metal", industrialLock);
+    assert.match(voice, /industrial/i);
+    assert.doesNotMatch(voice, /guttural|George Fisher/i);
   });
 });
 
-describe("lane Metallica / thrash (pas ballade pop)", () => {
-  it("détecte Metallica même si le lock dit acoustic ballad", () => {
-    const blob = [
-      metallicaLock.matchedName,
-      metallicaLock.genreSummary,
-      metallicaLock.musicPrompt,
-    ].join(" ");
+describe("lane thrash vs ballade : le lock prime", () => {
+  it("détecte thrash depuis les genres, pas le nom du groupe", () => {
+    const blob = [thrashLock.genreSummary, thrashLock.genres.join(" ")].join(" ");
     assert.equal(isMetalLane(blob), true);
     assert.equal(isThrashLane(blob), true);
     assert.equal(isExtremeMetalLane(blob), false);
     assert.equal(mapGenreForStudio(blob), "Metal");
-    assert.equal(mapGenreForStudio("Metallica acoustic rock ballad"), "Metal");
   });
 
-  it("ne transforme pas Metallica en death metal ni en Billboard", () => {
-    const fixed = withKnownArtistLane(metallicaLock);
-    assert.match(fixed.genreSummary, /thrash|heavy metal/i);
-    assert.ok(fixed.genres.some((g) => /thrash|heavy metal/i.test(g)));
-    const tags = metalFlavorTags(`${fixed.matchedName} ${fixed.genreSummary}`).join(" ");
-    assert.match(tags, /downpicking|palm-muted|Hetfield/i);
-    assert.doesNotMatch(tags, /guttural|blast beat/i);
-    const voice = metalVoiceHint("male", "Metallica thrash");
-    assert.match(voice, /Hetfield|bark/i);
-    assert.match(voice, /thrash/i);
+  it("ne réécrit pas un DNA ballade en thrash / death", () => {
+    const fixed = withKnownArtistLane(balladLock);
+    assert.match(fixed.genreSummary, /ballad|acoustic/i);
+    assert.doesNotMatch(fixed.genreSummary, /thrash|death metal|Hetfield/i);
+    const voice = metalVoiceHint("male", styleBlob(fixed), fixed);
+    assert.match(voice, /raspy baritone/i);
+    assert.doesNotMatch(voice, /guttural|Hetfield/i);
   });
 
-  it("prompt Suno Metallica sans pads radio ni growls", () => {
+  it("DNA thrash : tags et voix du lock", () => {
+    const tags = metalFlavorTags(thrashLock).join(" ");
+    assert.match(tags, /palm-muted|downpicking|thrash/i);
+    assert.doesNotMatch(tags, /guttural|blast beat|Hetfield|Mesa/i);
+    const voice = metalVoiceHint("male", "Thrash Metal", thrashLock);
+    assert.match(voice, /barked rhythmic/i);
+  });
+
+  it("prompt Suno thrash sans growls ni pads radio", () => {
     const prompt = buildSunoPrompt({
       lyrics: { title: "Echoes in the Ash", text: "[Verse]\nAsh" },
-      artist: { name: "Slowpøke", genre: metallicaLock.genreSummary, gender: "male" },
-      styleLock: metallicaLock,
-      bpmGuess: 72,
+      artist: { name: "Slowpøke", genre: "Thrash Metal", gender: "male" },
+      styleLock: thrashLock,
+      bpmGuess: 140,
     });
-    assert.match(prompt, /thrash|heavy metal|downpick|palm-mut/i);
-    assert.doesNotMatch(prompt, /atmospheric pads|soft drums|guttural|blast beats|brutal death/i);
+    assert.match(prompt, /thrash|palm-muted|barked/i);
+    assert.doesNotMatch(prompt, /atmospheric pads|soft drums|guttural|blast beats|brutal death|Florida|Hetfield/i);
   });
 });
 
-describe("lane Cannibal Corpse / death metal (pas thrash Metallica)", () => {
-  it("un seed Cannibal Corpse n’hérite pas du résumé Mesa / Hetfield", () => {
+describe("DNA figé : pas d’override par nom d’artiste", () => {
+  it("un seed death n’écrase pas un leftover ballade (le strip se fait au changement de titre)", () => {
     const mixed = {
-      ...metallicaLock,
+      ...balladLock,
       matchedName: "Cannibal Corpse",
       seedTrack: {
         title: "Hammer Smashed Face",
@@ -151,18 +193,33 @@ describe("lane Cannibal Corpse / death metal (pas thrash Metallica)", () => {
       },
     };
     const fixed = withKnownArtistLane(mixed);
-    assert.match(fixed.genreSummary, /brutal death metal/i);
-    assert.doesNotMatch(fixed.genreSummary, /Mesa|Hetfield|wah/i);
-    assert.ok(fixed.genres.some((g) => /death metal/i.test(g)));
-    assert.match(fixed.vocalStyle, /guttural|growl/i);
-    const tags = metalFlavorTags(`${fixed.matchedName} ${fixed.genreSummary}`).join(" ");
-    assert.match(tags, /guttural|blast/i);
-    assert.doesNotMatch(tags, /Hetfield|Mesa/i);
+    assert.match(fixed.genreSummary, /ballad|acoustic/i);
+    assert.doesNotMatch(fixed.vocalStyle, /guttural/i);
   });
 
-  it("Cannibal Corpse sans leftover Metallica reste en death metal", () => {
-    const fixed = withKnownArtistLane(cannibalLock);
-    assert.match(fixed.genreSummary, /brutal death metal/i);
-    assert.equal(isExtremeMetalLane("Cannibal Corpse"), true);
+  it("coalesce seulement les genres catalogue du DNA death", () => {
+    const fixed = withKnownArtistLane(deathLock);
+    assert.deepEqual(fixed.genres, ["Death Metal"]);
+    assert.equal(fixed.vocalStyle, deathLock.vocalStyle);
+    assert.equal(isExtremeMetalLane("brutal death metal guttural"), true);
+  });
+
+  it("un ban « death growl » dans un blob thrash ne bascule pas en death metal", () => {
+    const blob = "American thrash metal, barked vocals, avoid death growl";
+    assert.equal(isExtremeMetalLane(blob), false);
+    assert.doesNotMatch(composeAceStepStyle(blob), /guttural|Florida/i);
+  });
+
+  it("ACE-Step reprend le DNA du lock, sans préfixe Florida", () => {
+    const style = composeAceStepStyle("high energy original", deathLock);
+    assert.match(style, /Brutal Death Metal/i);
+    assert.match(style, /guttural death growl/i);
+    assert.match(style, /not vocoder|no vocoder/i);
+    assert.doesNotMatch(style, /Florida|George Fisher|Rammstein/i);
+    assert.doesNotMatch(composeAceStepStyle("pop, emotional, radio-ready"), /guttural|industrial/i);
   });
 });
+
+function styleBlob(lock) {
+  return [lock.genreSummary, lock.vocalStyle, ...(lock.genres || [])].join(" ");
+}

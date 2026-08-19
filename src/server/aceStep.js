@@ -1,4 +1,5 @@
 import { isStudioEnabled } from "../lib/keys.js";
+import { composeAceStepStyle } from "../lib/musicLane.js";
 
 /**
  * Client ACE-Step Studio (Pinokio).
@@ -283,6 +284,7 @@ export function buildAceStepBody({
   referenceAudioTitle,
   audioCoverStrength,
   studioBase,
+  styleLock,
 }) {
   const meta = aceStepModelMeta(modelId);
   const isTurbo = Boolean(meta && meta.steps <= 8);
@@ -298,7 +300,7 @@ export function buildAceStepBody({
   const body = {
     customMode: true,
     title: String(preview ? `${title || "SONOZZ"} · extrait` : title || "SONOZZ Track").slice(0, 120),
-    style: String(style || "pop, emotional, radio-ready").slice(0, 800),
+    style: composeAceStepStyle(style, styleLock),
     lyrics: String(preview ? lyricsForAceStepPreview(lyrics) : lyrics || "").slice(0, 8000),
     prompt: String(preview ? lyricsForAceStepPreview(lyrics) : lyrics || "").slice(0, 8000),
     instrumental: false,
@@ -725,6 +727,7 @@ export async function startAceStep(keys, {
   preview = false,
   referenceAudioUrl,
   referenceAudioTitle,
+  styleLock,
 } = {}) {
   const base = resolveAceStepBaseUrl(keys);
   const info = await testAceStep(keys);
@@ -778,6 +781,7 @@ export async function startAceStep(keys, {
     referenceAudioUrl: refUrl,
     referenceAudioTitle,
     studioBase: base,
+    styleLock,
   });
 
   console.info(

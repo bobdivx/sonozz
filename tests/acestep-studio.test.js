@@ -147,6 +147,8 @@ describe("ACE-Step Studio client", () => {
     assert.match(viaGradio.referenceAudioUrl, /gradio_api\/file=/);
     assert.equal(viaGradio.sourceAudioUrl, viaGradio.referenceAudioUrl);
     assert.equal(viaGradio.taskType, "cover");
+    assert.match(viaGradio.style, /brutal death metal/i);
+    assert.doesNotMatch(viaGradio.style, /Florida|George Fisher/i);
   });
 
   it("refuse les URLs ACE /audio/ (Gradio 5 InvalidPathError)", () => {

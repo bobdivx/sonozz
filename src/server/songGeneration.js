@@ -744,7 +744,7 @@ function buildSongGenStyleTags(
     push("high energy");
     push("dense layers");
     push("wall of sound");
-    for (const t of metalFlavorTags(styleLockGenreBlob(lock))) push(t, 32);
+    for (const t of metalFlavorTags(lock)) push(t, 32);
     for (const d of (lock?.doNot || []).slice(0, 3)) {
       push(`no ${String(d).split(/[,;/]/)[0].trim()}`.slice(0, 28), 28);
     }
