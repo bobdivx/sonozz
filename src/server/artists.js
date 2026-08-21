@@ -448,6 +448,7 @@ export async function listLibraryTracks(limit = 200) {
         json_extract(project_json, '$.track.audioUrl') AS audio_url,
         json_extract(project_json, '$.track.status') AS track_status,
         json_extract(project_json, '$.cover.imageUrl') AS cover_url,
+        json_extract(project_json, '$.album.cover.imageUrl') AS album_cover_url,
         json_extract(project_json, '$.track.duration') AS duration,
         json_extract(project_json, '$.artist.imageUrl') AS artist_image
       FROM projects
@@ -475,7 +476,7 @@ export async function listLibraryTracks(limit = 200) {
         return null;
       const audioUrl = lightAssetUrl(row.audio_url);
       if (!audioUrl) return null;
-      const coverUrl = lightAssetUrl(row.cover_url);
+      const coverUrl = lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url);
       const artistImage = lightAssetUrl(row.artist_image);
       return {
         id: row.id,
