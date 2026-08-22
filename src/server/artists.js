@@ -368,6 +368,7 @@ export async function listArtistReleases(slug, limit = 40) {
         json_extract(project_json, '$.track.status') AS track_status,
         json_extract(project_json, '$.cover.imageUrl') AS cover_url,
         json_extract(project_json, '$.album.cover.imageUrl') AS album_cover_url,
+        json_extract(project_json, '$.artist.imageUrl') AS artist_image,
         json_extract(project_json, '$.distrokid.status') AS once_status,
         json_extract(project_json, '$.distrokid.provider') AS once_provider,
         json_extract(project_json, '$.distrokid.releaseId') AS release_id,
@@ -391,7 +392,8 @@ export async function listArtistReleases(slug, limit = 40) {
       String(row.track_status || "") === "pending-review" ||
       String(row.track_status || "") === "preview-ready";
     const audioUrl = pendingReview ? null : lightAssetUrl(row.audio_url);
-    const coverUrl = lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url);
+    const artistImage = lightAssetUrl(row.artist_image);
+    const coverUrl = lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url) || artistImage;
     const onceStatus = row.once_status || null;
     const hasLyrics = Boolean(row.lyrics_title || row.lyrics_theme);
     return {
@@ -476,8 +478,8 @@ export async function listLibraryTracks(limit = 200) {
         return null;
       const audioUrl = lightAssetUrl(row.audio_url);
       if (!audioUrl) return null;
-      const coverUrl = lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url);
       const artistImage = lightAssetUrl(row.artist_image);
+      const coverUrl = lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url) || artistImage;
       return {
         id: row.id,
         title: row.title,

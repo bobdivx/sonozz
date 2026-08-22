@@ -303,7 +303,7 @@ export default function PlayerPage() {
               Effacer filtre
             </button>
           )}
-          {!loading && (
+          {!loading && visibleTracks.length > 0 && (
             <span class="w-full text-sm text-base-content/45 sm:ml-auto sm:w-auto">
               {visibleTracks.length} titre{visibleTracks.length !== 1 ? "s" : ""}
             </span>

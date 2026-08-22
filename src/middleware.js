@@ -41,8 +41,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
       // Pour les pages, traiter d'abord la requête pour savoir si la route existe
       const response = await next();
       
-      // Si la page existe (200, 3xx), rediriger vers login
-      // Si 404, laisser passer le 404 (ne pas rediriger vers login pour URLs inexistantes)
+      // Si 404 ou erreur >= 400, laisser passer (ne pas rediriger vers login pour URLs inexistantes)
+      if (response.status >= 404) {
+        return withNoStore(response);
+      }
+      
+      // Si la page existe (200, 3xx mais pas 404), rediriger vers login
       if (response.status < 400) {
         const nextUrl = `${pathname}${search || ""}`;
         return withNoStore(
@@ -50,7 +54,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
         );
       }
       
-      // Pour les 404 et autres erreurs, retourner la réponse sans redirection
+      // Autres erreurs 400-403, retourner la réponse
       return withNoStore(response);
     }
   }
