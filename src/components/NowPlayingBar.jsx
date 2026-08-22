@@ -85,6 +85,11 @@ export default function NowPlayingBar() {
     return () => ro.disconnect();
   }, []);
 
+  // Masquer le mini-player sur les pages d'authentification
+  if (typeof location !== "undefined" && location.pathname === "/login") {
+    return null;
+  }
+
   const current = currentPlayTrack(session);
   const cover = current?.coverUrl || current?.artistImage || "";
 

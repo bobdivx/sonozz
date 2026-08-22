@@ -28,6 +28,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (isAccessControlEnabled() && !isPublicPath(pathname)) {
     const session = getSessionFromCookies(context.cookies);
     if (!session) {
+      // Pour les APIs, retourner 401 immédiatement
       if (pathname.startsWith("/api/")) {
         return withNoStore(
           new Response(JSON.stringify({ error: "Non autorisé" }), {
@@ -36,10 +37,21 @@ export const onRequest = defineMiddleware(async (context, next) => {
           }),
         );
       }
-      const nextUrl = `${pathname}${search || ""}`;
-      return withNoStore(
-        context.redirect(`/login?next=${encodeURIComponent(nextUrl)}`),
-      );
+      
+      // Pour les pages, traiter d'abord la requête pour savoir si la route existe
+      const response = await next();
+      
+      // Si la page existe (200, 3xx), rediriger vers login
+      // Si 404, laisser passer le 404 (ne pas rediriger vers login pour URLs inexistantes)
+      if (response.status < 400) {
+        const nextUrl = `${pathname}${search || ""}`;
+        return withNoStore(
+          context.redirect(`/login?next=${encodeURIComponent(nextUrl)}`),
+        );
+      }
+      
+      // Pour les 404 et autres erreurs, retourner la réponse sans redirection
+      return withNoStore(response);
     }
   }
 
