@@ -84,6 +84,20 @@ export default function PlayerPage() {
   const [ratingBusy, setRatingBusy] = useState(false);
   const seekingRef = useRef(false);
 
+  // Réinitialiser la durée lors du changement de morceau
+  useEffect(() => {
+    if (!current) {
+      setDuration(0);
+      setCurrentTime(0);
+      setAudioError("");
+      return;
+    }
+    // Essayer d'utiliser la durée stockée immédiatement
+    if (current.duration && Number.isFinite(current.duration) && current.duration > 0) {
+      setDuration(current.duration);
+    }
+  }, [current?.id]);
+
   // Générer ou récupérer un player_id anonyme stable
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
@@ -187,7 +201,12 @@ export default function PlayerPage() {
     const onTime = () => {
       if (seekingRef.current) return;
       setCurrentTime(el.currentTime || 0);
-      if (Number.isFinite(el.duration)) setDuration(el.duration);
+      // Utiliser el.duration si disponible, sinon fallback sur current.duration stockée
+      if (Number.isFinite(el.duration) && el.duration > 0) {
+        setDuration(el.duration);
+      } else if (current?.duration && Number.isFinite(current.duration) && current.duration > 0) {
+        setDuration(current.duration);
+      }
     };
     const onErr = () =>
       setAudioError("Impossible de lire ce fichier — lien expiré ou audio manquant.");
@@ -202,7 +221,7 @@ export default function PlayerPage() {
       el.removeEventListener("durationchange", onTime);
       el.removeEventListener("error", onErr);
     };
-  }, [current?.id]);
+  }, [current?.id, current?.duration]);
 
   useEffect(() => {
     bindMediaSession();
