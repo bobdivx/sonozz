@@ -757,10 +757,14 @@ export async function getArtistHub(slug) {
         }
       : await computeArtistStats(slug, { keys: storedKeys, onceToken });
 
+  const { listAlbumsByArtist } = await import("./db.js");
+  const albums = await listAlbumsByArtist(slug);
+
   return {
     ...artist,
     stats,
     releases,
+    albums,
     career: artist.stats?.career || null,
   };
 }

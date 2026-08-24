@@ -152,8 +152,61 @@ export async function ensureAlbumTrackProject(entry, { leadProject, seed, leadPr
 
 /**
  * Sépare le catalogue artiste : albums (lead + pistes enfants) vs singles.
+ * Utilise maintenant les données albums de la table dédiée.
  */
-export function organizeArtistReleases(releases = []) {
+export function organizeArtistReleases(releases = [], albumsData = []) {
+  if (albumsData && albumsData.length > 0) {
+    const albumMap = new Map(albumsData.map((a) => [a.id, a]));
+    const singles = [];
+    const organizedAlbums = [];
+
+    for (const album of albumsData) {
+      const albumTracks = album.tracks || [];
+      const tracks = [];
+
+      for (const albumTrack of albumTracks) {
+        const release = releases.find((r) => r.id === albumTrack.projectId);
+        if (release) {
+          tracks.push({
+            ...release,
+            albumId: album.id,
+            albumTitle: album.title,
+            albumStatus: album.status,
+            albumIndex: albumTrack.index,
+            albumRole: albumTrack.role,
+            albumTrackId: albumTrack.id,
+          });
+        }
+      }
+
+      tracks.sort((a, b) => (a.albumIndex || 999) - (b.albumIndex || 999));
+
+      const leadTrack = tracks.find((t) => t.albumRole === "lead") || tracks[0];
+      
+      organizedAlbums.push({
+        id: album.id,
+        title: album.title,
+        status: album.status,
+        targetCount: album.targetCount,
+        doneCount: album.doneCount || 0,
+        coverUrl: album.coverUrl || leadTrack?.coverUrl || null,
+        lead: leadTrack || null,
+        tracks,
+      });
+    }
+
+    for (const release of releases) {
+      const inAlbum = organizedAlbums.some((a) =>
+        a.tracks.some((t) => t.id === release.id)
+      );
+      if (!inAlbum) {
+        singles.push(release);
+      }
+    }
+
+    return { albums: organizedAlbums, singles };
+  }
+
   const childrenByLead = new Map();
   const leads = [];
   const singles = [];
