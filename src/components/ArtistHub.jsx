@@ -19,6 +19,8 @@ import {
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import ArtistAlbumSection from "./ArtistAlbumSection.jsx";
+import TrackCreationModal from "./TrackCreationModal.jsx";
+import TrackReviewPanel from "./TrackReviewPanel.jsx";
 import { api } from "../lib/apiClient.js";
 import { loadKeys } from "../lib/keys.js";
 import { listArtistImageUrl } from "../lib/artistPhotos.js";
@@ -34,6 +36,7 @@ import {
 const TABS = [
   { id: "titres", label: "Catalogue", icon: Music2 },
   { id: "album", label: "Album", icon: Library },
+  { id: "revue", label: "Revue", icon: RefreshCw },
   { id: "coach", label: "Coach", icon: Sparkles },
   { id: "style", label: "Style", icon: Palette },
   { id: "chiffres", label: "Chiffres", icon: BarChart3 },
@@ -285,6 +288,8 @@ export default function ArtistHub({ slug }) {
   const [careerBusy, setCareerBusy] = useState(false);
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const [schedulePreview, setSchedulePreview] = useState(null);
+  const [showTrackModal, setShowTrackModal] = useState(false);
+  const [pendingTrackTheme, setPendingTrackTheme] = useState("");
   const initialHash = readHashState();
   const [tab, setTab] = useState(initialHash.tab);
   const [openAlbumId, setOpenAlbumId] = useState(initialHash.albumId);
@@ -383,7 +388,14 @@ export default function ArtistHub({ slug }) {
     }
   }
 
-  async function createTrack(themeOverride) {
+  function promptCreateTrack(themeOverride) {
+    const themeValue = typeof themeOverride === "string" ? themeOverride.trim() : "";
+    setPendingTrackTheme(themeValue);
+    setShowTrackModal(true);
+  }
+
+  async function createTrack(themeOverride, options = {}) {
+    setShowTrackModal(false);
     setBusy(true);
     setError("");
     setMsg("");
@@ -396,6 +408,9 @@ export default function ArtistHub({ slug }) {
         body: JSON.stringify({
           action: "new-track",
           theme: themeValue,
+          genreOverride: options.genre,
+          referencesOverride: options.references,
+          referenceTrackOverride: options.referenceTrack,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -560,6 +575,31 @@ export default function ArtistHub({ slug }) {
     }
   }
 
+  async function regenerateTrack(track, options = {}) {
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "regenerate-track",
+          projectId: track.id,
+          keepGenre: options.keepGenre !== false,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Régénération impossible");
+      setMsg(`Régénération de « ${track.trackTitle || track.title} » lancée — ouvre le Studio pour suivre.`);
+      window.location.href = json.studioUrl || studioHref(track.id, "tracks");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (data?.career) loadSchedulePreview();
   }, [data?.career?.updatedAt, slug]);
@@ -618,7 +658,7 @@ export default function ArtistHub({ slug }) {
           title: "Créer le premier titre",
           text: "On ouvre le Studio pour les paroles et l’audio — le style reste celui de cette fiche.",
           cta: "Nouveau titre",
-          onClick: () => createTrack(),
+          onClick: () => promptCreateTrack(),
         }
       : dueToday.some((i) => i.type === "promote") && schedulePreview?.canRun
         ? {
@@ -634,7 +674,7 @@ export default function ArtistHub({ slug }) {
               title: career.nextSingle.titleHint || "Nouveau single",
               text: career.nextSingle.theme,
               cta: "Nouveau titre",
-              onClick: () => createTrack(career.nextSingle.theme),
+              onClick: () => promptCreateTrack(career.nextSingle.theme),
             }
           : career?.verdict === "publish" && unisonHref
             ? {
@@ -754,7 +794,7 @@ export default function ArtistHub({ slug }) {
                       type="button"
                       class={`btn gap-2 rounded-full ${hasPlayable ? "btn-ghost border border-base-content/15" : "btn-primary"}`}
                       disabled={busy}
-                      onClick={() => createTrack()}
+                      onClick={() => promptCreateTrack()}
                     >
                       {busy ? (
                         <span class="loading loading-spinner loading-sm" />
@@ -863,7 +903,7 @@ export default function ArtistHub({ slug }) {
                       type="button"
                       class="btn btn-primary btn-sm gap-1 rounded-full"
                       disabled={busy}
-                      onClick={() => createTrack()}
+                      onClick={() => promptCreateTrack()}
                     >
                       <Plus size={14} /> Nouveau titre
                     </button>
@@ -874,7 +914,7 @@ export default function ArtistHub({ slug }) {
                       type="button"
                       class="flex w-full flex-col items-center gap-3 rounded-3xl border border-dashed border-primary/35 bg-primary/5 px-6 py-14 text-center transition hover:border-primary/60 hover:bg-primary/10"
                       disabled={busy}
-                      onClick={() => createTrack()}
+                      onClick={() => promptCreateTrack()}
                     >
                       <span class="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/20 text-primary">
                         <AudioLines size={26} />
@@ -1070,12 +1110,31 @@ export default function ArtistHub({ slug }) {
                       type="button"
                       class="btn btn-primary btn-sm mt-4 gap-1 rounded-full"
                       disabled={busy}
-                      onClick={() => createTrack()}
+                      onClick={() => promptCreateTrack()}
                     >
                       <Plus size={14} /> Nouveau titre
                     </button>
                   </div>
                 )}
+              </section>
+            )}
+
+            {tab === "revue" && (
+              <section class="space-y-4">
+                <div>
+                  <h2 class="font-display text-2xl font-bold">Revue des morceaux</h2>
+                  <p class="text-sm text-base-content/55">
+                    Écoute tes titres, note-les et régénère ceux qui ne te conviennent pas. Les versions précédentes sont conservées.
+                  </p>
+                </div>
+                <TrackReviewPanel
+                  tracks={releases.filter((r) => r.hasAudio || r.hasLyrics)}
+                  onPlayTrack={(track) => playTracks(toPlayTracks([track], playMeta), track.id)}
+                  onRegenerateTrack={regenerateTrack}
+                  nowPlayingId={nowPlayingId}
+                  playing={playing}
+                  busy={busy}
+                />
               </section>
             )}
 
@@ -1515,6 +1574,15 @@ export default function ArtistHub({ slug }) {
           </div>
         )}
       </div>
+
+      <TrackCreationModal
+        open={showTrackModal}
+        onClose={() => setShowTrackModal(false)}
+        onConfirm={(options) => createTrack(pendingTrackTheme, options)}
+        currentGenre={style.genres[0] || profile.genre || ""}
+        currentReferences={style.refs || []}
+        currentReferenceTrack={style.topTracks?.[0] || style.lock?.topTracks?.[0] || ""}
+      />
     </AppShell>
   );
 }

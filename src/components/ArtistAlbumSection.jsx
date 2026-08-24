@@ -25,8 +25,9 @@ export default function ArtistAlbumSection({
 }) {
   const leadCandidates = createOnly
     ? releases.filter((r) => r.hasAudio && r.hasLyrics && !r.albumStatus && !r.albumLeadId)
-    : releases.filter((r) => r.hasAudio && r.hasLyrics);
+    : releases.filter((r) => r.hasAudio && r.hasLyrics && !r.albumLeadId);
   const albumProjects = releases.filter((r) => r.albumStatus);
+  const existingAlbums = releases.filter((r) => r.albumStatus && (r.albumStatus === "done" || r.albumStatus === "cancelled" || r.albumStatus === "error"));
   const defaultLeadId =
     pinnedLeadId ||
     albumProjects.find((r) => r.albumStatus === "running")?.id ||
@@ -230,6 +231,17 @@ export default function ArtistAlbumSection({
       return;
     }
     if (project?.album?.status === "running") return;
+    
+    // Empêcher l'écrasement d'un album déjà terminé
+    if (!resume && project?.album && (project.album.status === "done" || project.album.status === "cancelled" || project.album.status === "error")) {
+      const confirmed = window.confirm(
+        `Ce morceau a déjà un album (${project.album.title || "sans titre"}, statut: ${project.album.status}). Créer un nouvel album écrasera l'ancien. Veux-tu continuer ?`
+      );
+      if (!confirmed) {
+        setError("Opération annulée — pour créer un nouvel album, utilise un autre single comme lead.");
+        return;
+      }
+    }
 
     const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
     setError("");
