@@ -1,6 +1,7 @@
 import { useState, useEffect } from "preact/hooks";
 import { Play, Pause, ThumbsUp, ThumbsDown, RefreshCw, History, Star } from "lucide-preact";
 import TrackCreationModal from "./TrackCreationModal.jsx";
+import ConfirmModal from "./ConfirmModal.jsx";
 
 /**
  * Panneau de revue des morceaux avec possibilité de les régénérer.
@@ -24,6 +25,7 @@ export default function TrackReviewPanel({
   const [showHistory, setShowHistory] = useState({});
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
   const [trackToRegenerate, setTrackToRegenerate] = useState(null);
+  const [showConfirmRegenerate, setShowConfirmRegenerate] = useState(false);
 
   // Charger les notes depuis la DB au lieu de localStorage
   useEffect(() => {
@@ -81,10 +83,9 @@ export default function TrackReviewPanel({
   const handleRegenerate = async (track) => {
     const rating = ratings[track.id];
     if (rating === "like") {
-      const confirmed = window.confirm(
-        `Tu as marqué ce morceau comme apprécié. Es-tu sûr de vouloir le régénérer ?`
-      );
-      if (!confirmed) return;
+      setTrackToRegenerate(track);
+      setShowConfirmRegenerate(true);
+      return;
     }
 
     setTrackToRegenerate(track);
@@ -252,6 +253,23 @@ export default function TrackReviewPanel({
           );
         })}
       </ul>
+
+      <ConfirmModal
+        open={showConfirmRegenerate}
+        onClose={() => {
+          setShowConfirmRegenerate(false);
+          setTrackToRegenerate(null);
+        }}
+        onConfirm={() => {
+          setShowConfirmRegenerate(false);
+          setShowRegenerateModal(true);
+        }}
+        title="Régénérer ce morceau ?"
+        message={`Tu as marqué « ${trackToRegenerate?.trackTitle || trackToRegenerate?.title || "ce morceau"} » comme apprécié.\n\nEs-tu sûr de vouloir le régénérer ?`}
+        confirmText="Oui, régénérer"
+        cancelText="Annuler"
+        confirmClass="btn-warning"
+      />
 
       <TrackCreationModal
         open={showRegenerateModal}

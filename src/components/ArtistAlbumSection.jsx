@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Library } from "lucide-preact";
 import AlbumAutonomePanel from "./AlbumAutonomePanel.jsx";
+import ConfirmModal from "./ConfirmModal.jsx";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, isStudioEnabled } from "../lib/keys.js";
 import { emptyProject, isTrackAudioFinal, studioHref, artistAlbumHref } from "../lib/studio.js";
@@ -43,6 +44,8 @@ export default function ArtistAlbumSection({
   const [error, setError] = useState("");
   const [albumSize, setAlbumSize] = useState(8);
   const [canGenerateAudio, setCanGenerateAudio] = useState(false);
+  const [showConfirmOverwrite, setShowConfirmOverwrite] = useState(false);
+  const [pendingAlbumSize, setPendingAlbumSize] = useState(8);
 
   const albumWorkingRef = useRef(null);
 
@@ -234,15 +237,15 @@ export default function ArtistAlbumSection({
     
     // Empêcher l'écrasement d'un album déjà terminé
     if (!resume && project?.album && (project.album.status === "done" || project.album.status === "cancelled" || project.album.status === "error")) {
-      const confirmed = window.confirm(
-        `Ce morceau a déjà un album (${project.album.title || "sans titre"}, statut: ${project.album.status}). Créer un nouvel album écrasera l'ancien. Veux-tu continuer ?`
-      );
-      if (!confirmed) {
-        setError("Opération annulée — pour créer un nouvel album, utilise un autre single comme lead.");
-        return;
-      }
+      setPendingAlbumSize(totalCount);
+      setShowConfirmOverwrite(true);
+      return;
     }
 
+    startAlbumCreation(totalCount, resume);
+  }
+
+  function startAlbumCreation(totalCount, resume = false) {
     const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
     setError("");
     const jobId = startAlbumJob({
@@ -333,13 +336,14 @@ export default function ArtistAlbumSection({
     "";
 
   return (
-    <section
-      class={
-        embedded
-          ? "space-y-4"
-          : "space-y-4 rounded-3xl border border-base-content/10 bg-base-300/30 p-5"
-      }
-    >
+    <>
+      <section
+        class={
+          embedded
+            ? "space-y-4"
+            : "space-y-4 rounded-3xl border border-base-content/10 bg-base-300/30 p-5"
+        }
+      >
       {!embedded && (
       <div class="flex flex-wrap items-end justify-between gap-3">
         <h2 class="font-display flex items-center gap-2 text-xl font-bold">
@@ -402,5 +406,23 @@ export default function ArtistAlbumSection({
         />
       )}
     </section>
+    
+    <ConfirmModal
+      open={showConfirmOverwrite}
+      onClose={() => {
+        setShowConfirmOverwrite(false);
+        setError("Opération annulée — pour créer un nouvel album, utilise un autre single comme lead.");
+      }}
+      onConfirm={() => {
+        setShowConfirmOverwrite(false);
+        startAlbumCreation(pendingAlbumSize, false);
+      }}
+      title="Écraser l'album existant ?"
+      message={`Ce morceau a déjà un album (${project?.album?.title || "sans titre"}, statut: ${project?.album?.status}).\n\nCréer un nouvel album écrasera l'ancien. Veux-tu continuer ?\n\nNote : dans une version future, tu pourras avoir plusieurs albums par artiste.`}
+      confirmText="Oui, écraser"
+      cancelText="Annuler"
+      confirmClass="btn-error"
+    />
+  </>
   );
 }
