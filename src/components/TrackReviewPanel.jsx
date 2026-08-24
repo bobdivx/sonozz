@@ -1,10 +1,11 @@
-import { useState } from "preact/hooks";
-import { Play, Pause, ThumbsUp, ThumbsDown, RefreshCw, History } from "lucide-preact";
+import { useState, useEffect } from "preact/hooks";
+import { Play, Pause, ThumbsUp, ThumbsDown, RefreshCw, History, Star } from "lucide-preact";
 import TrackCreationModal from "./TrackCreationModal.jsx";
 
 /**
  * Panneau de revue des morceaux avec possibilité de les régénérer.
  * Garde l'historique des versions pour chaque morceau.
+ * Affiche les notes studio (like/dislike) + stats agrégées du lecteur public
  */
 export default function TrackReviewPanel({
   tracks = [],
@@ -17,25 +18,60 @@ export default function TrackReviewPanel({
   currentReferences = [],
   currentReferenceTrack = "",
 }) {
-  const [ratings, setRatings] = useState(() => {
-    const saved = typeof localStorage !== "undefined" ? localStorage.getItem("sonozz-track-ratings") : null;
-    return saved ? JSON.parse(saved) : {};
-  });
-
+  const [ratings, setRatings] = useState({});
+  const [playerStats, setPlayerStats] = useState({});
+  const [loadingRatings, setLoadingRatings] = useState(true);
   const [showHistory, setShowHistory] = useState({});
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
   const [trackToRegenerate, setTrackToRegenerate] = useState(null);
 
-  const saveRatings = (newRatings) => {
-    setRatings(newRatings);
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem("sonozz-track-ratings", JSON.stringify(newRatings));
+  // Charger les notes depuis la DB au lieu de localStorage
+  useEffect(() => {
+    if (!tracks.length) {
+      setLoadingRatings(false);
+      return;
     }
-  };
+    
+    const trackIds = tracks.map(t => t.id).filter(Boolean);
+    if (!trackIds.length) {
+      setLoadingRatings(false);
+      return;
+    }
 
-  const rateTrack = (trackId, rating) => {
-    const newRatings = { ...ratings, [trackId]: rating };
-    saveRatings(newRatings);
+    (async () => {
+      try {
+        const res = await fetch(`/api/studio-ratings?trackIds=${encodeURIComponent(trackIds.join(','))}`);
+        if (!res.ok) throw new Error("Erreur chargement notes");
+        const data = await res.json();
+        setRatings(data.studioRatings || {});
+        setPlayerStats(data.playerStats || {});
+      } catch (e) {
+        console.error("Erreur chargement notes:", e);
+      } finally {
+        setLoadingRatings(false);
+      }
+    })();
+  }, [tracks.map(t => t.id).join(',')]);
+
+  const rateTrack = async (trackId, rating) => {
+    try {
+      const res = await fetch("/api/studio-ratings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trackId,
+          rating: rating === ratings[trackId] ? 'neutral' : rating,
+        }),
+      });
+      if (!res.ok) throw new Error("Erreur sauvegarde note");
+      const data = await res.json();
+      setRatings(prev => ({ ...prev, [trackId]: data.rating.rating }));
+      if (data.playerStats && data.playerStats.count > 0) {
+        setPlayerStats(prev => ({ ...prev, [trackId]: data.playerStats }));
+      }
+    } catch (e) {
+      console.error("Erreur sauvegarde note:", e);
+    }
   };
 
   const toggleHistory = (trackId) => {
@@ -75,7 +111,7 @@ export default function TrackReviewPanel({
 
   const likedTracks = tracks.filter((t) => ratings[t.id] === "like");
   const dislikedTracks = tracks.filter((t) => ratings[t.id] === "dislike");
-  const neutralTracks = tracks.filter((t) => !ratings[t.id]);
+  const neutralTracks = tracks.filter((t) => !ratings[t.id] || ratings[t.id] === "neutral");
 
   return (
     <div class="space-y-4">
@@ -118,9 +154,20 @@ export default function TrackReviewPanel({
 
                 <div class="min-w-0 flex-1">
                   <p class="truncate font-medium">{track.trackTitle || track.title}</p>
-                  <p class="text-xs text-base-content/50">
-                    {track.status === "audio" || track.hasAudio ? "Audio généré" : "Paroles seulement"}
-                  </p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <p class="text-xs text-base-content/50">
+                      {track.status === "audio" || track.hasAudio ? "Audio généré" : "Paroles seulement"}
+                    </p>
+                    {playerStats[track.id] && playerStats[track.id].count > 0 && (
+                      <div class="flex items-center gap-1 text-xs text-warning">
+                        <Star size={12} fill="currentColor" />
+                        <span>{playerStats[track.id].average.toFixed(1)}</span>
+                        <span class="text-base-content/40">
+                          ({playerStats[track.id].count} note{playerStats[track.id].count > 1 ? "s" : ""})
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div class="flex shrink-0 gap-1">
