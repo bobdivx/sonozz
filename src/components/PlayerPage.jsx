@@ -84,20 +84,6 @@ export default function PlayerPage() {
   const [ratingBusy, setRatingBusy] = useState(false);
   const seekingRef = useRef(false);
 
-  // Réinitialiser la durée lors du changement de morceau
-  useEffect(() => {
-    if (!current) {
-      setDuration(0);
-      setCurrentTime(0);
-      setAudioError("");
-      return;
-    }
-    // Essayer d'utiliser la durée stockée immédiatement
-    if (current.duration && Number.isFinite(current.duration) && current.duration > 0) {
-      setDuration(current.duration);
-    }
-  }, [current?.id]);
-
   // Générer ou récupérer un player_id anonyme stable
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
@@ -115,6 +101,20 @@ export default function PlayerPage() {
   const shuffle = Boolean(session.shuffle);
   const repeat = session.repeat || "off";
   const current = currentPlayTrack(session);
+
+  // Réinitialiser la durée lors du changement de morceau
+  useEffect(() => {
+    if (!current) {
+      setDuration(0);
+      setCurrentTime(0);
+      setAudioError("");
+      return;
+    }
+    // Essayer d'utiliser la durée stockée immédiatement
+    if (current.duration && Number.isFinite(current.duration) && current.duration > 0) {
+      setDuration(current.duration);
+    }
+  }, [current?.id]);
 
   const visibleTracks = filterArtist
     ? tracks.filter((t) => t.slug === filterArtist)
