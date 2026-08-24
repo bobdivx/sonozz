@@ -192,18 +192,23 @@ export function skipTrack(direction = 1) {
   const currentTime = el?.currentTime || 0;
 
   if (direction < 0) {
-    const next = prevPlayIndex({
-      index: session.index,
-      queueLen: session.queue.length,
-      repeat: session.repeat,
-      currentTime,
-    });
-    if (next === session.index && currentTime > 3) {
+    // Si on a déjà avancé dans le morceau (> 3s), redémarrer à 0
+    if (currentTime > 3) {
       if (el) el.currentTime = 0;
       writePlaySession({ currentTime: 0 });
       return;
     }
-    if (next < 0) return;
+    
+    // Sinon, aller à la piste précédente
+    const next = prevPlayIndex({
+      index: session.index,
+      queueLen: session.queue.length,
+      repeat: session.repeat,
+    });
+    
+    // Si pas de piste précédente (début de la liste, repeat off), ne rien faire
+    if (next < 0 || (next === session.index && session.index === 0)) return;
+    
     writePlaySession({ index: next, playing: true, currentTime: 0 });
     loadTrack(session.queue[next], { time: 0, play: true });
     return;

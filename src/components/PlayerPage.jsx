@@ -12,6 +12,7 @@ import {
   Music2,
   ChevronDown,
   Disc3,
+  Star,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import {
@@ -77,7 +78,36 @@ export default function PlayerPage() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [audioError, setAudioError] = useState("");
+  const [playerId, setPlayerId] = useState("");
+  const [trackRating, setTrackRating] = useState(null);
+  const [ratingStats, setRatingStats] = useState(null);
+  const [ratingBusy, setRatingBusy] = useState(false);
   const seekingRef = useRef(false);
+
+  // Réinitialiser la durée lors du changement de morceau
+  useEffect(() => {
+    if (!current) {
+      setDuration(0);
+      setCurrentTime(0);
+      setAudioError("");
+      return;
+    }
+    // Essayer d'utiliser la durée stockée immédiatement
+    if (current.duration && Number.isFinite(current.duration) && current.duration > 0) {
+      setDuration(current.duration);
+    }
+  }, [current?.id]);
+
+  // Générer ou récupérer un player_id anonyme stable
+  useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    let id = localStorage.getItem("sonozz-player-id");
+    if (!id) {
+      id = `player_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem("sonozz-player-id", id);
+    }
+    setPlayerId(id);
+  }, []);
 
   const queue = session.queue || [];
   const index = session.index || 0;
@@ -171,7 +201,12 @@ export default function PlayerPage() {
     const onTime = () => {
       if (seekingRef.current) return;
       setCurrentTime(el.currentTime || 0);
-      if (Number.isFinite(el.duration)) setDuration(el.duration);
+      // Utiliser el.duration si disponible, sinon fallback sur current.duration stockée
+      if (Number.isFinite(el.duration) && el.duration > 0) {
+        setDuration(el.duration);
+      } else if (current?.duration && Number.isFinite(current.duration) && current.duration > 0) {
+        setDuration(current.duration);
+      }
     };
     const onErr = () =>
       setAudioError("Impossible de lire ce fichier — lien expiré ou audio manquant.");
@@ -186,11 +221,55 @@ export default function PlayerPage() {
       el.removeEventListener("durationchange", onTime);
       el.removeEventListener("error", onErr);
     };
-  }, [current?.id]);
+  }, [current?.id, current?.duration]);
 
   useEffect(() => {
     bindMediaSession();
   }, [current?.id, queue.length, index, repeat, shuffle]);
+
+  // Charger la note et les stats du morceau actuel
+  useEffect(() => {
+    if (!current?.id || !playerId) {
+      setTrackRating(null);
+      setRatingStats(null);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await fetch(`/api/ratings?trackId=${encodeURIComponent(current.id)}&playerId=${encodeURIComponent(playerId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setTrackRating(data.userRating);
+        setRatingStats(data.stats);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [current?.id, playerId]);
+
+  async function rateTrack(rating) {
+    if (!current?.id || !playerId || ratingBusy) return;
+    setRatingBusy(true);
+    try {
+      const res = await fetch("/api/ratings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          playerId,
+          trackId: current.id,
+          rating,
+        }),
+      });
+      if (!res.ok) throw new Error("Erreur lors de la notation");
+      const data = await res.json();
+      setTrackRating(data.rating.rating);
+      setRatingStats(data.stats);
+    } catch (e) {
+      console.error("Rating error:", e);
+    } finally {
+      setRatingBusy(false);
+    }
+  }
 
   function playList(list, startId = null, { expand = false } = {}) {
     if (!list.length) return;
@@ -563,6 +642,35 @@ export default function PlayerPage() {
               <p class="mt-0.5 truncate text-sm text-base-content/55 sm:text-base">
                 {current.artistName}
               </p>
+
+              {/* Système de notation */}
+              {playerId && (
+                <div class="mt-3 flex flex-col items-center gap-2">
+                  <div class="flex gap-1">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        class="btn btn-ghost btn-circle btn-sm touch-manipulation"
+                        onClick={() => rateTrack(star)}
+                        disabled={ratingBusy}
+                        aria-label={`Noter ${star} étoile${star > 1 ? "s" : ""}`}
+                      >
+                        <Star
+                          size={20}
+                          fill={trackRating && star <= trackRating ? "currentColor" : "none"}
+                          class={trackRating && star <= trackRating ? "text-warning" : "text-base-content/30"}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                  {ratingStats && ratingStats.count > 0 && (
+                    <p class="text-xs text-base-content/45">
+                      {ratingStats.average.toFixed(1)} / 5 · {ratingStats.count} note{ratingStats.count > 1 ? "s" : ""}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Seek tactile */}

@@ -21,8 +21,13 @@ describe("nextPlayIndex / prevPlayIndex", () => {
     assert.equal(nextPlayIndex({ index: 1, queueLen: 3, repeat: "one" }), 1);
   });
 
-  it("revient au début du titre si on a déjà avancé", () => {
-    assert.equal(prevPlayIndex({ index: 2, queueLen: 3, repeat: "off", currentTime: 12 }), 2);
-    assert.equal(prevPlayIndex({ index: 2, queueLen: 3, repeat: "off", currentTime: 1 }), 1);
+  it("recule d'un titre ou boucle avec repeat all", () => {
+    // Reculer normalement
+    assert.equal(prevPlayIndex({ index: 2, queueLen: 3, repeat: "off" }), 1);
+    assert.equal(prevPlayIndex({ index: 1, queueLen: 3, repeat: "off" }), 0);
+    // Au début sans repeat, retourne -1
+    assert.equal(prevPlayIndex({ index: 0, queueLen: 3, repeat: "off" }), -1);
+    // Au début avec repeat all, va à la fin
+    assert.equal(prevPlayIndex({ index: 0, queueLen: 3, repeat: "all" }), 2);
   });
 });
