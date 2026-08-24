@@ -586,7 +586,9 @@ export default function ArtistHub({ slug }) {
         body: JSON.stringify({
           action: "regenerate-track",
           projectId: track.id,
-          keepGenre: options.keepGenre !== false,
+          genreOverride: options.genre,
+          referencesOverride: options.references,
+          referenceTrackOverride: options.referenceTrack,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -1134,6 +1136,9 @@ export default function ArtistHub({ slug }) {
                   nowPlayingId={nowPlayingId}
                   playing={playing}
                   busy={busy}
+                  currentGenre={style.genres[0] || profile.genre || ""}
+                  currentReferences={style.refs || []}
+                  currentReferenceTrack={style.topTracks?.[0] || style.lock?.topTracks?.[0] || ""}
                 />
               </section>
             )}

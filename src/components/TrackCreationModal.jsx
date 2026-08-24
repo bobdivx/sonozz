@@ -1,5 +1,8 @@
-import { useState } from "preact/hooks";
-import { X } from "lucide-preact";
+import { useState, useEffect } from "preact/hooks";
+import { X, Search } from "lucide-preact";
+import { MUSIC_STYLES, catalogGenresToStyleValues, styleLabelForValue } from "../lib/studio.js";
+import StyleArtistPicker from "./StyleArtistPicker.jsx";
+import StyleTrackPicker from "./StyleTrackPicker.jsx";
 
 /**
  * Modal de confirmation lors de la création d'un nouveau morceau.
@@ -14,9 +17,73 @@ export default function TrackCreationModal({
   currentReferenceTrack = "",
 }) {
   const [keepSettings, setKeepSettings] = useState(true);
-  const [newGenre, setNewGenre] = useState("");
-  const [newReferences, setNewReferences] = useState("");
-  const [newReferenceTrack, setNewReferenceTrack] = useState("");
+  
+  // Pour "Modifier pour ce titre"
+  const [genres, setGenres] = useState(() => {
+    const vals = catalogGenresToStyleValues([currentGenre].filter(Boolean));
+    return vals.length > 0 ? vals : [];
+  });
+  const [styleQuery, setStyleQuery] = useState("");
+  const [styleSearchOpen, setStyleSearchOpen] = useState(false);
+  const [artistPicks, setArtistPicks] = useState(() => {
+    return Array.isArray(currentReferences) && currentReferences.length > 0
+      ? currentReferences.map((name, idx) => ({
+          source: "legacy",
+          id: `ref-${idx}`,
+          name: name,
+          image: null,
+          genres: [],
+        }))
+      : [];
+  });
+  const [trackPick, setTrackPick] = useState(() => {
+    if (!currentReferenceTrack) return null;
+    return {
+      source: "legacy",
+      id: "ref-track",
+      name: currentReferenceTrack,
+      artistName: "",
+      image: null,
+      genres: [],
+    };
+  });
+
+  useEffect(() => {
+    if (!open) {
+      setKeepSettings(true);
+      return;
+    }
+    // Réinitialiser avec les valeurs actuelles quand le modal s'ouvre
+    const vals = catalogGenresToStyleValues([currentGenre].filter(Boolean));
+    setGenres(vals.length > 0 ? vals : []);
+    
+    if (Array.isArray(currentReferences) && currentReferences.length > 0) {
+      setArtistPicks(
+        currentReferences.map((name, idx) => ({
+          source: "legacy",
+          id: `ref-${idx}`,
+          name: name,
+          image: null,
+          genres: [],
+        }))
+      );
+    } else {
+      setArtistPicks([]);
+    }
+
+    if (currentReferenceTrack) {
+      setTrackPick({
+        source: "legacy",
+        id: "ref-track",
+        name: currentReferenceTrack,
+        artistName: "",
+        image: null,
+        genres: [],
+      });
+    } else {
+      setTrackPick(null);
+    }
+  }, [open, currentGenre, currentReferences, currentReferenceTrack]);
 
   if (!open) return null;
 
@@ -28,16 +95,32 @@ export default function TrackCreationModal({
         referenceTrack: currentReferenceTrack,
       });
     } else {
+      // Utiliser les nouveaux choix
+      const genreValue = genres.length > 0 ? genres.join(", ") : currentGenre;
+      const refs = artistPicks.map(p => p.name);
+      const refTrack = trackPick?.name || "";
+      
       onConfirm({
-        genre: newGenre.trim() || currentGenre,
-        references: newReferences
-          .split(",")
-          .map((r) => r.trim())
-          .filter(Boolean),
-        referenceTrack: newReferenceTrack.trim() || currentReferenceTrack,
+        genre: genreValue || currentGenre,
+        references: refs.length > 0 ? refs : currentReferences,
+        referenceTrack: refTrack || currentReferenceTrack,
       });
     }
   };
+
+  function addStyle(value) {
+    const v = String(value || "").trim();
+    if (!v) return;
+    setGenres((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    setStyleQuery("");
+    setStyleSearchOpen(false);
+  }
+
+  function removeStyle(value) {
+    setGenres((prev) => prev.filter((g) => g !== value));
+  }
+
+  const styleOptions = MUSIC_STYLES.filter((s) => s.value);
 
   const displayGenre = currentGenre || "Non défini";
   const displayReferences =
@@ -112,46 +195,123 @@ export default function TrackCreationModal({
           </div>
 
           {!keepSettings && (
-            <div class="space-y-3 rounded-2xl border border-base-content/10 bg-base-300/40 p-4">
-              <div class="form-control">
-                <label class="label">
-                  <span class="label-text text-xs font-medium">Nouveau genre</span>
-                </label>
-                <input
-                  type="text"
-                  class="input input-bordered input-sm"
-                  placeholder={currentGenre || "Pop, Rap, etc."}
-                  value={newGenre}
-                  onInput={(e) => setNewGenre(e.currentTarget.value)}
+            <div class="space-y-4 rounded-2xl border border-base-content/10 bg-base-300/40 p-4">
+              <div class="space-y-2">
+                <p class="text-xs font-medium text-base-content/70">Artistes de référence</p>
+                <StyleArtistPicker
+                  multiple
+                  maxPicks={5}
+                  picks={artistPicks}
+                  compact
+                  label=""
+                  hint="Choisis jusqu'à 5 artistes pour ce morceau"
+                  onPicksChange={(next) => setArtistPicks(next)}
                 />
               </div>
 
-              <div class="form-control">
-                <label class="label">
-                  <span class="label-text text-xs font-medium">
-                    Artistes de référence (séparés par des virgules)
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  class="input input-bordered input-sm"
-                  placeholder="Artiste 1, Artiste 2"
-                  value={newReferences}
-                  onInput={(e) => setNewReferences(e.currentTarget.value)}
+              <div class="space-y-2">
+                <p class="text-xs font-medium text-base-content/70">Titre de référence (optionnel)</p>
+                <StyleTrackPicker
+                  pick={trackPick}
+                  artistPick={artistPicks[0] || null}
+                  compact
+                  label=""
+                  hint="Choisis un titre pour caler BPM et prod"
+                  onPickChange={(p) => setTrackPick(p)}
                 />
               </div>
 
-              <div class="form-control">
-                <label class="label">
-                  <span class="label-text text-xs font-medium">Titre de référence (optionnel)</span>
-                </label>
-                <input
-                  type="text"
-                  class="input input-bordered input-sm"
-                  placeholder="Nom du titre"
-                  value={newReferenceTrack}
-                  onInput={(e) => setNewReferenceTrack(e.currentTarget.value)}
-                />
+              <div class="space-y-2">
+                <p class="text-xs font-medium text-base-content/70">Styles musicaux</p>
+                <p class="text-xs text-base-content/45">
+                  Cherche un style ou laisse vide pour utiliser les références
+                </p>
+                {genres.length > 0 && (
+                  <div class="flex flex-wrap gap-2">
+                    {genres.map((value) => (
+                      <span
+                        key={value}
+                        class="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/15 px-2.5 py-1 text-xs text-primary"
+                      >
+                        {styleLabelForValue(value)}
+                        <button
+                          type="button"
+                          class="ml-0.5 rounded-full p-0.5 opacity-70 hover:opacity-100"
+                          aria-label={`Retirer ${styleLabelForValue(value)}`}
+                          onClick={() => removeStyle(value)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div class="relative">
+                  <label class="input input-bordered input-sm flex w-full items-center gap-2 bg-base-200">
+                    <Search size={14} class="shrink-0 opacity-50" />
+                    <input
+                      class="grow bg-transparent text-sm"
+                      type="search"
+                      placeholder="Rechercher un style (metal, rap, folk…)"
+                      value={styleQuery}
+                      onFocus={() => setStyleSearchOpen(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setStyleSearchOpen(false), 150);
+                      }}
+                      onInput={(e) => {
+                        setStyleQuery(e.currentTarget.value);
+                        setStyleSearchOpen(true);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        const q = styleQuery.trim().toLowerCase();
+                        const hit = styleOptions.find(
+                          (s) =>
+                            !genres.includes(s.value) &&
+                            (s.label.toLowerCase().includes(q) ||
+                              s.value.toLowerCase().includes(q)),
+                        );
+                        if (hit) addStyle(hit.value);
+                      }}
+                    />
+                  </label>
+                  {styleSearchOpen && (
+                    <ul class="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-base-content/15 bg-base-200 py-1 shadow-lg">
+                      {(() => {
+                        const q = styleQuery.trim().toLowerCase();
+                        const hits = styleOptions.filter((s) => {
+                          if (genres.includes(s.value)) return false;
+                          if (!q) return true;
+                          return (
+                            s.label.toLowerCase().includes(q) ||
+                            s.value.toLowerCase().includes(q)
+                          );
+                        });
+                        const shown = q ? hits.slice(0, 8) : hits.slice(0, 6);
+                        if (!shown.length) {
+                          return (
+                            <li class="px-3 py-2 text-xs text-base-content/50">
+                              {q ? `Aucun style pour « ${styleQuery.trim()} »` : "Tous les styles sont déjà ajoutés"}
+                            </li>
+                          );
+                        }
+                        return shown.map((s) => (
+                          <li key={s.value}>
+                            <button
+                              type="button"
+                              class="w-full px-3 py-2 text-left text-sm hover:bg-primary/15"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => addStyle(s.value)}
+                            >
+                              {s.label}
+                            </button>
+                          </li>
+                        ));
+                      })()}
+                    </ul>
+                  )}
+                </div>
               </div>
             </div>
           )}

@@ -130,12 +130,34 @@ export async function POST({ params, request }) {
           generatedAt: new Date().toISOString(),
         });
       }
+
+      // Appliquer les overrides au profil si fournis
+      let profileOverrides = {};
+      if (body.genreOverride) {
+        profileOverrides.genre = body.genreOverride;
+      }
+      if (Array.isArray(body.referencesOverride) && body.referencesOverride.length > 0) {
+        profileOverrides.styleArtists = body.referencesOverride;
+      }
+      if (body.referenceTrackOverride) {
+        const currentLock = stored.project.artist?.styleLock || stored.seed?.styleLock || {};
+        profileOverrides.styleLock = {
+          ...currentLock,
+          topTracks: [body.referenceTrackOverride, ...(currentLock.topTracks || []).slice(0, 4)],
+        };
+      }
+
+      // Mettre à jour l'artist dans le projet si des overrides sont fournis
+      const updatedArtist = Object.keys(profileOverrides).length > 0
+        ? { ...stored.project.artist, ...profileOverrides }
+        : stored.project.artist;
       
       // Réinitialiser le track pour régénération
       const updated = await saveProject({
         id: projectId,
         project: {
           ...stored.project,
+          artist: updatedArtist,
           track: {
             ...stored.project.track,
             status: "pending",
@@ -144,7 +166,10 @@ export async function POST({ params, request }) {
           },
           trackVersions: prevVersions.slice(-5), // Garder max 5 versions
         },
-        seed: stored.seed || {},
+        seed: {
+          ...stored.seed,
+          ...profileOverrides,
+        },
         event: {
           stepKey: "tracks",
           eventType: "regenerate",
