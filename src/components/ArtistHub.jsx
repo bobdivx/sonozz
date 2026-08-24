@@ -283,7 +283,10 @@ function styleRowsFromProfile(profile = {}) {
 export default function ArtistHub({ slug }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [refreshStatsBusy, setRefreshStatsBusy] = useState(false);
+  const [createTrackBusy, setCreateTrackBusy] = useState(false);
+  const [deleteReleaseBusy, setDeleteReleaseBusy] = useState(false);
+  const [regenerateTrackBusy, setRegenerateTrackBusy] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [careerBusy, setCareerBusy] = useState(false);
@@ -294,6 +297,9 @@ export default function ArtistHub({ slug }) {
   const initialHash = readHashState();
   const [tab, setTab] = useState(initialHash.tab);
   const [openAlbumId, setOpenAlbumId] = useState(initialHash.albumId);
+
+  // Helper pour savoir si une action quelconque est en cours (pour UI non-critique)
+  const anyBusy = refreshStatsBusy || createTrackBusy || deleteReleaseBusy || regenerateTrackBusy;
   const [playSession, setPlaySession] = useState(() =>
     typeof window === "undefined" ? { queue: [], playing: false, index: 0 } : readPlaySession(),
   );
@@ -348,7 +354,7 @@ export default function ArtistHub({ slug }) {
   }, [slug]);
 
   async function refreshStats() {
-    setBusy(true);
+    setRefreshStatsBusy(true);
     setCareerBusy(true);
     setMsg("");
     setError("");
@@ -385,7 +391,7 @@ export default function ArtistHub({ slug }) {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setRefreshStatsBusy(false);
       setCareerBusy(false);
     }
   }
@@ -398,7 +404,7 @@ export default function ArtistHub({ slug }) {
 
   async function createTrack(themeOverride, options = {}) {
     setShowTrackModal(false);
-    setBusy(true);
+    setCreateTrackBusy(true);
     setError("");
     setMsg("");
     try {
@@ -420,7 +426,7 @@ export default function ArtistHub({ slug }) {
       window.location.href = json.studioUrl || studioHref(json.projectId, "lyrics");
     } catch (e) {
       setError(e.message);
-      setBusy(false);
+      setCreateTrackBusy(false);
     }
   }
 
@@ -547,7 +553,7 @@ export default function ArtistHub({ slug }) {
     ) {
       return;
     }
-    setBusy(true);
+    setDeleteReleaseBusy(true);
     setError("");
     setMsg("");
     try {
@@ -573,12 +579,12 @@ export default function ArtistHub({ slug }) {
     } catch (e) {
       setError(e.message || "Suppression impossible");
     } finally {
-      setBusy(false);
+      setDeleteReleaseBusy(false);
     }
   }
 
   async function regenerateTrack(track, options = {}) {
-    setBusy(true);
+    setRegenerateTrackBusy(true);
     setError("");
     setMsg("");
     try {
@@ -595,12 +601,19 @@ export default function ArtistHub({ slug }) {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Régénération impossible");
-      setMsg(`Régénération de « ${track.trackTitle || track.title} » lancée — ouvre le Studio pour suivre.`);
-      window.location.href = json.studioUrl || studioHref(track.id, "tracks");
+      
+      const trackLabel = track.trackTitle || track.title || "le morceau";
+      setMsg(
+        `Régénération de « ${trackLabel} » lancée. ` +
+        `Ouvre le Studio pour suivre la progression : `
+      );
+      
+      // Au lieu de rediriger, on affiche un lien vers le Studio
+      // L'utilisateur reste sur la page artiste
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setRegenerateTrackBusy(false);
     }
   }
 
@@ -798,10 +811,10 @@ export default function ArtistHub({ slug }) {
                     <button
                       type="button"
                       class={`btn gap-2 rounded-full ${hasPlayable ? "btn-ghost border border-base-content/15" : "btn-primary"}`}
-                      disabled={busy}
+                      disabled={createTrackBusy}
                       onClick={() => promptCreateTrack()}
                     >
-                      {busy ? (
+                      {createTrackBusy ? (
                         <span class="loading loading-spinner loading-sm" />
                       ) : (
                         <Plus size={16} />
@@ -818,7 +831,6 @@ export default function ArtistHub({ slug }) {
                     <button
                       type="button"
                       class="btn btn-ghost rounded-full border border-base-content/15 gap-2"
-                      disabled={busy}
                       onClick={openStyleEditor}
                     >
                       <Pencil size={14} /> Modifier le profil
@@ -849,10 +861,10 @@ export default function ArtistHub({ slug }) {
                     <button
                       type="button"
                       class="btn btn-primary btn-sm gap-1 rounded-full"
-                      disabled={busy || scheduleBusy}
+                      disabled={createTrackBusy || scheduleBusy}
                       onClick={nextMove.onClick}
                     >
-                      {(busy || scheduleBusy) && (
+                      {(createTrackBusy || scheduleBusy) && (
                         <span class="loading loading-spinner loading-xs" />
                       )}
                       {nextMove.cta}
@@ -907,7 +919,7 @@ export default function ArtistHub({ slug }) {
                     <button
                       type="button"
                       class="btn btn-primary btn-sm gap-1 rounded-full"
-                      disabled={busy}
+                      disabled={createTrackBusy}
                       onClick={() => promptCreateTrack()}
                     >
                       <Plus size={14} /> Nouveau titre
@@ -918,7 +930,7 @@ export default function ArtistHub({ slug }) {
                     <button
                       type="button"
                       class="flex w-full flex-col items-center gap-3 rounded-3xl border border-dashed border-primary/35 bg-primary/5 px-6 py-14 text-center transition hover:border-primary/60 hover:bg-primary/10"
-                      disabled={busy}
+                      disabled={createTrackBusy}
                       onClick={() => promptCreateTrack()}
                     >
                       <span class="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/20 text-primary">
@@ -1022,7 +1034,7 @@ export default function ArtistHub({ slug }) {
                                               delivery={delivery}
                                               streams={rStreams}
                                               phase={releasePhase(r, delivery)}
-                                              busy={busy}
+                                              busy={deleteReleaseBusy}
                                               onDelete={deleteRelease}
                                               index={r.albumIndex || i + 1}
                                               queue={toPlayTracks(album.tracks, playMeta)}
@@ -1071,7 +1083,7 @@ export default function ArtistHub({ slug }) {
                                   delivery={delivery}
                                   streams={rStreams}
                                   phase={releasePhase(r, delivery)}
-                                  busy={busy}
+                                  busy={deleteReleaseBusy}
                                   onDelete={deleteRelease}
                                   queue={toPlayTracks(singles, playMeta)}
                                   playMeta={playMeta}
@@ -1103,7 +1115,6 @@ export default function ArtistHub({ slug }) {
                       type="button"
                       class="btn btn-primary btn-sm gap-1 rounded-full"
                       onClick={() => setShowAlbumModal(true)}
-                      disabled={busy}
                     >
                       <Plus size={14} /> Nouvel album
                     </button>
@@ -1145,7 +1156,7 @@ export default function ArtistHub({ slug }) {
                     <button
                       type="button"
                       class="btn btn-primary btn-sm mt-4 gap-1 rounded-full"
-                      disabled={busy}
+                      disabled={createTrackBusy}
                       onClick={() => promptCreateTrack()}
                     >
                       <Plus size={14} /> Nouveau titre
@@ -1169,7 +1180,7 @@ export default function ArtistHub({ slug }) {
                   onRegenerateTrack={regenerateTrack}
                   nowPlayingId={nowPlayingId}
                   playing={playing}
-                  busy={busy}
+                  busy={regenerateTrackBusy}
                   currentGenre={style.genres[0] || profile.genre || ""}
                   currentReferences={style.refs || []}
                   currentReferenceTrack={style.topTracks?.[0] || style.lock?.topTracks?.[0] || ""}
@@ -1189,7 +1200,7 @@ export default function ArtistHub({ slug }) {
                   <button
                     type="button"
                     class="btn btn-outline btn-sm gap-1 rounded-full"
-                    disabled={careerBusy || busy}
+                    disabled={careerBusy}
                     onClick={() => runCareerAdvice(Boolean(career))}
                   >
                     {careerBusy ? (
@@ -1211,7 +1222,7 @@ export default function ArtistHub({ slug }) {
                         <button
                           type="button"
                           class="btn btn-primary btn-xs gap-1 rounded-full"
-                          disabled={scheduleBusy || busy}
+                          disabled={scheduleBusy}
                           onClick={runSchedulePromo}
                         >
                           {scheduleBusy ? (
@@ -1240,7 +1251,7 @@ export default function ArtistHub({ slug }) {
                             <button
                               type="button"
                               class="btn btn-outline btn-xs rounded-full"
-                              disabled={busy}
+                              disabled={createTrackBusy}
                               onClick={() => createTrack(career.nextSingle.theme)}
                             >
                               Ouvrir le Studio
@@ -1264,7 +1275,7 @@ export default function ArtistHub({ slug }) {
                   <button
                     type="button"
                     class="flex w-full flex-col items-center gap-2 rounded-3xl border border-dashed border-base-content/20 px-6 py-12 text-center"
-                    disabled={careerBusy || busy}
+                    disabled={careerBusy}
                     onClick={() => runCareerAdvice(false)}
                   >
                     <Sparkles size={22} class="text-primary" />
@@ -1380,7 +1391,7 @@ export default function ArtistHub({ slug }) {
                         <button
                           type="button"
                           class="btn btn-primary btn-sm gap-2 rounded-full"
-                          disabled={busy}
+                          disabled={createTrackBusy}
                           onClick={() => createTrack(career.nextSingle.theme)}
                         >
                           <AudioLines size={14} /> Nouveau titre
@@ -1404,7 +1415,6 @@ export default function ArtistHub({ slug }) {
                   <button
                     type="button"
                     class="btn btn-outline btn-sm gap-1 rounded-full"
-                    disabled={busy}
                     onClick={openStyleEditor}
                   >
                     <Pencil size={14} /> Modifier le profil
@@ -1415,7 +1425,6 @@ export default function ArtistHub({ slug }) {
                   <button
                     type="button"
                     class="w-full rounded-3xl border border-dashed border-base-content/20 px-6 py-12 text-center"
-                    disabled={busy}
                     onClick={openStyleEditor}
                   >
                     <Palette size={22} class="mx-auto mb-2 text-primary" />
@@ -1520,7 +1529,7 @@ export default function ArtistHub({ slug }) {
                     <button
                       type="button"
                       class="btn btn-outline btn-sm gap-1 rounded-full"
-                      disabled={busy}
+                      disabled={refreshStatsBusy}
                       onClick={refreshStats}
                     >
                       <RefreshCw size={14} /> Actualiser
