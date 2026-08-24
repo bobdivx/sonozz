@@ -1002,7 +1002,7 @@ export async function hydrateProjectArtistGender(saved) {
  * Nouveau projet / morceau pour un artiste existant (garde le profil).
  * Réutilise gender, timbre (voice / voiceSample), styleLock, genres du hub + meilleurs projets.
  */
-export async function createArtistRelease(slug, { theme = "", variantOf = null } = {}) {
+export async function createArtistRelease(slug, { theme = "", variantOf = null, genreOverride = null, referencesOverride = null, referenceTrackOverride = null } = {}) {
   const artist = await getArtistBySlug(slug);
   if (!artist) throw new Error("Artiste introuvable");
 
@@ -1012,6 +1012,23 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null }
 
   let profile = await resolveArtistProfileForRelease(artist.slug, artist.name);
   if (!profile) throw new Error("Profil artiste introuvable");
+
+  // Appliquer les overrides si fournis
+  if (genreOverride) {
+    profile = { ...profile, genre: genreOverride };
+  }
+  if (Array.isArray(referencesOverride) && referencesOverride.length > 0) {
+    profile = { ...profile, styleArtists: referencesOverride };
+  }
+  if (referenceTrackOverride) {
+    profile = {
+      ...profile,
+      styleLock: {
+        ...(profile.styleLock || {}),
+        topTracks: [referenceTrackOverride, ...(profile.styleLock?.topTracks || []).slice(0, 4)],
+      },
+    };
+  }
 
   if (!resolveArtistGender(profile)) {
     const recovered = await recoverArtistGenderFromProjects(artist.slug, artist.name);

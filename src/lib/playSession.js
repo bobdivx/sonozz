@@ -22,6 +22,7 @@ export function slimPlayTrack(track = {}) {
   const audioUrl = typeof track.audioUrl === "string" ? track.audioUrl : "";
   const audioS3Key = typeof track.audioS3Key === "string" ? track.audioS3Key : "";
   if (!id || (!audioUrl && !audioS3Key)) return null;
+  const duration = Number(track.duration);
   return {
     id,
     trackTitle: String(track.trackTitle || track.title || "Sans titre").slice(0, 200),
@@ -31,6 +32,7 @@ export function slimPlayTrack(track = {}) {
     coverUrl: lightUrl(track.coverUrl),
     artistImage: lightUrl(track.artistImage),
     slug: String(track.slug || "").slice(0, 80),
+    duration: Number.isFinite(duration) && duration > 0 ? duration : null,
   };
 }
 
@@ -131,14 +133,16 @@ export function nextPlayIndex({ index, queueLen, repeat } = {}) {
   return -1;
 }
 
-export function prevPlayIndex({ index, queueLen, repeat, currentTime } = {}) {
+export function prevPlayIndex({ index, queueLen, repeat } = {}) {
   const i = Number(index) || 0;
   const len = Number(queueLen) || 0;
   if (len <= 0) return -1;
-  if ((Number(currentTime) || 0) > 3) return i;
+  // Si on peut reculer, reculer d'un titre
   if (i > 0) return i - 1;
+  // Si repeat all et on est au début, aller à la fin
   if (repeat === "all") return len - 1;
-  return i;
+  // Sinon, pas de piste précédente
+  return -1;
 }
 
 export function subscribePlaySession(cb) {

@@ -83,6 +83,9 @@ export async function POST({ params, request }) {
       const created = await createArtistRelease(slug, {
         theme: body.theme || "",
         variantOf: body.variantOf || null,
+        genreOverride: body.genreOverride,
+        referencesOverride: body.referencesOverride,
+        referenceTrackOverride: body.referenceTrackOverride,
       });
       return json(created);
     }
@@ -106,6 +109,79 @@ export async function POST({ params, request }) {
         { preferredSlug: slug },
       );
       return json({ ok: true, artist: saved });
+    }
+
+    if (action === "regenerate-track") {
+      const projectId = body.projectId;
+      if (!projectId) return error("ID projet manquant", 400);
+      
+      const { getProject, saveProject } = await import("../../../server/db.js");
+      const stored = await getProject(projectId);
+      if (!stored?.project) return error("Projet introuvable", 404);
+      
+      // Conserver l'ancienne version avant régénération
+      const prevTrack = stored.project.track;
+      const prevVersions = stored.project.trackVersions || [];
+      if (prevTrack?.audioUrl) {
+        prevVersions.push({
+          audioUrl: prevTrack.audioUrl,
+          audioS3Key: prevTrack.audioS3Key,
+          title: prevTrack.title,
+          generatedAt: new Date().toISOString(),
+        });
+      }
+
+      // Appliquer les overrides au profil si fournis
+      let profileOverrides = {};
+      if (body.genreOverride) {
+        profileOverrides.genre = body.genreOverride;
+      }
+      if (Array.isArray(body.referencesOverride) && body.referencesOverride.length > 0) {
+        profileOverrides.styleArtists = body.referencesOverride;
+      }
+      if (body.referenceTrackOverride) {
+        const currentLock = stored.project.artist?.styleLock || stored.seed?.styleLock || {};
+        profileOverrides.styleLock = {
+          ...currentLock,
+          topTracks: [body.referenceTrackOverride, ...(currentLock.topTracks || []).slice(0, 4)],
+        };
+      }
+
+      // Mettre à jour l'artist dans le projet si des overrides sont fournis
+      const updatedArtist = Object.keys(profileOverrides).length > 0
+        ? { ...stored.project.artist, ...profileOverrides }
+        : stored.project.artist;
+      
+      // Réinitialiser le track pour régénération
+      const updated = await saveProject({
+        id: projectId,
+        project: {
+          ...stored.project,
+          artist: updatedArtist,
+          track: {
+            ...stored.project.track,
+            status: "pending",
+            audioUrl: null,
+            audioS3Key: null,
+          },
+          trackVersions: prevVersions.slice(-5), // Garder max 5 versions
+        },
+        seed: {
+          ...stored.seed,
+          ...profileOverrides,
+        },
+        event: {
+          stepKey: "tracks",
+          eventType: "regenerate",
+          message: `Régénération audio demandée`,
+        },
+      });
+      
+      return json({
+        ok: true,
+        projectId: updated.id,
+        studioUrl: `/?project=${updated.id}&step=3`,
+      });
     }
 
     return error("Action inconnue", 400);
