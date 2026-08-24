@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
 import { Play, Pause, ThumbsUp, ThumbsDown, RefreshCw, History } from "lucide-preact";
+import TrackCreationModal from "./TrackCreationModal.jsx";
 
 /**
  * Panneau de revue des morceaux avec possibilité de les régénérer.
@@ -12,6 +13,9 @@ export default function TrackReviewPanel({
   nowPlayingId = null,
   playing = false,
   busy = false,
+  currentGenre = "",
+  currentReferences = [],
+  currentReferenceTrack = "",
 }) {
   const [ratings, setRatings] = useState(() => {
     const saved = typeof localStorage !== "undefined" ? localStorage.getItem("sonozz-track-ratings") : null;
@@ -19,6 +23,8 @@ export default function TrackReviewPanel({
   });
 
   const [showHistory, setShowHistory] = useState({});
+  const [showRegenerateModal, setShowRegenerateModal] = useState(false);
+  const [trackToRegenerate, setTrackToRegenerate] = useState(null);
 
   const saveRatings = (newRatings) => {
     setRatings(newRatings);
@@ -45,11 +51,16 @@ export default function TrackReviewPanel({
       if (!confirmed) return;
     }
 
-    const keepGenre = window.confirm(
-      `Régénération de « ${track.trackTitle || track.title} »\n\nGarder le genre et les références actuels ?`
-    );
+    setTrackToRegenerate(track);
+    setShowRegenerateModal(true);
+  };
 
-    await onRegenerateTrack(track, { keepGenre });
+  const confirmRegenerate = async (options) => {
+    setShowRegenerateModal(false);
+    if (trackToRegenerate) {
+      await onRegenerateTrack(trackToRegenerate, options);
+      setTrackToRegenerate(null);
+    }
   };
 
   if (!tracks.length) {
@@ -194,6 +205,18 @@ export default function TrackReviewPanel({
           );
         })}
       </ul>
+
+      <TrackCreationModal
+        open={showRegenerateModal}
+        onClose={() => {
+          setShowRegenerateModal(false);
+          setTrackToRegenerate(null);
+        }}
+        onConfirm={confirmRegenerate}
+        currentGenre={currentGenre}
+        currentReferences={currentReferences}
+        currentReferenceTrack={currentReferenceTrack}
+      />
     </div>
   );
 }
