@@ -19,6 +19,7 @@ import {
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import ArtistAlbumSection from "./ArtistAlbumSection.jsx";
+import AlbumCreationModal from "./AlbumCreationModal.jsx";
 import TrackCreationModal from "./TrackCreationModal.jsx";
 import TrackReviewPanel from "./TrackReviewPanel.jsx";
 import { api } from "../lib/apiClient.js";
@@ -296,6 +297,7 @@ export default function ArtistHub({ slug }) {
   const [playSession, setPlaySession] = useState(() =>
     typeof window === "undefined" ? { queue: [], playing: false, index: 0 } : readPlaySession(),
   );
+  const [showAlbumModal, setShowAlbumModal] = useState(false);
 
   useEffect(() => subscribePlaySession(setPlaySession), []);
 
@@ -610,7 +612,8 @@ export default function ArtistHub({ slug }) {
   const stats = data?.stats || {};
   const career = data?.career || stats.career || null;
   const releases = data?.releases || [];
-  const { albums, singles } = organizeArtistReleases(releases);
+  const albumsData = data?.albums || [];
+  const { albums, singles } = organizeArtistReleases(releases, albumsData);
   const canCreateAlbum = releases.some(
     (r) => r.hasAudio && r.hasLyrics && !r.albumStatus && !r.albumLeadId,
   );
@@ -1088,25 +1091,56 @@ export default function ArtistHub({ slug }) {
 
             {tab === "album" && (
               <section class="space-y-4">
-                <div>
-                  <h2 class="font-display text-2xl font-bold">Album</h2>
-                  <p class="text-sm text-base-content/55">
-                    Part d’un single déjà enregistré (paroles + audio). Les pistes se fabriquent ici ;
-                    pour peaufiner un titre, ouvre-le dans le Studio.
-                  </p>
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 class="font-display text-2xl font-bold">Albums</h2>
+                    <p class="text-sm text-base-content/55">
+                      Crée plusieurs albums indépendants. Chaque album part d'un single (paroles + audio).
+                    </p>
+                  </div>
+                  {canCreateAlbum && (
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-sm gap-1 rounded-full"
+                      onClick={() => setShowAlbumModal(true)}
+                      disabled={busy}
+                    >
+                      <Plus size={14} /> Nouvel album
+                    </button>
+                  )}
                 </div>
-                {canCreateAlbum ? (
-                  <ArtistAlbumSection
-                    slug={data.slug}
-                    releases={releases}
-                    createOnly
-                    embedded
-                  />
+
+                {albums.length > 0 ? (
+                  <div class="space-y-4">
+                    {albums.map((album) => (
+                      <div key={album.id} class="rounded-3xl border border-base-content/10 bg-base-300/30 p-5">
+                        <div class="mb-3 flex items-start justify-between">
+                          <div>
+                            <h3 class="font-display text-lg font-bold">{album.title}</h3>
+                            <p class="text-xs text-base-content/55">
+                              {album.tracks?.length || 0} titre{album.tracks?.length > 1 ? "s" : ""} · {album.status}
+                            </p>
+                          </div>
+                        </div>
+                        <ArtistAlbumSection
+                          slug={data.slug}
+                          releases={releases}
+                          pinnedLeadId={album.lead?.id}
+                          embedded
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : canCreateAlbum ? (
+                  <div class="rounded-3xl border border-dashed border-base-content/15 bg-base-300/20 px-5 py-8 text-center">
+                    <p class="text-sm text-base-content/60">
+                      Tu n'as pas encore créé d'album. Clique sur « Nouvel album » pour commencer.
+                    </p>
+                  </div>
                 ) : (
                   <div class="rounded-3xl border border-dashed border-base-content/15 bg-base-300/20 px-5 py-8 text-center">
                     <p class="text-sm text-base-content/60">
-                      Il faut d’abord un single avec paroles et audio. L’album part de ce titre, sur
-                      cette fiche — pas dans le Studio.
+                      Il faut d'abord un single avec paroles et audio. L'album part de ce titre.
                     </p>
                     <button
                       type="button"
@@ -1579,6 +1613,18 @@ export default function ArtistHub({ slug }) {
           </div>
         )}
       </div>
+
+      {showAlbumModal && (
+        <AlbumCreationModal
+          slug={slug}
+          leadCandidates={releases.filter((r) => r.hasAudio && r.hasLyrics)}
+          onClose={() => setShowAlbumModal(false)}
+          onCreate={() => {
+            setShowAlbumModal(false);
+            loadData();
+          }}
+        />
+      )}
 
       <TrackCreationModal
         open={showTrackModal}
