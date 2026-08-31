@@ -1,4 +1,9 @@
 import { resolveArtistGender, ARTIST_GENDER_LABELS } from "./artistGender.js";
+import {
+  ACE_COMMERCIAL_LYRICS_STRUCTURE,
+  aceStepCommercialArrangementBits,
+  composeAceStepStyle,
+} from "./musicLane.js";
 
 /**
  * Duo / feat. — deux identités vocales + stylistiques distinctes.
@@ -367,10 +372,11 @@ export function ensureAceStepDuoSingerTags(text, lead, feat) {
 }
 
 /**
- * Style ACE-Step dédié duo : genres réels + timbres, sans forcer male/female
- * ni le DNA d’une seule ref (Eminem, etc.).
+ * Style ACE-Step duo : d’abord un VRAI titre (prod / instruments),
+ * puis le casting vocal. Un prompt 90 % « vocal duet » pousse ACE vers l’a cappella.
+ * On n’injecte pas le vocalStyle / matchedName du lock (DNA mono-voix type Eminem).
  */
-export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood } = {}) {
+export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock, styleBase } = {}) {
   const a = vocalLockForArtist(lead);
   const b = vocalLockForArtist(feat);
   if (!a || !b) return "";
@@ -378,25 +384,54 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood } = {}) {
   const leadTimbre = vocalTimbreLine(a) || a.voiceHint;
   const featTimbre = vocalTimbreLine(b) || b.voiceHint;
   const mixed = a.genderCode && b.genderCode && a.genderCode !== b.genderCode;
+  const lock = styleLock && typeof styleLock === "object" ? styleLock : null;
+
+  // Prod sans DNA mono-artiste (matchedName / « X style rap ») ni vocalStyle solo.
+  let scrubbedBase = String(styleBase || "").trim();
+  const bannedName = String(lock?.matchedName || "").trim();
+  if (bannedName) {
+    scrubbedBase = scrubbedBase.split(bannedName).join("").replace(/\s{2,}/g, " ").trim();
+  }
+  scrubbedBase = scrubbedBase
+    .replace(/\b[\w'.-]+\s+style\b[^.,;]*/gi, "")
+    .replace(/\bmale vocals?\b/gi, "")
+    .replace(/\bfemale vocals?\b/gi, "")
+    .replace(/[,\s]+$/g, "")
+    .replace(/^[,\s]+/g, "")
+    .trim();
+
+  const duoLock = lock
+    ? {
+        genreSummary: lock.genreSummary || null,
+        sonicKeywords: Array.isArray(lock.sonicKeywords) ? lock.sonicKeywords.slice(0, 6) : undefined,
+        production: lock.production || null,
+        rhythmFeel: lock.rhythmFeel || null,
+        instruments: Array.isArray(lock.instruments) ? lock.instruments.slice(0, 6) : undefined,
+        doNot: Array.isArray(lock.doNot) ? lock.doNot : undefined,
+        // pas de vocalStyle / matchedName → évite « male rap only »
+      }
+    : null;
+
+  const genreBlob =
+    String(lock?.genreSummary || genreSummary || a.genre || scrubbedBase || "pop, radio-ready").trim();
+  const production = composeAceStepStyle(scrubbedBase || genreBlob, duoLock);
+  const commercial = aceStepCommercialArrangementBits(lock || { genreSummary: genreBlob }, { duo: true });
 
   return [
-    mixed ? "MIXED-GENDER VOCAL DUET" : "TWO-SINGER VOCAL DUET",
+    ...commercial,
+    production,
+    mood || lock?.mood || a.mood || b.mood || null,
+    mixed ? "mixed-gender vocal duet over the full band" : "two-singer vocal duet over the full band",
     `singer 1 (${a.name}): ${a.genderCode || "lead"} — ${leadTimbre}`,
     `singer 2 (${b.name}): ${b.genderCode || "featured"} — ${featTimbre}`,
     a.timbreHint ? `LOCK singer 1 timbre = ${a.timbreHint}` : null,
     b.timbreHint ? `LOCK singer 2 timbre = ${b.timbreHint}` : null,
-    `obey lyrics tags [singer 1: ${a.genderCode || "vocal"}] and [singer 2: ${b.genderCode || "vocal"}] exactly`,
-    `never collapse into one ${a.genderCode || "single"}-only or choir performance`,
-    `preserve each artist's unique timbre across the song (same as their other releases)`,
-    ...duoVocalPromptBits(lead, feat).slice(0, 4),
-    ...duoStylePromptBits(lead, feat).slice(0, 2),
-    genreSummary || a.genre || null,
-    b.genre || null,
-    mood || a.mood || b.mood || null,
+    `obey [singer 1: ${a.genderCode || "vocal"}] / [singer 2: ${b.genderCode || "vocal"}] tags; keep both voices distinct`,
+    `production lane stays with lead ${a.name}${a.genre ? ` (${a.genre})` : ""}`,
   ]
     .filter(Boolean)
     .join(". ")
-    .slice(0, 1000);
+    .slice(0, 1200);
 }
 
 /**
@@ -481,14 +516,17 @@ export function duoLyricsInstruction(lead, feat) {
 DUO OBLIGATOIRE — deux chanteurs distincts (ne fusionne JAMAIS en un seul narrateur) :
 - Lead « ${a.name} » (${a.genderLabel || "voix lead"}${a.genre ? `, style ${a.genre}` : ""}${a.writingStyle ? `, écriture: ${a.writingStyle}` : ""}${a.vocalStyle ? `, voix: ${a.vocalStyle}` : ""})
 - Feat « ${b.name} » (${b.genderLabel || "voix feat"}${b.genre ? `, style ${b.genre}` : ""}${b.writingStyle ? `, écriture: ${b.writingStyle}` : ""}${b.vocalStyle ? `, voix: ${b.vocalStyle}` : ""})
-Règles structure dans "text":
+Règles structure dans "text" (titre COMMERCIAL, pas linéaire) :
+- Arc obligatoire proche de: ${ACE_COMMERCIAL_LYRICS_STRUCTURE}
+- Inclure [Intro] (ambiance / peu de paroles), [Pre-Chorus] (montée), [Bridge] (contraste), [Outro]
+- Les 2 couplets ([Verse]) doivent différer (pas le même texte copié)
 - Alterne les couplets avec des tags ACE-Step (PAS de ligne "(${a.name})" qui serait chantée) :
   [Verse - ${a.genderCode === "female" ? "female vocal" : a.genderCode === "nonbinary" ? "androgynous vocal" : "male vocal"}]
   [Verse - ${b.genderCode === "female" ? "female vocal" : b.genderCode === "nonbinary" ? "androgynous vocal" : "male vocal"}]
   [Chorus - duet ${a.genderCode || "lead"} and ${b.genderCode || "featured"} vocals]
-- Au moins un [Chorus - duet …] chanté par les deux.
+- Au moins un [Chorus - duet …] chanté par les deux ; le dernier chorus peut être plus long / ad-libs.
 - Chaque artiste garde SA personnalité d'écriture et son registre — pas de pastiche croisé.
-- Tags structure MiniMax/ACE: [Verse], [Chorus], [Bridge], [Outro] — le genre vocal va DANS le tag avec un tiret, jamais entre parenthèses sur une ligne seule.
+- Tags structure MiniMax/ACE: [Intro], [Verse], [Pre-Chorus], [Chorus], [Bridge], [Outro] — le genre vocal va DANS le tag avec un tiret, jamais entre parenthèses sur une ligne seule.
 - N'écris PAS les noms d'artistes comme paroles à chanter (sauf si c'est un hook volontaire très court).
 `.trim();
 }

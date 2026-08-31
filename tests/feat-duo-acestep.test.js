@@ -59,12 +59,22 @@ describe("ensureAceStepDuoSingerTags", () => {
 });
 
 describe("buildAceStepDuoStyle", () => {
-  it("suit les genres réels sans hardcoder male→female", () => {
+  it("priorise un vrai titre (prod) puis le casting vocal", () => {
     const style = buildAceStepDuoStyle(
       { name: "Ava", gender: "female", voice: "soft alto" },
       { name: "Leo", gender: "male", voice: "baritone rap" },
-      { genreSummary: "pop rnb" },
+      {
+        genreSummary: "pop rnb",
+        styleLock: {
+          genreSummary: "contemporary R&B pop",
+          instruments: ["drums", "bass", "electric piano"],
+          production: "radio mix",
+        },
+      },
     );
+    assert.match(style, /streaming-ready commercial|multi-instrument|layered/i);
+    assert.match(style, /dynamic arrangement|NOT one flat|never drums-only/i);
+    assert.match(style, /drums|bass|piano/i);
     assert.match(style, /singer 1 \(Ava\): female/i);
     assert.match(style, /singer 2 \(Leo\): male/i);
     assert.doesNotMatch(style, /male rap lead AND singer 2 female/i);
@@ -152,7 +162,12 @@ Hey`,
       modelId: "acestep-v15-xl-turbo",
       artist: { name: "Ava", gender: "female", featArtist: { name: "Leo", gender: "male" } },
       featArtist: { name: "Leo", gender: "male" },
+      styleLock: {
+        genreSummary: "pop",
+        instruments: ["drums", "bass", "synths"],
+      },
     });
+    assert.match(body.style, /streaming-ready commercial|multi-instrument|layered/i);
     assert.match(body.style, /singer 1 \(Ava\): female/i);
     assert.match(body.style, /singer 2 \(Leo\): male/i);
     assert.match(body.lyrics, /\[singer 1: female\]/i);

@@ -30,7 +30,7 @@ import {
   isAceStepMusicProvider,
 } from "./aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
-import { artefactGuardsFromLock, coalesceGenres, defaultBpmForGenre, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "../lib/musicLane.js";
+import { ACE_COMMERCIAL_LYRICS_STRUCTURE, artefactGuardsFromLock, coalesceGenres, defaultBpmForGenre, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "../lib/musicLane.js";
 import { normalizeArtistPhotos } from "../lib/artistPhotos.js";
 import { isStudioEnabled } from "../lib/keys.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
@@ -1054,7 +1054,8 @@ JSON strict RFC 8259:
   "structure": string[],
   "text": string
 }
-Le champ text doit contenir les tags MiniMax en anglais: [Verse], [Chorus], [Verse], [Bridge], [Chorus], [Outro] avec de vraies paroles en ${langName} sous chaque tag.
+Le champ text doit contenir les tags MiniMax en anglais pour un TITRE COMMERCIAL (arc dynamique, pas linéaire): ${ACE_COMMERCIAL_LYRICS_STRUCTURE} avec de vraies paroles en ${langName} sous chaque tag.
+Varie l'intensité entre sections (intro légère, chorus plus large, bridge contrasté). Les deux [Verse] doivent différer.
 Dans "text", apostrophes brutes (don't) — jamais \\'. Sauts de ligne = \\n uniquement.
 "language" doit être exactement "${lang}".`,
   );

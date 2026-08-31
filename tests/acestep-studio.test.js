@@ -11,6 +11,9 @@ import {
   looksLikeAudioBuffer,
   lyricsForAceStepPreview,
   pickAceStepModel,
+  pickAceStepDurationSec,
+  ACE_FULL_DURATION_MIN,
+  ACE_FULL_DURATION_MAX,
   aceStepVramHeadroomGb,
   resolveAceAudioUrl,
   resolveAceStepBaseUrl,
@@ -119,9 +122,28 @@ describe("ACE-Step Studio client", () => {
     });
     assert.equal(sft.inferenceSteps, 50);
     assert.equal(sft.guidanceScale, 7);
-    assert.equal(sft.duration, 180);
+    assert.ok(sft.duration >= ACE_FULL_DURATION_MIN && sft.duration <= ACE_FULL_DURATION_MAX);
     assert.equal(sft.referenceAudioUrl, undefined);
     assert.equal(sft.taskType, undefined);
+
+    const fixed = buildAceStepBody({
+      title: "Test",
+      style: "pop",
+      lyrics: "hello",
+      language: "en",
+      modelId: "acestep-v15-xl-sft",
+      durationSec: 200,
+    });
+    assert.equal(fixed.duration, 200);
+  });
+
+  it("tire une durée commerciale aléatoire si non fournie", () => {
+    assert.equal(pickAceStepDurationSec({ preview: true }), 30);
+    assert.equal(pickAceStepDurationSec({ preview: false, durationSec: 195 }), 195);
+    const a = pickAceStepDurationSec({ preview: false });
+    const b = pickAceStepDurationSec({ preview: false });
+    assert.ok(a >= ACE_FULL_DURATION_MIN && a <= ACE_FULL_DURATION_MAX);
+    assert.ok(b >= ACE_FULL_DURATION_MIN && b <= ACE_FULL_DURATION_MAX);
   });
 
   it("envoie le preview titre phare en cover (source + référence)", () => {
@@ -143,7 +165,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(body.audioCoverStrength, 0.5);
     assert.equal(body.coverNoiseStrength, 0.35);
     assert.equal(body.guidanceScale, 7);
-    assert.match(body.instruction, /semantic tokens/i);
+    assert.match(body.instruction, /STREAMING-READY commercial hit|full band mix/i);
 
     const turbo = buildAceStepBody({
       title: "Echoes",

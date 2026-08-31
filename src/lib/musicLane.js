@@ -285,6 +285,56 @@ export function composeAceStepStyle(style = "", lock = null) {
 }
 
 /**
+ * Arrangement « hit commercial » pour ACE-Step (solo ou duo).
+ * Priorité : multi-instruments + arcs dynamiques (pas de boucle linéaire drums-only).
+ */
+export function aceStepCommercialArrangementBits(lock = null, { duo = false } = {}) {
+  const genre = norm(
+    [lock?.genreSummary, ...(Array.isArray(lock?.genres) ? lock.genres : [])].filter(Boolean).join(" "),
+  );
+  const fromLock = Array.isArray(lock?.instruments)
+    ? lock.instruments.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 6)
+    : [];
+
+  let band = fromLock;
+  if (band.length < 3) {
+    if (/trap|hip[\s-]?hop|drill|\brap\b|boom\s*bap|grime/.test(genre)) {
+      band = ["808 bass", "trap drums", "hi-hats", "synth pads", "piano chords", "melodic hook"];
+    } else if (/r&?b|soul|gospel|neo[\s-]?soul/.test(genre)) {
+      band = ["drum kit", "bass", "electric piano", "synths", "soft guitar", "pads"];
+    } else if (/electro|edm|\bdance\b|house|techno|hyperpop|synth/.test(genre)) {
+      band = ["kick", "bass", "synth pads", "arpeggios", "risers", "lead synth"];
+    } else if (/metal|hardcore|punk/.test(genre)) {
+      band = metalBandInstruments().slice(0, 5);
+    } else if (/rock|grunge|indie rock/.test(genre)) {
+      band = ["drum kit", "bass guitar", "rhythm guitars", "lead guitar", "cymbals"];
+    } else if (/afro|dancehall|reggae|amapiano/.test(genre)) {
+      band = ["drums", "bass", "guitar skank", "keys", "percussion", "pads"];
+    } else {
+      band = ["drums", "bass", "keys or guitars", "pads", "percussion", "catchy melodic hook"];
+    }
+  }
+
+  const prod = String(lock?.production || "").trim();
+  const rhythm = String(lock?.rhythmFeel || "").trim();
+
+  return [
+    "streaming-ready commercial hit — Billboard / playlist quality",
+    `layered multi-instrument bed: ${band.join(", ")}`,
+    "never drums-only, never sparse bed, never thin loop under vocals",
+    "dynamic arrangement arc: sparse intro → verse groove → pre-chorus lift → big chorus → contrasting bridge → biggest final chorus → outro",
+    "change layers between sections (fills, drops, add guitars/keys/pads) — NOT one flat linear loop",
+    rhythm ? `groove: ${rhythm}` : null,
+    prod ? `production: ${prod}` : "wide stereo, punchy low-end, clear mid hooks, polished mastering",
+    duo ? "duet vocals sit inside a full commercial band mix" : null,
+  ].filter(Boolean);
+}
+
+/** Structure paroles recommandée ACE / MiniMax pour un titre commercial. */
+export const ACE_COMMERCIAL_LYRICS_STRUCTURE =
+  "[Intro], [Verse], [Pre-Chorus], [Chorus], [Verse], [Pre-Chorus], [Chorus], [Bridge], [Chorus], [Outro]";
+
+/**
  * Ne réécrit pas le DNA : coalesce les genres catalogue (Rock + Death Metal → Death Metal).
  */
 export function withKnownArtistLane(lock) {

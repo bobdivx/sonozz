@@ -1,5 +1,5 @@
 import { isStudioEnabled } from "../lib/keys.js";
-import { composeAceStepStyle } from "../lib/musicLane.js";
+import { aceStepCommercialArrangementBits, composeAceStepStyle } from "../lib/musicLane.js";
 import {
   normalizeFeatArtist,
   prepareAceStepLyrics,
@@ -370,6 +370,26 @@ export const ACE_DUO_STYLE_TRANSFER_STRENGTH = 0.22;
 /** BPM max conseillé quand un feat doit rester audible (évite 172 Lose Yourself). */
 export const ACE_DUO_BPM_CAP = 118;
 
+/** Plage durée titres complets (secondes) — hits radio typiques. */
+export const ACE_FULL_DURATION_MIN = 140; // ~2:20
+export const ACE_FULL_DURATION_MAX = 250; // ~4:10
+
+/**
+ * Durée ACE-Step : preview courte, sinon explicite, sinon tirage commercial aléatoire.
+ */
+export function pickAceStepDurationSec({ preview = false, durationSec } = {}) {
+  if (preview) {
+    const n = Number(durationSec);
+    return Math.min(45, Number.isFinite(n) && n > 0 ? Math.round(n) : 30);
+  }
+  const explicit = Number(durationSec);
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return Math.min(480, Math.max(60, Math.round(explicit)));
+  }
+  const span = ACE_FULL_DURATION_MAX - ACE_FULL_DURATION_MIN;
+  return Math.round(ACE_FULL_DURATION_MIN + Math.random() * span);
+}
+
 export function buildAceStepBody({
   title,
   style,
@@ -389,9 +409,7 @@ export function buildAceStepBody({
 }) {
   const meta = aceStepModelMeta(modelId);
   const isTurbo = Boolean(meta && meta.steps <= 8);
-  const duration = preview
-    ? Math.min(45, Number(durationSec) || 30)
-    : Math.min(480, Math.max(60, Number(durationSec) || 180));
+  const duration = pickAceStepDurationSec({ preview, durationSec });
   let refUrl = String(referenceAudioUrl || "").trim();
   if (isAceHostedAudioUrl(studioBase, refUrl)) refUrl = "";
 
@@ -427,13 +445,16 @@ export function buildAceStepBody({
     styleFinal = buildAceStepDuoStyle(lead || { name: "Lead" }, feat, {
       genreSummary: styleLock?.genreSummary || lead?.genre,
       mood: styleLock?.mood || lead?.mood,
+      styleLock,
+      styleBase,
     });
     if (!styleFinal) {
-      styleFinal = composeAceStepStyle(styleBase, null).slice(0, 1000);
+      styleFinal = composeAceStepStyle(styleBase, styleLock).slice(0, 1000);
     }
   } else {
     const lock = vocalLockForArtist(lead);
     const timbre = vocalTimbreLine(lock);
+    const commercial = aceStepCommercialArrangementBits(styleLock, { duo: false }).join(". ");
     const sig = lock
       ? [
           `signature ${lock.genderCode || "lead"} vocals for ${lock.name}`,
@@ -445,7 +466,7 @@ export function buildAceStepBody({
           .join(": ")
       : "";
     const composed = composeAceStepStyle(styleBase, styleLock);
-    styleFinal = [sig, composed].filter(Boolean).join(". ").slice(0, 1000);
+    styleFinal = [commercial, sig, composed].filter(Boolean).join(". ").slice(0, 1200);
   }
 
   const body = {
@@ -474,8 +495,8 @@ export function buildAceStepBody({
     body.coverNoiseStrength = isDuo ? 0.5 : 0.35;
     body.taskType = "cover";
     body.instruction = isDuo
-      ? "Generate a two-singer vocal duet from the given conditions; obey [singer 1]/[singer 2] gender tags; keep groove from reference but do not clone a single voice:"
-      : "Generate audio semantic tokens based on the given conditions:";
+      ? "Generate a STREAMING-READY commercial hit: multi-instrument arrangement with dynamic section changes (intro/verse/pre-chorus/chorus/bridge/final chorus) AND a two-singer duet; obey [singer 1]/[singer 2] tags; never drums-only, never flat linear loop, never a cappella; keep groove from reference but do not clone a single voice:"
+      : "Generate a STREAMING-READY commercial hit with multi-instrument arrangement and dynamic section changes (not a flat loop); vocals sit in a full band mix:";
     if (!isTurbo && (body.guidanceScale == null || body.guidanceScale < 7)) {
       body.guidanceScale = 7;
     }
@@ -1245,7 +1266,7 @@ export async function startAceStep(keys, {
     lyrics,
     language,
     bpm,
-    durationSec: preview ? 30 : 180,
+    durationSec: preview ? 30 : undefined,
     modelId: pick.modelId,
     preview,
     referenceAudioUrl: refUrl,
