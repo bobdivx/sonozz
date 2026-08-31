@@ -918,6 +918,7 @@ async function runTrackBackgroundJob(job) {
         artist: {
           ...project.artist,
           musicArrange: project.musicArrange,
+          featArtist: project.featArtist || null,
         },
       },
       (p) => {
@@ -925,6 +926,10 @@ async function runTrackBackgroundJob(job) {
         patchJob(id, {
           progress: Math.max(8, Math.min(96, Number(p.percent) || 12)),
           message: p.message || (preview ? "Extrait…" : "Génération audio…"),
+          phase: p.phase || "running",
+          model: p.model || p.modelLabel || undefined,
+          modelLabel: p.modelLabel || undefined,
+          gpu: p.gpu || undefined,
         });
       },
       {
@@ -936,6 +941,10 @@ async function runTrackBackgroundJob(job) {
               generationId: started.generationId,
               musicKind: started.musicKind || null,
               draft: slimTrackDraft(started.draft),
+              model: started.model || started.draft?.aceStepModel || undefined,
+              modelLabel: started.quality || undefined,
+              gpu: started.gpu || undefined,
+              phase: "generating",
             });
           } catch {
             patchJob(id, {
@@ -1011,6 +1020,24 @@ async function runTrackBackgroundJob(job) {
             : "Étape Morceau générée",
       },
     });
+
+    // Fige le timbre depuis le nouveau morceau si le profil n’en a pas encore.
+    if (
+      result?.audioUrl &&
+      !result?.isPreview &&
+      result?.status !== "preview-ready" &&
+      next?.artist?.slug
+    ) {
+      try {
+        await api.ensureArtistTimbre(next.artist.slug, {
+          force: false,
+          audioUrl: result.audioUrl,
+          profile: next.artist,
+        });
+      } catch (e) {
+        console.warn("[timbre] post-track:", e?.message || e);
+      }
+    }
 
     if (abortState.aborted || !getJob(id)) return;
 

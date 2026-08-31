@@ -1,5 +1,6 @@
 import { json, error, readBody } from "../../../server/http.js";
 import { listArtists, syncArtistsFromProjects, upsertArtistFromProject } from "../../../server/artists.js";
+import { getUserKeys } from "../../../server/db.js";
 
 export const prerender = false;
 
@@ -27,6 +28,36 @@ export async function POST({ request }) {
       const saved = await upsertArtistFromProject({ ...profile, name });
       if (!saved) return error("Sauvegarde impossible", 500);
       return json({ ok: true, artist: saved });
+    }
+    if (body.action === "backfill-timbres") {
+      const { backfillAllArtistTimbres } = await import("../../../server/artistTimbre.js");
+      const keys = { ...((await getUserKeys()) || {}), ...(body.keys || {}) };
+      const report = await backfillAllArtistTimbres(keys, {
+        limit: Number(body.limit) || 80,
+      });
+      return json({ ok: true, report });
+    }
+    if (body.action === "analyze-voice-sample") {
+      const { ensureArtistTimbre } = await import("../../../server/artistTimbre.js");
+      const keys = { ...((await getUserKeys()) || {}), ...(body.keys || {}) };
+      const sample = body.voiceSample || body.sample;
+      if (!sample?.url && !sample?.s3Key) {
+        return error("voiceSample url/s3Key manquant", 400);
+      }
+      const draft = {
+        name: body.name || "Artist",
+        slug: body.slug || undefined,
+        gender: body.gender || undefined,
+        voiceSample: sample,
+      };
+      const res = await ensureArtistTimbre(keys, draft, { force: true });
+      return json({
+        ok: Boolean(res.ok),
+        reason: res.reason,
+        timbre: res.timbre || null,
+        voiceSample: res.artist?.voiceSample || sample,
+        artist: res.artist || null,
+      });
     }
     const synced = await syncArtistsFromProjects();
     const artists = await listArtists(80);

@@ -11,7 +11,7 @@
     "preview": "astro preview",
     "start": "node ./dist/server/entry.mjs",
     "astro": "astro",
-    "test": "node --test ./tests/career.test.js ./tests/artist-name.test.js ./tests/acestep-studio.test.js ./tests/album-tracks.test.js ./tests/album-job-mirror.test.js ./tests/artist-photos.test.js ./tests/artist-draft.test.js ./tests/play-session.test.js ./tests/s3-audio-key.test.js ./tests/music-styles.test.js ./tests/music-lane.test.js ./tests/artist-top-tracks.test.js ./tests/artist-gender.test.js ./tests/parse-llm-json.test.js ./tests/pocket-id-auth.test.js ./tests/songgen-preview.test.js"
+    "test": "node --test ./tests/career.test.js ./tests/artist-name.test.js ./tests/acestep-studio.test.js ./tests/feat-duo-acestep.test.js ./tests/album-tracks.test.js ./tests/album-job-mirror.test.js ./tests/artist-photos.test.js ./tests/artist-draft.test.js ./tests/play-session.test.js ./tests/s3-audio-key.test.js ./tests/music-styles.test.js ./tests/music-lane.test.js ./tests/artist-top-tracks.test.js ./tests/artist-gender.test.js ./tests/parse-llm-json.test.js ./tests/pocket-id-auth.test.js ./tests/songgen-preview.test.js ./tests/artist-timbre.test.js"
   },
   "dependencies": {
     "@astrojs/node": "^11.0.3",

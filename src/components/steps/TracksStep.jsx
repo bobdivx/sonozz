@@ -16,6 +16,7 @@ import {
   Music2,
   SlidersHorizontal,
   User,
+  Users,
   Radio,
   Save,
   FileAudio,
@@ -27,8 +28,10 @@ import { loadKeys, saveKeysAsync, ensureKeysHydrated, isStudioEnabled } from "..
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
 import { api } from "../../lib/apiClient.js";
 import MusicArrangePanel from "../MusicArrangePanel.jsx";
+import FeatArtistPicker from "../FeatArtistPicker.jsx";
 import SongGenModelsPanel from "../SongGenModelsPanel.jsx";
 import AceStepModelsPanel from "../AceStepModelsPanel.jsx";
+import StudioGpuMeter from "../StudioGpuMeter.jsx";
 import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import { normalizeMusicArrange, musicArrangeFromStyleLock, isDefaultMusicArrange } from "../../lib/musicArrange.js";
 import { buildSunoPrompt } from "../../lib/sunoPrompt.js";
@@ -126,6 +129,8 @@ export default function TracksStep({
   activeId = null,
   lyrics,
   artist,
+  featArtist = null,
+  catalogArtists = [],
   loading,
   progress = null,
   musicArrange = null,
@@ -139,6 +144,7 @@ export default function TracksStep({
   onRejectTrackPreview,
   onOpenSettings,
   onMusicArrangeChange,
+  onFeatArtistChange,
   onApplyStyleTrack,
   onDeleteProject,
   onSelectVersion,
@@ -185,7 +191,7 @@ export default function TracksStep({
     return null;
   });
   const [styleTrackBusy, setStyleTrackBusy] = useState(false);
-  const [modal, setModal] = useState(null); // ref | arrange | profile | provider | once | suno
+  const [modal, setModal] = useState(null); // ref | arrange | profile | feat | provider | once | suno
   const onceFileRef = useRef(null);
   const importFileRef = useRef(null);
   const probeSeq = useRef(0);
@@ -845,6 +851,21 @@ export default function TracksStep({
             {!voiceLabel ? <span class="badge badge-warning badge-xs">voix</span> : null}
           </button>
         )}
+        {artist && (
+          <button
+            type="button"
+            class={`btn btn-sm gap-1.5 ${featArtist?.name ? "btn-primary" : "btn-outline"}`}
+            onClick={() => setModal("feat")}
+          >
+            <Users size={14} />
+            Duo / Feat.
+            {featArtist?.name ? (
+              <span class="badge badge-ghost badge-xs max-w-[7rem] truncate">
+                {featArtist.name}
+              </span>
+            ) : null}
+          </button>
+        )}
         <button
           type="button"
           class={`btn btn-sm gap-1.5 ${
@@ -980,14 +1001,19 @@ export default function TracksStep({
       ) : null}
 
       {loading && typeof progress?.percent === "number" && (
-        <div class="space-y-1.5" aria-live="polite">
+        <div class="space-y-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2.5" aria-live="polite">
           <div class="h-2 overflow-hidden rounded-full bg-base-300">
             <div
               class="h-full rounded-full bg-primary transition-[width] duration-500"
               style={{ width: `${Math.max(4, Math.min(100, progress.percent))}%` }}
             />
           </div>
-          <p class="text-xs text-base-content/60">{progress.message}</p>
+          <p class="text-xs text-base-content/70">
+            {[progress.modelLabel || progress.model, progress.message]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+          <StudioGpuMeter gpu={progress.gpu} />
         </div>
       )}
       {!hasLyricsText && (
@@ -1363,6 +1389,15 @@ export default function TracksStep({
                 <span class="font-medium text-warning">non défini</span>
               )}
             </p>
+            {featArtist?.name ? (
+              <p>
+                <span class="text-base-content/60">Feat. :</span>{" "}
+                <span class="font-medium">{featArtist.name}</span>
+                {featArtist.genre ? (
+                  <span class="text-base-content/55"> · {featArtist.genre}</span>
+                ) : null}
+              </p>
+            ) : null}
             {artist.voiceSample?.s3Key || artist.voiceSample?.url ? (
               <p class="text-success">Extrait vocal perso · indice de timbre uniquement</p>
             ) : null}
@@ -1379,6 +1414,17 @@ export default function TracksStep({
         ) : (
           <p class="text-sm text-base-content/60">Aucun profil artiste.</p>
         )}
+      </StepModal>
+
+      <StepModal open={modal === "feat"} title="Duo / Feat." onClose={closeModal}>
+        <FeatArtistPicker
+          embedded
+          leadArtist={artist}
+          featArtist={featArtist}
+          catalogArtists={catalogArtists}
+          disabled={loading}
+          onChange={(next) => onFeatArtistChange?.(next)}
+        />
       </StepModal>
 
       <StepModal

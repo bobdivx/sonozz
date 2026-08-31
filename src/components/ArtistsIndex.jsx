@@ -1,21 +1,83 @@
 import { useEffect, useState } from "preact/hooks";
-import { Heart, Plus, Sparkles, UserRound, X } from "lucide-preact";
+import { Heart, Plus, Sparkles, UserRound, X, AudioWaveform } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import { listArtistImageUrl } from "../lib/artistPhotos.js";
+import { api } from "../lib/apiClient.js";
+
+function artistMissingTimbre(a) {
+  const p = a?.profile || {};
+  return !(
+    p.voiceSample?.songGenTimbre ||
+    p.voiceSample?.analyzedTimbre ||
+    p.styleLock?.timbre
+  );
+}
+
+const AUTO_TIMBRE_KEY = "sonozz.timbre.autobackfill.v1";
 
 export default function ArtistsIndex() {
   const [artists, setArtists] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [timbreBusy, setTimbreBusy] = useState(false);
+  const [timbreMsg, setTimbreMsg] = useState("");
+
+  async function reloadArtists() {
+    const res = await fetch("/api/artists");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Erreur");
+    setArtists(data.artists || []);
+    return data.artists || [];
+  }
+
+  async function backfillTimbres({ silent = false } = {}) {
+    if (timbreBusy) return;
+    setTimbreBusy(true);
+    if (!silent) setTimbreMsg("");
+    try {
+      const res = await api.backfillArtistTimbres({ limit: 80 });
+      const r = res?.report || {};
+      const msg =
+        `Timbres mis à jour : ${r.analyzed || 0} complété(s)` +
+        (r.locked ? `, ${r.locked} déjà OK` : "") +
+        (r.failed ? `, ${r.failed} échec(s)` : "") +
+        ".";
+      setTimbreMsg(msg);
+      await reloadArtists();
+      try {
+        sessionStorage.setItem(AUTO_TIMBRE_KEY, String(Date.now()));
+      } catch {
+        /* ignore */
+      }
+    } catch (e) {
+      if (!silent) setTimbreMsg(e.message || "Backfill timbre impossible");
+    } finally {
+      setTimbreBusy(false);
+    }
+  }
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/artists");
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Erreur");
-        setArtists(data.artists || []);
+        const list = await reloadArtists();
+        const missing = list.filter(artistMissingTimbre).length;
+        let recentlyDone = false;
+        try {
+          const t = Number(sessionStorage.getItem(AUTO_TIMBRE_KEY) || 0);
+          recentlyDone = t > 0 && Date.now() - t < 6 * 60 * 60 * 1000;
+        } catch {
+          /* ignore */
+        }
+        if (missing > 0 && !recentlyDone) {
+          setTimbreMsg(
+            `${missing} artiste(s) sans timbre — complément automatique…`,
+          );
+          // Laisse l’UI peindre puis lance le backfill (synthèse profil / audio).
+          window.setTimeout(() => {
+            void backfillTimbres({ silent: true });
+          }, 400);
+        }
       } catch (e) {
         setError(e.message);
       } finally {
@@ -30,18 +92,35 @@ export default function ArtistsIndex() {
       title="Tes artistes"
       subtitle="Ouvre une fiche pour le profil, le catalogue et les albums. Un morceau s’écrit dans le Studio."
       actions={
-        <button
-          type="button"
-          class="btn btn-primary gap-2"
-          aria-label="Ajouter un artiste"
-          onClick={() => setPickerOpen(true)}
-        >
-          <Plus size={18} />
-          <span class="hidden sm:inline">Ajouter</span>
-        </button>
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="btn btn-ghost gap-2"
+            disabled={timbreBusy || loading}
+            title="Complète les timbres absents (profil IA, ou audio existant)"
+            onClick={() => void backfillTimbres()}
+          >
+            {timbreBusy ? (
+              <span class="loading loading-spinner loading-sm" />
+            ) : (
+              <AudioWaveform size={18} />
+            )}
+            <span class="hidden sm:inline">Compléter les timbres</span>
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary gap-2"
+            aria-label="Ajouter un artiste"
+            onClick={() => setPickerOpen(true)}
+          >
+            <Plus size={18} />
+            <span class="hidden sm:inline">Ajouter</span>
+          </button>
+        </div>
       }
     >
       <div class="mx-auto max-w-5xl space-y-8">
+        {timbreMsg ? <p class="text-sm text-base-content/70">{timbreMsg}</p> : null}
         {loading && (
           <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[0, 1, 2].map((i) => (
@@ -82,6 +161,15 @@ export default function ArtistsIndex() {
                         <p class="mt-0.5 text-xs text-white/70">
                           {a.profile?.mode === "self" ? "Profil réel" : "Artiste SONOZZ"}
                           {a.profile?.genre ? ` · ${a.profile.genre}` : ""}
+                          {a.profile?.voiceSample?.songGenTimbre ||
+                          a.profile?.voiceSample?.analyzedTimbre ||
+                          a.profile?.styleLock?.timbre
+                            ? ` · timbre « ${
+                                a.profile.voiceSample?.songGenTimbre ||
+                                a.profile.voiceSample?.analyzedTimbre ||
+                                a.profile.styleLock?.timbre
+                              } »`
+                            : " · timbre à figer"}
                         </p>
                       </div>
                     </div>

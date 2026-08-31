@@ -9,6 +9,11 @@ import {
 import { parseGenderCode } from "../lib/artistGender.js";
 import { isStudioEnabled } from "../lib/keys.js";
 import {
+  normalizeFeatArtist,
+  duoSongGenStyleTags,
+  duoVocalPromptBits,
+} from "../lib/featArtist.js";
+import {
   defaultBpmForGenre,
   isExtremeMetalLane,
   isMetalLane,
@@ -1331,13 +1336,32 @@ export async function startSongGeneration(
       styleTags.push(flavor);
     }
   }
+
+  // Duo : tags séparés (voix feat) — sans stripOppositeGender du lead
+  const feat = normalizeFeatArtist(artist?.featArtist);
+  if (feat) {
+    for (const t of duoSongGenStyleTags(artist, feat)) {
+      if (!styleTags.some((x) => x.toLowerCase() === String(t).toLowerCase())) {
+        styleTags.push(t);
+      }
+    }
+    // Remplacer le monologue « natural male/female vocals » par le duo nommé
+    const duoBits = duoVocalPromptBits(artist, feat);
+    for (const bit of duoBits.slice(0, 3)) {
+      const short = String(bit).slice(0, 48);
+      if (short && !styleTags.some((x) => x.toLowerCase() === short.toLowerCase())) {
+        styleTags.push(short);
+      }
+    }
+  }
+
   // PAS d’instruments ici : déjà dans le champ dédié. Les dupliquer sature LeVo
   // (voix robotique + mix brouillon).
   const custom = styleTags
     .filter((t, i, arr) => arr.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i)
-    .slice(0, preview ? 10 : 14)
+    .slice(0, preview ? (feat ? 12 : 10) : feat ? 16 : 14)
     .join(", ")
-    .slice(0, preview ? 220 : 360);
+    .slice(0, preview ? 260 : 420);
 
   const lockBpm = Number(fromArrange.bpm ?? lock?.bpm ?? bpm);
   const genreBpm = defaultBpmForGenre(genreHint);
@@ -1425,6 +1449,7 @@ export async function startSongGeneration(
     `bpm=${body.bpm}`,
     `instruments=${body.instruments.slice(0, 80)}`,
     `timbre=${body.timbre}`,
+    `feat=${feat?.name || "no"}`,
     `style=${body.custom_style.slice(0, 120)}`,
     `lock=${lock ? "yes" : "NO"}`,
     `lyric0=${String(sections[0]?.lyrics || "").slice(0, 60).replace(/\n/g, " / ")}`,

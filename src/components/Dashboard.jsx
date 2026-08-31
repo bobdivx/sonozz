@@ -116,6 +116,13 @@ function formatElapsed(ms) {
   return m > 0 ? `${m}:${String(r).padStart(2, "0")}` : `${r}s`;
 }
 
+function studioGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Bonjour";
+  if (h < 18) return "Bon après-midi";
+  return "Bonsoir";
+}
+
 /** Clips + versions créatives (paroles / audio / jaquettes). */
 function normalizeProjectState(project = {}) {
   return normalizeProjectVersions(normalizeProjectClips(project));
@@ -186,6 +193,8 @@ export default function Dashboard() {
   const [saveMsg, setSaveMsg] = useState("");
   /** Accueil studio `/` uniquement — masqué quand un projet est ouvert via ?project= */
   const [showHomePipeline, setShowHomePipeline] = useState(true);
+  /** Projets récents pour la home studio (style catalogue). */
+  const [recentProjects, setRecentProjects] = useState([]);
   /** Génération album lancée dans cet onglet (évite d’écraser l’état live par le poll). */
   const albumWorkingRef = useRef(null);
   /** Annulation génération étape (morceau / extrait). */
@@ -237,6 +246,22 @@ export default function Dashboard() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!showHomePipeline) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { projects: list } = await api.listProjects();
+        if (!cancelled) setRecentProjects((list || []).slice(0, 8));
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showHomePipeline]);
 
   useEffect(() => {
     if (!autoRunning) return;
@@ -383,6 +408,10 @@ export default function Dashboard() {
         setStepProgress({
           percent: typeof job.progress === "number" ? job.progress : undefined,
           message: job.message || "Génération audio…",
+          gpu: job.gpu || null,
+          model: job.model || null,
+          modelLabel: job.modelLabel || null,
+          phase: job.phase || null,
         });
       }
       const becameTerminal =
@@ -585,6 +614,10 @@ export default function Dashboard() {
         patchJob(stepJobId, {
           progress: Math.max(8, Math.min(96, Number(p.percent) || 35)),
           message: p.message || `Génération ${stepLabel}…`,
+          phase: p.phase || undefined,
+          model: p.model || undefined,
+          modelLabel: p.modelLabel || undefined,
+          gpu: p.gpu || undefined,
         });
       };
       let result = await fn(onProgress, abortState);
@@ -983,6 +1016,7 @@ export default function Dashboard() {
         activeClipId: null,
       });
       setProject(next);
+      setShowHomePipeline(false);
       setLog(data.log || []);
       setAutoProgress((p) => ({
         ...p,
@@ -1013,6 +1047,7 @@ export default function Dashboard() {
     } catch (e) {
       setError(e.message);
       if (snapshotProject?.artist?.name) {
+        setShowHomePipeline(false);
         try {
           await persist(snapshotProject, {
             stepKey: "pipeline",
@@ -1038,6 +1073,7 @@ export default function Dashboard() {
       assignProjectId(saved.id);
       const loaded = normalizeProjectState(saved.project || {});
       setProject(loaded);
+      setShowHomePipeline(false);
       setSeed((s) => ({
         ...s,
         ...(saved.seed || {}),
@@ -1069,72 +1105,74 @@ export default function Dashboard() {
   return (
     <AppShell active="studio">
     <div class="mx-auto w-full max-w-6xl">
-      <header class="mb-8 space-y-6">
-        <div class="flex flex-wrap items-center gap-3 animate-rise">
-          <p class="inline-flex items-center gap-2 text-xs uppercase tracking-[0.28em] text-primary">
-            <Waves size={14} /> Studio
+      <header class="mb-6 space-y-5 md:mb-8 md:space-y-6">
+        <div class="flex flex-wrap items-center gap-2 animate-rise sm:gap-3">
+          <p class="font-display text-2xl font-extrabold tracking-tight sm:text-3xl">
+            {showHomePipeline ? studioGreeting() : "Studio"}
           </p>
-          <a href="/parametres" class="btn btn-ghost btn-xs gap-1">
-            <Settings2 size={14} />
-            Paramètres
-            <span class={`ml-1 h-2 w-2 rounded-full ${ready ? "bg-success" : "bg-warning animate-pulse-soft"}`} />
-          </a>
-          <button type="button" class="btn btn-ghost btn-xs gap-1" onClick={() => setHistoryOpen(true)}>
-            <History size={14} />
-            Historique
-          </button>
-          {artistSlug && (
-            <a href={`/artiste/${artistSlug}`} class="btn btn-ghost btn-xs gap-1 text-primary">
-              Fiche artiste
+          <div class="ml-auto flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <a href="/parametres" class="btn btn-ghost btn-xs gap-1 rounded-full">
+              <Settings2 size={14} />
+              <span class="hidden sm:inline">Paramètres</span>
+              <span class={`h-2 w-2 rounded-full ${ready ? "bg-success" : "bg-warning animate-pulse-soft"}`} />
             </a>
-          )}
-          {albumCtx && !showHomePipeline && (
-            <div class="flex flex-wrap items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs">
-              <Library size={12} class="text-primary" />
-              <span class="font-medium text-primary">{albumCtx.title}</span>
-              {albumCtx.index ? (
-                <span class="text-base-content/55">
-                  · piste {albumCtx.index}
-                  {albumCtx.total ? `/${albumCtx.total}` : ""}
-                </span>
-              ) : null}
-              {albumCtx.prevHref && (
-                <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.prevHref} title="Titre précédent">
-                  <ChevronLeft size={12} />
-                </a>
-              )}
-              {albumCtx.nextHref && (
-                <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.nextHref} title="Titre suivant">
-                  <ChevronRight size={12} />
-                </a>
-              )}
-              {albumCtx.artistHref && (
-                <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.artistHref}>
-                  Voir l’album
-                </a>
-              )}
-            </div>
-          )}
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs gap-1"
-            disabled={saving}
-            onClick={() =>
-              persist(project, {
-                eventType: "manual-save",
-                message: "Sauvegarde manuelle",
-              })
-            }
-          >
-            <Save size={14} />
-            {saving ? "…" : "Sauver"}
-          </button>
-          {saveMsg && <span class="text-xs text-base-content/45">{saveMsg}</span>}
+            <button type="button" class="btn btn-ghost btn-xs gap-1 rounded-full" onClick={() => setHistoryOpen(true)}>
+              <History size={14} />
+              <span class="hidden sm:inline">Historique</span>
+            </button>
+            {artistSlug && (
+              <a href={`/artiste/${artistSlug}`} class="btn btn-ghost btn-xs gap-1 rounded-full text-primary">
+                Fiche artiste
+              </a>
+            )}
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs gap-1 rounded-full"
+              disabled={saving}
+              onClick={() =>
+                persist(project, {
+                  eventType: "manual-save",
+                  message: "Sauvegarde manuelle",
+                })
+              }
+            >
+              <Save size={14} />
+              {saving ? "…" : "Sauver"}
+            </button>
+            {saveMsg && <span class="text-xs text-base-content/45">{saveMsg}</span>}
+          </div>
         </div>
 
-        <div class="grid gap-6 md:grid-cols-[auto_minmax(0,1fr)_minmax(200px,0.85fr)] md:items-end md:gap-8">
-          <div class="animate-rise">
-            <h1 class="sr-only">{project.artist?.name || "SONOZZ"}</h1>
+        {albumCtx && !showHomePipeline && (
+          <div class="flex flex-wrap items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs animate-rise">
+            <Library size={12} class="text-primary" />
+            <span class="font-medium text-primary">{albumCtx.title}</span>
+            {albumCtx.index ? (
+              <span class="text-base-content/55">
+                · piste {albumCtx.index}
+                {albumCtx.total ? `/${albumCtx.total}` : ""}
+              </span>
+            ) : null}
+            {albumCtx.prevHref && (
+              <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.prevHref} title="Titre précédent">
+                <ChevronLeft size={12} />
+              </a>
+            )}
+            {albumCtx.nextHref && (
+              <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.nextHref} title="Titre suivant">
+                <ChevronRight size={12} />
+              </a>
+            )}
+            {albumCtx.artistHref && (
+              <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.artistHref}>
+                Voir l’album
+              </a>
+            )}
+          </div>
+        )}
+
+        {!showHomePipeline && (
+          <div class="grid gap-5 md:grid-cols-[auto_minmax(0,1fr)_minmax(180px,0.75fr)] md:items-end md:gap-8 animate-rise">
             <img
               src={
                 project.artist?.imageUrl && !/^data:image\/svg/i.test(project.artist.imageUrl)
@@ -1142,274 +1180,346 @@ export default function Dashboard() {
                   : "/logo.png"
               }
               alt={project.artist?.name || "SONOZZ"}
-              class="h-28 w-28 rounded-2xl object-cover shadow-lg shadow-black/30 md:h-36 md:w-36"
-              width="144"
-              height="144"
+              class="h-24 w-24 rounded-xl object-cover shadow-lg shadow-black/30 md:h-32 md:w-32"
+              width="128"
+              height="128"
             />
-          </div>
-
-          <div class="animate-rise min-w-0 space-y-3">
-            {isTrackAudioFinal(project.track) ? (
-              <ClipTrackPlayer
-                track={project.track}
-                artist={project.artist}
-                cover={project.cover}
-                compact
-              />
-            ) : null}
-            {showHomePipeline && (
-              <p
-                class={`max-w-md text-base-content/70 ${
-                  isTrackAudioFinal(project.track) ? "text-sm" : "text-base md:text-lg"
-                }`}
-              >
-                Pipeline A→Z : paroles, morceau, jaquette — avec un artiste déjà créé. Le profil
-                se gère dans Artistes.
-              </p>
-            )}
-          </div>
-
-          <div class="animate-rise space-y-3">
-            <div class="flex items-center justify-between text-sm">
-              <span class="text-base-content/60">Pipeline</span>
-              <span class="font-display text-primary">{progress}%</span>
+            <div class="min-w-0 space-y-2">
+              <h1 class="font-display text-xl font-bold tracking-tight sm:text-2xl">
+                {project.artist?.name || "Projet"}
+                {projectSongTitle ? (
+                  <span class="text-base-content/50"> — {projectSongTitle}</span>
+                ) : null}
+              </h1>
+              {isTrackAudioFinal(project.track) ? (
+                <ClipTrackPlayer
+                  track={project.track}
+                  artist={project.artist}
+                  cover={project.cover}
+                  compact
+                />
+              ) : null}
             </div>
-            <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
-              <div
-                class="h-full rounded-full bg-primary transition-all duration-500"
-                style={{ width: `${progress}%` }}
-              />
+            <div class="space-y-2">
+              <div class="flex items-center justify-between text-sm">
+                <span class="text-base-content/60">Pipeline</span>
+                <span class="font-display text-primary">{progress}%</span>
+              </div>
+              <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
+                <div
+                  class="h-full rounded-full bg-primary transition-all duration-500"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
             </div>
-            {project.artist && (
-              <p class="text-sm text-base-content/55">
-                Projet : <span class="text-base-content">{project.artist.name}</span>
-                {projectSongTitle ? ` — ${projectSongTitle}` : ""}
-              </p>
-            )}
           </div>
-        </div>
+        )}
       </header>
 
       {showHomePipeline && (
-        <section class="mb-8 border border-primary/25 bg-primary/5 p-4 md:p-5">
-          <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 class="font-display text-lg font-semibold">Lancer un morceau</h2>
-              <p class="text-sm text-base-content/60">
-                Choisis un artiste existant, puis Auto A→Z. Le profil se crée sur{" "}
-                <a class="link link-hover text-primary" href="/artistes">
-                  Artistes
+        <>
+          {/* Accès rapide artistes — style “Good evening” */}
+          {catalogArtists.length > 0 && (
+            <section class="mb-8 animate-rise">
+              <div class="mb-3 flex items-end justify-between gap-3">
+                <h2 class="font-display text-lg font-bold sm:text-xl">Accès rapide</h2>
+                <a href="/artistes" class="text-sm font-medium text-primary hover:underline">
+                  Voir tout
                 </a>
-                .
-              </p>
+              </div>
+              <div class="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+                {catalogArtists.slice(0, 4).map((a) => (
+                  <button
+                    key={a.slug}
+                    type="button"
+                    class="group flex items-center gap-3 overflow-hidden rounded-lg bg-base-300/60 text-left transition hover:bg-base-300"
+                    onClick={() => {
+                      setSeed((s) => ({
+                        ...s,
+                        artistSlug: a.slug,
+                        language: a.profile?.language || s.language,
+                      }));
+                      document.getElementById("studio-launch")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                  >
+                    {a.profile?.imageUrl ? (
+                      <img
+                        src={a.profile.imageUrl}
+                        alt=""
+                        class="h-14 w-14 shrink-0 object-cover sm:h-16 sm:w-16"
+                        width="64"
+                        height="64"
+                      />
+                    ) : (
+                      <div class="flex h-14 w-14 shrink-0 items-center justify-center bg-primary/15 sm:h-16 sm:w-16">
+                        <Waves size={20} class="text-primary" />
+                      </div>
+                    )}
+                    <span class="min-w-0 pr-2 font-display text-sm font-semibold leading-tight sm:text-base">
+                      <span class="line-clamp-2">{a.name}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Récents */}
+          {recentProjects.length > 0 && (
+            <section class="mb-8 animate-rise">
+              <div class="mb-3 flex items-end justify-between gap-3">
+                <h2 class="font-display text-lg font-bold sm:text-xl">Récemment</h2>
+                <button
+                  type="button"
+                  class="text-sm font-medium text-primary hover:underline"
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  Voir tout
+                </button>
+              </div>
+              <div class="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
+                {recentProjects.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    class="group w-36 shrink-0 text-left sm:w-40"
+                    onClick={() => loadFromHistory(p.id)}
+                  >
+                    <div class="aspect-square overflow-hidden rounded-lg bg-gradient-to-br from-primary/25 via-base-300 to-secondary/20 shadow-md shadow-black/20">
+                      <div class="flex h-full w-full items-center justify-center p-3">
+                        <Music2 size={36} class="text-primary/60 transition group-hover:scale-105" />
+                      </div>
+                    </div>
+                    <p class="mt-2 truncate font-display text-sm font-semibold">{p.title || "Projet"}</p>
+                    <p class="truncate text-xs text-base-content/45">{p.status || "brouillon"}</p>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Lancer un morceau */}
+          <section id="studio-launch" class="mb-8 animate-rise">
+            <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 class="font-display text-lg font-bold sm:text-xl">Lancer un morceau</h2>
+                <p class="mt-1 max-w-xl text-sm text-base-content/60">
+                  Choisis un artiste, puis Auto A→Z. Les profils se gèrent dans{" "}
+                  <a class="link link-hover text-primary" href="/artistes">
+                    Artistes
+                  </a>
+                  .
+                </p>
+              </div>
+              <button
+                type="button"
+                class="btn btn-primary gap-2 rounded-full px-5"
+                disabled={autoRunning || loading || !seed.artistSlug}
+                onClick={runFullAuto}
+              >
+                {autoRunning ? <span class="loading loading-spinner loading-sm" /> : <Zap size={18} />}
+                {autoRunning ? "Pipeline en cours…" : "Auto A → Z"}
+              </button>
             </div>
-            <button
-              type="button"
-              class="btn btn-primary gap-2"
-              disabled={autoRunning || loading || !seed.artistSlug}
-              onClick={runFullAuto}
-            >
-              {autoRunning ? <span class="loading loading-spinner loading-sm" /> : <Zap size={18} />}
-              {autoRunning ? "Pipeline en cours…" : "Auto A → Z"}
-            </button>
-          </div>
-          <div class="grid gap-3 md:grid-cols-2">
-            <label class="form-control w-full">
-              <span class="label-text mb-1 text-xs text-base-content/55">Artiste</span>
-              {catalogArtists.length === 0 ? (
-                <a class="btn btn-outline btn-sm mt-1" href="/artiste/nouveau">
-                  Créer un artiste d’abord
-                </a>
-              ) : (
-                <select
-                  class="select select-bordered w-full bg-base-200"
-                  value={seed.artistSlug}
+
+            <div class="grid gap-3 rounded-2xl bg-base-300/40 p-4 md:grid-cols-2 md:gap-4 md:p-5">
+              <label class="form-control w-full">
+                <span class="label-text mb-1 text-xs text-base-content/55">Artiste</span>
+                {catalogArtists.length === 0 ? (
+                  <a class="btn btn-outline btn-sm mt-1 rounded-full" href="/artiste/nouveau">
+                    Créer un artiste d’abord
+                  </a>
+                ) : (
+                  <select
+                    class="select select-bordered w-full rounded-xl bg-base-200"
+                    value={seed.artistSlug}
+                    disabled={autoRunning}
+                    onChange={(e) => {
+                      const slug = e.currentTarget.value;
+                      const hit = catalogArtists.find((a) => a.slug === slug);
+                      setSeed((s) => ({
+                        ...s,
+                        artistSlug: slug,
+                        language: hit?.profile?.language || s.language,
+                      }));
+                    }}
+                  >
+                    <option value="">Choisir…</option>
+                    {catalogArtists.map((a) => (
+                      <option key={a.slug} value={a.slug}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <p class="mt-1 text-[11px] text-base-content/45">
+                  {selectedCatalog ? (
+                    <>
+                      {selectedCatalog.profile?.genre || "Profil prêt"} — style sur la{" "}
+                      <a class="link" href={`/artiste/${encodeURIComponent(selectedCatalog.slug)}`}>
+                        fiche artiste
+                      </a>
+                      .
+                    </>
+                  ) : (
+                    <>
+                      Pas encore de profil ?{" "}
+                      <a class="link" href="/artiste/nouveau">
+                        Créer un artiste
+                      </a>
+                      {" · "}
+                      <a class="link" href="/artiste/nouveau?mode=self">
+                        Créer mon profil
+                      </a>
+                    </>
+                  )}
+                </p>
+              </label>
+              <label class="form-control w-full">
+                <span class="label-text mb-1 text-xs text-base-content/55">Thème / titre</span>
+                <input
+                  class="input input-bordered rounded-xl bg-base-200"
+                  placeholder="Optionnel"
+                  value={seed.theme}
                   disabled={autoRunning}
-                  onChange={(e) => {
-                    const slug = e.currentTarget.value;
-                    const hit = catalogArtists.find((a) => a.slug === slug);
+                  onInput={(e) => setSeed((s) => ({ ...s, theme: e.currentTarget.value }))}
+                />
+              </label>
+              <label class="form-control w-full md:col-span-2">
+                <span class="label-text mb-1 text-xs text-base-content/55">Langue des chansons</span>
+                {String(loadKeys().musicProvider || "") === "songgen" && (
+                  <p class="mb-1 text-[11px] text-warning">
+                    {songGenLanguageHint(loadKeys().songGenPreferredModel || "songgeneration_large")}
+                  </p>
+                )}
+                <select
+                  class="select select-bordered w-full rounded-xl bg-base-200"
+                  value={seedEffectiveLanguage}
+                  disabled={autoRunning}
+                  onChange={(e) =>
                     setSeed((s) => ({
                       ...s,
-                      artistSlug: slug,
-                      language: hit?.profile?.language || s.language,
-                    }));
-                  }}
+                      language: e.currentTarget.value,
+                    }))
+                  }
                 >
-                  <option value="">Choisir…</option>
-                  {catalogArtists.map((a) => (
-                    <option key={a.slug} value={a.slug}>
-                      {a.name}
-                    </option>
-                  ))}
+                  {seedLangOptions.map((l) => {
+                    const engine = languageEngineLabel(
+                      l.code,
+                      loadKeys().musicProvider,
+                      loadKeys().songGenPreferredModel,
+                    );
+                    return (
+                      <option key={l.code} value={l.code}>
+                        {engine === "MiniMax" ? `${l.label} · MiniMax` : l.label}
+                      </option>
+                    );
+                  })}
                 </select>
-              )}
-              <p class="mt-1 text-[11px] text-base-content/45">
-                {selectedCatalog ? (
-                  <>
-                    {selectedCatalog.profile?.genre || "Profil prêt"} — le style se règle sur la{" "}
-                    <a class="link" href={`/artiste/${encodeURIComponent(selectedCatalog.slug)}`}>
-                      fiche artiste
-                    </a>
-                    .
-                  </>
-                ) : (
-                  <>
-                    Pas encore de profil ?{" "}
-                    <a class="link" href="/artiste/nouveau">
-                      Créer un artiste
-                    </a>
-                    {" · "}
-                    <a class="link" href="/artiste/nouveau?mode=self">
-                      Créer mon profil
-                    </a>
-                  </>
-                )}
-              </p>
-            </label>
-            <label class="form-control w-full">
-              <span class="label-text mb-1 text-xs text-base-content/55">Thème / titre</span>
-              <input
-                class="input input-bordered bg-base-200"
-                placeholder="Optionnel"
-                value={seed.theme}
-                disabled={autoRunning}
-                onInput={(e) => setSeed((s) => ({ ...s, theme: e.currentTarget.value }))}
-              />
-            </label>
-            <label class="form-control w-full md:col-span-2">
-              <span class="label-text mb-1 text-xs text-base-content/55">Langue des chansons</span>
-              {String(loadKeys().musicProvider || "") === "songgen" && (
-                <p class="mb-1 text-[11px] text-warning">
-                  {songGenLanguageHint(loadKeys().songGenPreferredModel || "songgeneration_large")}
-                </p>
-              )}
-              <select
-                class="select select-bordered w-full bg-base-200"
-                value={seedEffectiveLanguage}
-                disabled={autoRunning}
-                onChange={(e) =>
-                  setSeed((s) => ({
-                    ...s,
-                    language: e.currentTarget.value,
-                  }))
-                }
-              >
-                {seedLangOptions.map((l) => {
-                  const engine = languageEngineLabel(
-                    l.code,
-                    loadKeys().musicProvider,
-                    loadKeys().songGenPreferredModel,
-                  );
-                  return (
-                    <option key={l.code} value={l.code}>
-                      {engine === "MiniMax" ? `${l.label} · MiniMax` : l.label}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
-          </div>
-
-          {(autoRunning || log.length > 0) && (
-            <div class="mt-5 space-y-4 border-t border-primary/20 pt-4" aria-live="polite">
-              <div class="flex flex-wrap items-end justify-between gap-2">
-                <div class="min-w-0 flex-1">
-                  <p class="text-xs uppercase tracking-[0.2em] text-base-content/45">Progression</p>
-                  <p class="mt-1 truncate font-display text-sm text-base-content">
-                    {autoProgress.message ||
-                      (log[log.length - 1]?.message ?? "En attente…")}
-                  </p>
-                </div>
-                <div class="text-right tabular-nums">
-                  <span class="font-display text-lg text-primary">
-                    {autoRunning ? autoProgress.percent : log.some((l) => l.step === "done") ? 100 : autoProgress.percent}%
-                  </span>
-                  {autoRunning && (
-                    <p class="text-xs text-base-content/45">{formatElapsed(elapsedMs)}</p>
-                  )}
-                </div>
-              </div>
-
-              <div class="h-2 overflow-hidden rounded-full bg-base-300">
-                <div
-                  class={`h-full rounded-full bg-primary transition-all duration-700 ease-out ${
-                    autoRunning ? "pipeline-progress-glow" : ""
-                  }`}
-                  style={{
-                    width: `${Math.max(
-                      autoRunning ? 4 : 0,
-                      autoRunning
-                        ? autoProgress.percent
-                        : log.some((l) => l.step === "done")
-                          ? 100
-                          : autoProgress.percent,
-                    )}%`,
-                  }}
-                />
-              </div>
-
-              <ol class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                {AUTO_PIPELINE_UI.map((s, i) => {
-                  const active = autoRunning && autoProgress.step === s.key;
-                  const currentIdx =
-                    autoProgress.step === "done" ? AUTO_PIPELINE_UI.length : autoProgress.index;
-                  const finishedInLog =
-                    !autoRunning &&
-                    (log.some((l) => l.step === "done") ||
-                      log.some((l) => {
-                        const li = AUTO_PIPELINE_UI.findIndex((x) => x.key === l.step);
-                        return li > i;
-                      }));
-                  const isDone = !active && (currentIdx > i || finishedInLog);
-                  return (
-                    <li
-                      key={s.key}
-                      class={`flex items-center gap-2 border px-2.5 py-2 text-xs transition-colors ${
-                        active
-                          ? "border-primary/50 bg-primary/10 text-base-content"
-                          : isDone
-                            ? "border-secondary/30 bg-secondary/5 text-base-content/80"
-                            : "border-base-content/10 text-base-content/40"
-                      }`}
-                    >
-                      <span class="flex h-5 w-5 shrink-0 items-center justify-center">
-                        {active ? (
-                          <LoaderCircle size={14} class="animate-spin text-primary" />
-                        ) : isDone ? (
-                          <Check size={14} class="text-secondary" />
-                        ) : (
-                          <span class="text-[10px] tabular-nums opacity-50">{i + 1}</span>
-                        )}
-                      </span>
-                      <span class="font-medium">{s.label}</span>
-                    </li>
-                  );
-                })}
-              </ol>
-
-              {log.length > 0 && (
-                <ul class="max-h-32 space-y-1 overflow-y-auto border border-base-content/10 bg-base-300/30 px-3 py-2 text-xs text-base-content/55">
-                  {log.map((item, i) => (
-                    <li key={`${item.step}-${i}`} class="flex gap-2">
-                      <span class="shrink-0 text-primary">
-                        {STEP_STATUS_LABEL[item.step] || item.step}
-                      </span>
-                      <span class="min-w-0">{item.message}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              </label>
             </div>
-          )}
-        </section>
+
+            {(autoRunning || log.length > 0) && (
+              <div class="mt-5 space-y-4 rounded-2xl bg-base-300/30 p-4" aria-live="polite">
+                <div class="flex flex-wrap items-end justify-between gap-2">
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs uppercase tracking-[0.2em] text-base-content/45">Progression</p>
+                    <p class="mt-1 truncate font-display text-sm text-base-content">
+                      {autoProgress.message ||
+                        (log[log.length - 1]?.message ?? "En attente…")}
+                    </p>
+                  </div>
+                  <div class="text-right tabular-nums">
+                    <span class="font-display text-lg text-primary">
+                      {autoRunning ? autoProgress.percent : log.some((l) => l.step === "done") ? 100 : autoProgress.percent}%
+                    </span>
+                    {autoRunning && (
+                      <p class="text-xs text-base-content/45">{formatElapsed(elapsedMs)}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div class="h-2 overflow-hidden rounded-full bg-base-300">
+                  <div
+                    class={`h-full rounded-full bg-primary transition-all duration-700 ease-out ${
+                      autoRunning ? "pipeline-progress-glow" : ""
+                    }`}
+                    style={{
+                      width: `${Math.max(
+                        autoRunning ? 4 : 0,
+                        autoRunning
+                          ? autoProgress.percent
+                          : log.some((l) => l.step === "done")
+                            ? 100
+                            : autoProgress.percent,
+                      )}%`,
+                    }}
+                  />
+                </div>
+
+                <ol class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {AUTO_PIPELINE_UI.map((s, i) => {
+                    const active = autoRunning && autoProgress.step === s.key;
+                    const currentIdx =
+                      autoProgress.step === "done" ? AUTO_PIPELINE_UI.length : autoProgress.index;
+                    const finishedInLog =
+                      !autoRunning &&
+                      (log.some((l) => l.step === "done") ||
+                        log.some((l) => {
+                          const li = AUTO_PIPELINE_UI.findIndex((x) => x.key === l.step);
+                          return li > i;
+                        }));
+                    const isDone = !active && (currentIdx > i || finishedInLog);
+                    return (
+                      <li
+                        key={s.key}
+                        class={`flex items-center gap-2 rounded-xl border px-2.5 py-2 text-xs transition-colors ${
+                          active
+                            ? "border-primary/50 bg-primary/10 text-base-content"
+                            : isDone
+                              ? "border-secondary/30 bg-secondary/5 text-base-content/80"
+                              : "border-base-content/10 text-base-content/40"
+                        }`}
+                      >
+                        <span class="flex h-5 w-5 shrink-0 items-center justify-center">
+                          {active ? (
+                            <LoaderCircle size={14} class="animate-spin text-primary" />
+                          ) : isDone ? (
+                            <Check size={14} class="text-secondary" />
+                          ) : (
+                            <span class="text-[10px] tabular-nums opacity-50">{i + 1}</span>
+                          )}
+                        </span>
+                        <span class="font-medium">{s.label}</span>
+                      </li>
+                    );
+                  })}
+                </ol>
+
+                {log.length > 0 && (
+                  <ul class="max-h-32 space-y-1 overflow-y-auto rounded-xl border border-base-content/10 bg-base-300/30 px-3 py-2 text-xs text-base-content/55">
+                    {log.map((item, i) => (
+                      <li key={`${item.step}-${i}`} class="flex gap-2">
+                        <span class="shrink-0 text-primary">
+                          {STEP_STATUS_LABEL[item.step] || item.step}
+                        </span>
+                        <span class="min-w-0">{item.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </section>
+        </>
       )}
 
       {error && (
-        <div class="mb-4 border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">{error}</div>
+        <div class="mb-4 rounded-xl border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">{error}</div>
       )}
 
       {!showHomePipeline && !project.artist?.name && (
-        <div class="mb-4 border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
+        <div class="mb-4 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
           Ce morceau n’a pas d’artiste.{" "}
           <a class="link" href="/artistes">
             Choisis-en un
@@ -1424,7 +1534,7 @@ export default function Dashboard() {
 
       {trackUiLoading && !autoRunning && (
         <div
-          class="mb-4 flex items-center gap-3 border border-primary/30 bg-primary/10 px-4 py-3"
+          class="mb-4 flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3"
           aria-live="polite"
         >
           <LoaderCircle size={18} class="shrink-0 animate-spin text-primary" />
@@ -1465,7 +1575,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      <nav class="mb-8 flex gap-2 overflow-x-auto pb-2" aria-label="Étapes de création">
+      {!showHomePipeline && (
+      <nav class="mb-6 flex gap-2 overflow-x-auto pb-1" aria-label="Étapes de création">
         {STEPS.map((s) => {
           const Icon = ICONS[s.key];
           const active = step === s.id;
@@ -1486,10 +1597,10 @@ export default function Dashboard() {
                 }
                 setStep(s.id);
               }}
-              class={`group flex min-w-[7.5rem] flex-col gap-1 border px-3 py-3 text-left transition-all duration-300 ${
+              class={`group flex min-w-[7rem] flex-col gap-1 rounded-xl px-3 py-3 text-left transition-all duration-300 ${
                 active
-                  ? "border-primary bg-primary/10"
-                  : "border-base-content/10 bg-base-200/40 hover:border-base-content/25"
+                  ? "bg-primary/15 ring-1 ring-primary/40"
+                  : "bg-base-300/40 hover:bg-base-300/70"
               }`}
             >
               <span class="flex items-center justify-between gap-2">
@@ -1505,8 +1616,10 @@ export default function Dashboard() {
           );
         })}
       </nav>
+      )}
 
-      <div class="border border-base-content/10 bg-base-100/70 p-5 backdrop-blur-sm md:p-8">
+      {!showHomePipeline && (
+      <div class="rounded-2xl bg-base-300/30 p-5 backdrop-blur-sm md:p-8">
         {stepKey === "stats" && (
           <StatsStep
             track={project.track}
@@ -1522,13 +1635,31 @@ export default function Dashboard() {
             versions={project.lyricsVersions || []}
             activeId={project.activeLyricsId}
             artist={project.artist}
+            featArtist={project.featArtist}
+            catalogArtists={catalogArtists}
             loading={loading}
+            onFeatArtistChange={(next) => {
+              setProject((prev) => {
+                const updated = { ...prev, featArtist: next };
+                persist(updated, {
+                  stepKey: "lyrics",
+                  eventType: "feat-artist",
+                  message: next?.name
+                    ? `Duo / feat. : ${next.name}`
+                    : "Duo / feat. retiré",
+                });
+                return updated;
+              });
+            }}
             onGenerate={(payload) =>
               runStep(
                 () =>
                   api.lyrics({
                     ...payload,
-                    artist: project.artist,
+                    artist: {
+                      ...project.artist,
+                      featArtist: project.featArtist || null,
+                    },
                     trends: project.trends,
                   }),
                 "lyrics",
@@ -1562,6 +1693,8 @@ export default function Dashboard() {
             activeId={project.activeTrackId}
             lyrics={project.lyrics}
             artist={project.artist}
+            featArtist={project.featArtist}
+            catalogArtists={catalogArtists}
             musicArrange={project.musicArrange}
             loading={trackUiLoading}
             progress={stepKey === "tracks" || trackBusy ? stepProgress : null}
@@ -1569,6 +1702,19 @@ export default function Dashboard() {
             distrokid={project.distrokid}
             onOpenSettings={() => {
               window.location.href = "/parametres?section=morceaux";
+            }}
+            onFeatArtistChange={(next) => {
+              setProject((prev) => {
+                const updated = { ...prev, featArtist: next };
+                persist(updated, {
+                  stepKey: "track",
+                  eventType: "feat-artist",
+                  message: next?.name
+                    ? `Duo / feat. : ${next.name}`
+                    : "Duo / feat. retiré",
+                });
+                return updated;
+              });
             }}
             onMusicArrangeChange={(next) => {
               setProject((prev) => ({ ...prev, musicArrange: next }));
@@ -1768,6 +1914,8 @@ export default function Dashboard() {
             versions={project.coverVersions || []}
             activeId={project.activeCoverId}
             artist={project.artist}
+            featArtist={project.featArtist}
+            catalogArtists={catalogArtists}
             track={project.track}
             loading={loading}
             onSelectVersion={(id) => {
@@ -1799,7 +1947,15 @@ export default function Dashboard() {
                 return;
               }
               return runStep(
-                () => api.cover({ ...payload, artist: project.artist, track: project.track }),
+                () =>
+                  api.cover({
+                    ...payload,
+                    artist: {
+                      ...project.artist,
+                      featArtist: project.featArtist || payload.featArtist || null,
+                    },
+                    track: project.track,
+                  }),
                 "cover",
                 stepIdOf("covers"),
               );
@@ -1831,7 +1987,10 @@ export default function Dashboard() {
               return runStep(
                 () =>
                   api.distrokid({
-                    artist: project.artist,
+                    artist: {
+                      ...project.artist,
+                      featArtist: project.featArtist || null,
+                    },
                     track: project.track,
                     cover:
                       project.cover?.imageUrl
@@ -1866,7 +2025,10 @@ export default function Dashboard() {
               return runStep(
                 () =>
                   api.distrokid({
-                    artist: project.artist,
+                    artist: {
+                      ...project.artist,
+                      featArtist: project.featArtist || null,
+                    },
                     track: project.track,
                     cover:
                       project.cover?.imageUrl
@@ -2090,6 +2252,7 @@ export default function Dashboard() {
           </button>
         </footer>
       </div>
+      )}
 
       <HistoryPanel
         open={historyOpen}

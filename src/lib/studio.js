@@ -579,6 +579,8 @@ export function inferLanguageFromStyleRef({ country, language, genres = [], titl
 export const emptyProject = () => ({
   trends: null,
   artist: null,
+  /** Second artiste SONOZZ (duo / feat.) — snapshot vocal+style, jamais fusionné au lead. */
+  featArtist: null,
   lyrics: null,
   lyricsVersions: [],
   activeLyricsId: null,

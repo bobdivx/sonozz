@@ -37,8 +37,15 @@
   --fog: #f2efe6;
   --font-display: "Syne", "Avenir Next", "Segoe UI", sans-serif;
   --font-body: "Figtree", "Avenir Next", "Segoe UI", sans-serif;
-  --sonozz-now-playing: 5.25rem;
+  --sonozz-now-playing: 5.5rem;
   --sonozz-jobs-dock: 0px;
+  --sonozz-top-header: 3.5rem;
+}
+
+@media (min-width: 640px) {
+  :root {
+    --sonozz-top-header: 4rem;
+  }
 }
 
 html,

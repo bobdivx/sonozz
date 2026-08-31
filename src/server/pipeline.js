@@ -37,6 +37,15 @@ import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.
 import { materializeAudioForStorage } from "./audioPersist.js";
 import { isS3Configured } from "./s3.js";
 import { slugify, getArtistBySlug, resolveArtistProfileForRelease } from "./artists.js";
+import {
+  normalizeFeatArtist,
+  duoVocalPromptBits,
+  duoStylePromptBits,
+  duoCoverPromptBits,
+  duoLyricsInstruction,
+  displayArtistCredit,
+  vocalLockForArtist,
+} from "../lib/featArtist.js";
 import { llmJson, requireTextLlm } from "./llm.js";
 import {
   musicArrangeToSongGen,
@@ -404,6 +413,15 @@ function normalizeVoiceSample(sample) {
     songGenTimbre: String(sample.songGenTimbre || sample.analyzedTimbre || "")
       .trim()
       .slice(0, 80) || undefined,
+    analyzedTimbre: String(sample.analyzedTimbre || sample.songGenTimbre || "")
+      .trim()
+      .slice(0, 120) || undefined,
+    vocalRegister: sample.vocalRegister
+      ? String(sample.vocalRegister).slice(0, 40)
+      : undefined,
+    genderFeel: sample.genderFeel ? String(sample.genderFeel).slice(0, 20) : undefined,
+    timbreSource: sample.timbreSource ? String(sample.timbreSource).slice(0, 40) : undefined,
+    timbreAnalyzedAt: sample.timbreAnalyzedAt || undefined,
   };
 }
 
@@ -907,7 +925,7 @@ JSON strict: { "names": [string, string, string, string], "name": string, "aka":
         ? [styleArtistHint]
         : [];
 
-  return {
+  let profile = {
     ...data,
     name: forcedName || data.name,
     aka: forcedName || data.aka,
@@ -947,6 +965,21 @@ JSON strict: { "names": [string, string, string, string], "name": string, "aka":
       ...(isSelf ? { fromUserPhotos: true } : {}),
     },
   };
+
+  // Timbre figé dès la création IA — sans obliger l’utilisateur à enregistrer sa voix.
+  try {
+    const { lockSynthesizedTimbre, ensureArtistTimbre } = await import("./artistTimbre.js");
+    if (isSelf && selfVoiceSample && keys?.geminiApiKey) {
+      const analyzed = await ensureArtistTimbre(keys, profile, { force: true });
+      if (analyzed?.artist) profile = analyzed.artist;
+    } else {
+      profile = lockSynthesizedTimbre(profile);
+    }
+  } catch (e) {
+    console.warn("[timbre] lock à la création:", e.message);
+  }
+
+  return profile;
 }
 
 export async function runLyrics({ keys, theme, artist, trends, language }) {
@@ -954,10 +987,12 @@ export async function runLyrics({ keys, theme, artist, trends, language }) {
   const lang = resolveLanguage(language, artist);
   const langName = languagePromptName(lang);
   const lock = artist?.styleLock;
+  const feat = normalizeFeatArtist(artist?.featArtist);
+  const duoBlock = feat ? duoLyricsInstruction(artist, feat) : "";
   const data = await llmJson(
     keys,
     `Écris des paroles de chanson originales en ${langName} pour cet artiste.
-Artiste: ${promptJson({
+Artiste LEAD: ${promptJson({
   name: artist?.name,
   mode: artist?.mode,
   age: artist?.age,
@@ -971,10 +1006,25 @@ Artiste: ${promptJson({
   styleArtist: artist?.styleArtist,
   styleArtists: artist?.styleArtists,
 })}
-Style musical VERROUILLÉ: ${artist?.genre || "pop contemporain"}
+${
+  feat
+    ? `Artiste FEAT (identité séparée — ne pas fusionner avec le lead): ${promptJson({
+        name: feat.name,
+        gender: feat.gender,
+        genre: feat.genre,
+        genres: feat.genres,
+        mood: feat.mood,
+        voice: feat.voice,
+        vocalStyle: feat.styleLock?.vocalStyle,
+        timbre: feat.styleLock?.timbre,
+        writingStyle: feat.styleLock?.writingStyle,
+      })}`
+    : ""
+}
+Style musical VERROUILLÉ (lane production du LEAD): ${artist?.genre || "pop contemporain"}
 ${
   lock
-    ? `Lock référence "${lock.matchedName}"${Array.isArray(artist?.styleArtists) && artist.styleArtists.length > 1 ? ` (blend: ${artist.styleArtists.join(" × ")})` : ""}:
+    ? `Lock référence lead "${lock.matchedName}"${Array.isArray(artist?.styleArtists) && artist.styleArtists.length > 1 ? ` (blend: ${artist.styleArtists.join(" × ")})` : ""}:
 - production: ${lock.production}
 - writingStyle: ${lock.writingStyle}
 - mood/energy: ${lock.mood} / ${lock.energy}
@@ -984,13 +1034,14 @@ ${
 - instruments: ${(lock.instruments || []).join(", ")}
 - sonicKeywords: ${(lock.sonicKeywords || []).join(", ")}
 - doNot (styles/écritures interdits): ${(lock.doNot || []).join(", ")}
-Écris dans EXACTEMENT cette lane (hooks, rythme des phrases, vibe) — sans pasticher les paroles de "${lock.matchedName}".`
+Écris dans EXACTEMENT cette lane pour le lead (hooks, rythme des phrases, vibe) — sans pasticher les paroles de "${lock.matchedName}".`
     : artist?.styleArtists?.length
-      ? `Boussole style (sans pastiche) : ${artist.styleArtists.join(" · ")}`
+      ? `Boussole style lead (sans pastiche) : ${artist.styleArtists.join(" · ")}`
       : artist?.styleArtist
-        ? `Boussole style (sans pastiche) : ${artist.styleArtist}`
+        ? `Boussole style lead (sans pastiche) : ${artist.styleArtist}`
         : ""
 }
+${duoBlock}
 Langue obligatoire des paroles: ${langName} (code ${lang}) — aucune autre langue dans le chant.
 Thème/titre: ${theme || "inspire-toi des tendances"}
 Tendances: ${promptJson(lock ? {} : trends || {})}
@@ -1016,6 +1067,9 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   const genderLock = genderVisualLock(artist?.gender, artist?.age);
   const styleLock = withKnownArtistLane(artist?.styleLock);
   const vocal = resolveVocalGender(artist);
+  const feat = normalizeFeatArtist(artist?.featArtist);
+  const duoVocalBits = feat ? duoVocalPromptBits(artist, feat) : [];
+  const duoStyleBits = feat ? duoStylePromptBits(artist, feat) : [];
   let arrange = normalizeMusicArrange(artist?.musicArrange);
   if (isDefaultMusicArrange(arrange) && styleLock) {
     arrange = musicArrangeFromStyleLock(styleLock);
@@ -1042,9 +1096,11 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
           "rich bass, harmony instruments, drums and pads — never thin or single-instrument",
         ];
 
-  // Scrub fuites de sexe opposé depuis la référence (ex. artiste favori femme → prompt femme)
+  // Scrub fuites de sexe opposé depuis la référence lead.
+  // En duo : NE PAS scrubber — le feat peut être du sexe opposé et doit rester audible.
   const scrubVoiceLeak = (text) => {
     const raw = String(text || "");
+    if (feat) return raw;
     if (vocal.code === "male") {
       return raw
         .replace(/\b(female|woman|women|girl|soprano|mezzo|alto|feminine)\b/gi, "male")
@@ -1056,38 +1112,50 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
   };
 
   const safeMusicPrompt = scrubVoiceLeak(styleLock?.musicPrompt || "");
-  const voiceLine = metal
-    ? metalVoiceHint(vocal.code, genreBlob, styleLock)
-    : vocal.voiceHint;
+  // Duo : raccourcir le DNA lead (Eminem) pour ne pas noyer la 2e voix.
+  const musicPromptForGen = feat
+    ? String(safeMusicPrompt).slice(0, 180)
+    : safeMusicPrompt;
+  const voiceLine = feat
+    ? duoVocalBits[0] || "distinct two-singer duet"
+    : metal
+      ? metalVoiceHint(vocal.code, genreBlob, styleLock)
+      : vocal.voiceHint;
   const banBits = (Array.isArray(styleLock?.doNot) ? styleLock.doNot : [])
     .slice(0, 4)
     .map((d) => `avoid ${d}`);
 
   const prompt = (
-    safeMusicPrompt
+    musicPromptForGen
       ? metal
         ? [
+            ...(feat ? duoVocalBits : []),
             styleLock?.genreSummary || artist?.genre || "metal",
             voiceLine,
+            ...duoVocalBits.slice(feat ? 99 : 1),
+            ...duoStyleBits,
             ...qualityBits,
-            safeMusicPrompt,
+            musicPromptForGen,
             ...banBits,
             `${artist?.mood || styleLock.mood || "aggressive"} mood`,
             `vocals and lyrics in ${langName}`,
             "original composition inspired by that lane, not a cover",
           ]
         : [
-            vocal.voiceHint,
+            ...(feat ? duoVocalBits : [vocal.voiceHint]),
+            ...duoStyleBits,
             ...arrangeBits,
             ...qualityBits,
-            safeMusicPrompt,
+            musicPromptForGen,
             `${artist?.mood || styleLock.mood || "emotional"} mood`,
             `vocals and lyrics in ${langName}`,
             "original composition",
           ]
       : metal
         ? [
-            voiceLine,
+            ...(feat ? duoVocalBits : [voiceLine]),
+            ...duoVocalBits.slice(feat ? 99 : 1),
+            ...duoStyleBits,
             ...qualityBits,
             artist?.genre || styleLock?.genreSummary || "metal",
             artist?.styleArtists?.length
@@ -1100,7 +1168,8 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
             "original composition, not a cover",
           ]
         : [
-          vocal.voiceHint,
+          ...(feat ? duoVocalBits : [vocal.voiceHint]),
+          ...duoStyleBits,
           ...arrangeBits,
           ...qualityBits,
           packed.gospel ? "contemporary gospel soul R&B" : `${artist?.genre || "pop"}`,
@@ -1110,7 +1179,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
               ? `in the sonic lane of ${artist.styleArtist} (original, not a cover)`
               : "",
           `${artist?.mood || (packed.gospel ? "uplifting" : "emotional")} mood`,
-          vocal.voiceForPrompt,
+          feat ? null : vocal.voiceForPrompt,
           `vocals and lyrics in ${langName}`,
           "emotional hook, wide stereo mix",
         ]
@@ -1118,7 +1187,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     .filter(Boolean)
     .join(", ");
 
-  return { prompt, styleLock, genderLock, vocal, arrangeBpm: packed.bpm, arrange, packed };
+  return { prompt, styleLock, genderLock, vocal, arrangeBpm: packed.bpm, arrange, packed, feat };
 }
 
 function assembleTrackResult({
@@ -1150,7 +1219,12 @@ function assembleTrackResult({
     styleLock: lock,
     bpmGuess,
     musicArrange: arr,
-    vocalHint: metal ? metalVoiceHint(voice?.code, genreBlob, lock) : voice?.voiceHint,
+    // Duo : laisser buildSunoPrompt injecter les bits deux voix (pas d’override mono-sexe).
+    vocalHint: normalizeFeatArtist(artist?.featArtist)
+      ? null
+      : metal
+        ? metalVoiceHint(voice?.code, genreBlob, lock)
+        : voice?.voiceHint,
   });
 
   const noteReady =
@@ -1164,7 +1238,7 @@ function assembleTrackResult({
 
   return {
     title: lyrics?.title || "Untitled Session",
-    artist: artist?.name || "Unknown",
+    artist: displayArtistCredit(artist, artist?.featArtist),
     bpm: bpmGuess,
     key: ["Am", "Dm", "Em", "F", "Gm", "C"][Math.floor(Math.random() * 6)],
     duration: audioUrl ? durationLabel : "3:24",
@@ -1188,7 +1262,7 @@ function assembleTrackResult({
  * Démarre la gen audio sans bloquer (évite Cloudflare 524 / proxy ~100s).
  * Le client poll via pollTrack.
  */
-export async function startTrack({ keys, lyrics, artist, preview = false, skipStyleReference = false }) {
+export async function startTrack({ keys, lyrics, artist, preview = false, skipStyleReference = false, forceAceModelId = null }) {
   const resolvedGender = resolveArtistGender(artist);
   if (!resolvedGender) {
     throw new Error(
@@ -1196,6 +1270,22 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
     );
   }
   artist = withResolvedArtistGender(artist);
+
+  // Fige / backfill le timbre (extrait vocal ou dernier audio) avant le prompt.
+  try {
+    const { ensureTrackArtistsTimbre } = await import("./artistTimbre.js");
+    const ensured = await ensureTrackArtistsTimbre(keys, artist);
+    if (ensured?.artist) artist = ensured.artist;
+    if (ensured?.report?.lead && !ensured.report.lead.skipped) {
+      console.info("[timbre] lead", ensured.report.lead);
+    }
+    if (ensured?.report?.feat && !ensured.report.feat.skipped) {
+      console.info("[timbre] feat", ensured.report.feat);
+    }
+  } catch (e) {
+    console.warn("[timbre] pre-track:", e.message);
+  }
+
   const lang = lyrics?.language || artist?.language || "fr";
   const songGenModel = keys?.songGenPreferredModel;
   const wantAceStep = isAceStepMusicProvider(keys);
@@ -1231,23 +1321,41 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
   });
 
   if (wantAceStep) {
+    const feat = normalizeFeatArtist(artist?.featArtist);
+    const leadVocal = vocalLockForArtist(artist);
+    const featVocal = feat ? vocalLockForArtist(feat) : null;
+    const mixedDuo =
+      Boolean(featVocal?.genderCode) &&
+      Boolean(leadVocal?.genderCode) &&
+      featVocal.genderCode !== leadVocal.genderCode;
+
     let styleRef = { previewUrl: "", title: null, artistName: null, via: "none" };
-    try {
-      styleRef = await resolveStyleLockPreview(keys, styleLock || artist?.styleLock);
-    } catch (e) {
-      console.warn("[acestep] preview style:", e.message);
+    // Duo mixte : pas de cover d’un titre solo (ex. Lose Yourself) — ça écrase la 2e voix.
+    if (!mixedDuo) {
+      try {
+        styleRef = await resolveStyleLockPreview(keys, styleLock || artist?.styleLock);
+      } catch (e) {
+        console.warn("[acestep] preview style:", e.message);
+      }
+    } else {
+      console.info("[acestep] duo mixte — cover style lock désactivé pour préserver les deux voix");
     }
     const refTitle = [styleRef.title, styleRef.artistName].filter(Boolean).join(" — ");
+    let bpmForAce = bpmGuess;
+    if (feat && Number(bpmForAce) > 118) bpmForAce = 118;
+
     const started = await startAceStep(keys, {
       prompt,
       lyrics: lyrics?.text || "",
       title: lyrics?.title || artist?.name || "SONOZZ",
       language: lang,
-      bpm: bpmGuess,
+      bpm: bpmForAce,
       preview: isPreview,
-      referenceAudioUrl: skipStyleReference ? "" : styleRef.previewUrl,
-      referenceAudioTitle: skipStyleReference ? "" : refTitle,
+      referenceAudioUrl: skipStyleReference || mixedDuo ? "" : styleRef.previewUrl,
+      referenceAudioTitle: skipStyleReference || mixedDuo ? "" : refTitle,
       styleLock,
+      artist,
+      forceModelId: String(forceAceModelId || "").trim() || null,
     });
     return {
       pollNeeded: true,
@@ -1255,11 +1363,17 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
       generationId: started.generationId,
       provider: started.provider,
       preview: isPreview,
+      model: started.model || null,
+      quality: started.quality || null,
+      pickReason: started.pickReason || null,
+      gpu: started.gpu || null,
       draft: {
         ...draft,
         provider: started.provider,
-        bpm: bpmGuess,
-        voiceGender: vocal?.code,
+        bpm: bpmForAce,
+        voiceGender: feat
+          ? `${vocal?.code || "lead"}+${featVocal?.genderCode || "feat"}`
+          : vocal?.code,
         aceStepModel: started.model || null,
         aceStepQuality: started.quality || null,
         isPreview,
@@ -1267,12 +1381,14 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
         note: isPreview
           ? `Extrait ACE-Step · ${started.quality || "auto"}${
               started.usedReference && refTitle ? ` · réf. « ${refTitle} »` : ""
-            } — brouillon indicatif`
+            }${feat ? " · duo" : ""} — brouillon indicatif`
           : started.usedReference && refTitle
             ? `ACE-Step · ${started.quality || started.model || "auto"} · réf. audio « ${refTitle} »`
-            : started.model
-              ? `ACE-Step · ${started.quality || started.model}`
-              : draft.note,
+            : feat
+              ? `ACE-Step · ${started.quality || started.model || "auto"} · duo ${displayArtistCredit(artist, feat)}`
+              : started.model
+                ? `ACE-Step · ${started.quality || started.model}`
+                : draft.note,
       },
     };
   }
@@ -1375,12 +1491,20 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
   }
 
   if (!tick.done) {
+    const model =
+      tick.model ||
+      (kind === "acestep" ? draft?.aceStepModel : null) ||
+      (kind === "songgen" ? draft?.songGenModel : null) ||
+      null;
     return {
       done: false,
       status: tick.status,
       progress: tick.progress,
       message: tick.message || "",
       stage: tick.stage || null,
+      gpu: tick.gpu || null,
+      model,
+      quality: draft?.aceStepQuality || draft?.songGenQuality || null,
       elapsedSeconds: tick.elapsedSeconds || 0,
       estimatedSeconds: tick.estimatedSeconds || 0,
       generationId,
@@ -1527,6 +1651,22 @@ export async function runTrack({ keys, lyrics, artist }) {
   });
 }
 
+/** Portrait raster du feat (snapshot ou profil catalogue). */
+async function resolveFeatCoverPortrait(feat) {
+  if (!feat) return null;
+  if (isUsableRasterImage(feat.imageUrl)) return feat.imageUrl;
+  const slug = String(feat.slug || "").trim();
+  if (!slug) return null;
+  try {
+    const row = await getArtistBySlug(slug);
+    const profile = row?.profile || {};
+    const photos = normalizeArtistPhotos(profile.photos, profile.imageUrl);
+    return photos.find((u) => isUsableRasterImage(u)) || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function runCover({ keys, prompt, artist, track, album }) {
   const portraitUrl = artist?.imageUrl;
   if (!isUsableRasterImage(portraitUrl)) {
@@ -1535,44 +1675,76 @@ export async function runCover({ keys, prompt, artist, track, album }) {
     );
   }
 
+  const feat = normalizeFeatArtist(artist?.featArtist);
+  const featPortraitUrl = feat ? await resolveFeatCoverPortrait(feat) : null;
+  const isDuo = Boolean(feat?.name);
+  const credit = displayArtistCredit(artist, feat);
+
   const genderLock =
     artist?.visualIdentity?.genderLock || genderVisualLock(artist?.gender, artist?.age).en;
+  const featGenderLock = feat
+    ? feat.visualIdentity?.genderLock || genderVisualLock(feat.gender, feat.age).en
+    : null;
   const releaseTitle = album?.title || track?.title || "Single";
-  const visual =
-    prompt?.trim() ||
-    [
-      album?.title
-        ? `Square LP album cover for "${album.title}" by ${artist?.name || "artist"}`
-        : `Album cover for "${releaseTitle}" by ${artist?.name || "artist"}`,
-      album?.concept ? `album concept: ${album.concept}` : "",
-      genderLock,
-      `mood ${artist?.visualIdentity?.look || artist?.mood || "nocturne"}`,
-      `wardrobe ${artist?.visualIdentity?.wardrobe || "contemporary"}`,
-      `${artist?.genre || "pop"} aesthetic`,
-      `palette ${artist?.palette?.join(", ") || "brass and moss"}`,
-      "cinematic square composition, SAME PERSON and SAME GENDER as the reference portrait photo, do not change sex or age",
-    ]
-      .filter(Boolean)
-      .join(", ");
+  const duoBits = isDuo ? duoCoverPromptBits(artist, feat) : [];
+  const styleHint = String(prompt || "").trim();
+
+  const visual = [
+    album?.title
+      ? `Square LP album cover for "${album.title}" by ${credit}`
+      : `Album cover for "${releaseTitle}" by ${credit}`,
+    album?.concept ? `album concept: ${album.concept}` : "",
+    styleHint,
+    genderLock,
+    featGenderLock && isDuo ? `featured artist look: ${featGenderLock}` : "",
+    ...duoBits,
+    `mood ${artist?.visualIdentity?.look || artist?.mood || "nocturne"}`,
+    `wardrobe ${artist?.visualIdentity?.wardrobe || "contemporary"}`,
+    `${artist?.genre || "pop"} aesthetic`,
+    `palette ${artist?.palette?.join(", ") || "brass and moss"}`,
+    isDuo
+      ? featPortraitUrl
+        ? "cinematic square composition, BOTH reference portraits must stay recognizable (face, age, hair, skin, gender) — image 1 = lead, image 2 = featured"
+        : `cinematic square composition, lead matches reference portrait; featured ${feat.name} must appear as a second distinct person (${featGenderLock || "matching their gender"}), do not clone the lead`
+      : "cinematic square composition, SAME PERSON and SAME GENDER as the reference portrait photo, do not change sex or age",
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  const referenceImageUrls = [portraitUrl, featPortraitUrl].filter((u) =>
+    isUsableRasterImage(u),
+  );
 
   const image = await generateVisual({
     keys,
     prompt: visual,
     kind: "cover",
     referenceImageUrl: portraitUrl,
+    referenceImageUrls,
   });
+
+  const warnings = [
+    image.warning,
+    isDuo && !featPortraitUrl
+      ? `Feat ${feat.name} sans portrait catalogue — jaquette duo guidée surtout par le lead.`
+      : null,
+  ].filter(Boolean);
 
   return {
     prompt: visual,
     imageUrl: image.imageUrl,
     format: "3000×3000 (master)",
-    style: "cinematic / based on artist portrait",
+    style: isDuo
+      ? `cinematic / duo ${credit}`
+      : "cinematic / based on artist portrait",
     fallback: false,
-    warning: image.warning,
+    warning: warnings.length ? warnings.join(" ") : undefined,
     provider: image.provider,
     basedOnArtist: true,
+    featuring: isDuo ? feat.name : undefined,
     localAsset: false,
     sourcePortrait: Boolean(portraitUrl),
+    sourceFeatPortrait: Boolean(featPortraitUrl),
   };
 }
 

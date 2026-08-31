@@ -1,6 +1,7 @@
 import { isUsableRasterImage } from "./imagePersist.js";
 import { languageLabel } from "../lib/studio.js";
 import { resolveProducerName } from "./once.js";
+import { featuringCredit } from "../lib/featArtist.js";
 
 const DISTROKID_UPLOAD_URL = "https://distrokid.com/upload/";
 const DISTROKID_DASHBOARD_URL = "https://distrokid.com/";
@@ -70,7 +71,7 @@ export function buildDistroKidPackage({ keys, artist, track, cover, lyrics }) {
     artistName,
     releaseTitle: title,
     trackTitle: title,
-    featuring: "",
+    featuring: featuringCredit(artist?.featArtist),
     genre,
     subgenre,
     lyricsLanguage: languageLabel(lyrics?.language || artist?.language || "fr"),

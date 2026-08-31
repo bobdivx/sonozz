@@ -23,6 +23,7 @@ import {
 import { bootJobRunner, dismissJob } from "../lib/jobRunner.js";
 import { api } from "../lib/apiClient.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
+import StudioGpuMeter from "./StudioGpuMeter.jsx";
 
 /** Un seul poll album pour sidebar + mobile (sinon 2× GET /api/projects). */
 let albumSyncTimer = null;
@@ -116,8 +117,13 @@ function JobsList({ visible, active, recent }) {
                   <span class="truncate">{job.label}</span>
                 </a>
                 <p class="mt-0.5 line-clamp-2 text-[10px] leading-snug text-base-content/55">
-                  {job.message}
+                  {job.modelLabel || job.model
+                    ? `${job.modelLabel || job.model} · ${job.message}`
+                    : job.message}
                 </p>
+                {job.status === "running" && job.gpu ? (
+                  <StudioGpuMeter className="mt-1" gpu={job.gpu} />
+                ) : null}
                 {job.status === "running" && (
                   <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-base-300">
                     <div
@@ -270,7 +276,7 @@ export function JobsDockMobile() {
     : `${visible.length} récente${visible.length > 1 ? "s" : ""}`;
 
   return (
-    <div class="pointer-events-none fixed inset-x-0 bottom-[var(--sonozz-now-playing,0px)] z-50 md:hidden">
+    <div class="pointer-events-none fixed inset-x-0 bottom-[var(--sonozz-now-playing,0px)] z-40 md:hidden">
       {open && (
         <button
           type="button"
@@ -304,6 +310,9 @@ export function JobsDockMobile() {
             <p class="truncate text-sm font-medium">{head?.label}</p>
             {!open && head?.message ? (
               <p class="truncate text-[11px] text-base-content/50">{head.message}</p>
+            ) : null}
+            {!open && active.length > 0 && head?.gpu ? (
+              <StudioGpuMeter className="mt-1" gpu={head.gpu} />
             ) : null}
             {!open && active.length > 0 ? (
               <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-base-300">

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   Play,
   Pause,
@@ -11,8 +11,11 @@ import {
   Users,
   Music2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Disc3,
   Star,
+  Heart,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import {
@@ -33,11 +36,20 @@ import {
   subscribePlaySession,
 } from "../lib/playSession.js";
 
+const RECENT_KEY = "sonozz-play-recent";
+
 function formatTime(sec) {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Bonjour";
+  if (h < 18) return "Bon après-midi";
+  return "Bonsoir";
 }
 
 function readQuery() {
@@ -47,6 +59,7 @@ function readQuery() {
     artist: p.get("artist") || "",
     track: p.get("track") || "",
     play: p.get("play") === "1",
+    q: p.get("q") || "",
   };
 }
 
@@ -59,6 +72,33 @@ function shuffleCopy(list) {
   return arr;
 }
 
+function readRecentIds() {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function pushRecentId(id) {
+  if (!id || typeof localStorage === "undefined") return;
+  const next = [String(id), ...readRecentIds().filter((x) => x !== String(id))].slice(0, 24);
+  localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+}
+
+function CoverThumb({ src, class: cls = "", rounded = "rounded" }) {
+  if (src) {
+    return <img src={src} alt="" class={`object-cover ${rounded} ${cls}`} />;
+  }
+  return (
+    <div class={`flex items-center justify-center bg-base-300 ${rounded} ${cls}`}>
+      <Disc3 size={22} class="opacity-35" />
+    </div>
+  );
+}
+
 export default function PlayerPage() {
   const seekRef = useRef(null);
   const touchRef = useRef({ x: 0, y: 0 });
@@ -67,8 +107,10 @@ export default function PlayerPage() {
   const [artists, setArtists] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("titres"); // titres | artistes | file
+  const [view, setView] = useState("home"); // home | titres | artistes | file
   const [filterArtist, setFilterArtist] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [recentIds, setRecentIds] = useState([]);
   const [session, setSession] = useState(() =>
     typeof window === "undefined"
       ? { queue: [], index: 0, playing: false, shuffle: false, repeat: "off" }
@@ -84,7 +126,6 @@ export default function PlayerPage() {
   const [ratingBusy, setRatingBusy] = useState(false);
   const seekingRef = useRef(false);
 
-  // Générer ou récupérer un player_id anonyme stable
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
     let id = localStorage.getItem("sonozz-player-id");
@@ -93,6 +134,7 @@ export default function PlayerPage() {
       localStorage.setItem("sonozz-player-id", id);
     }
     setPlayerId(id);
+    setRecentIds(readRecentIds());
   }, []);
 
   const queue = session.queue || [];
@@ -102,7 +144,6 @@ export default function PlayerPage() {
   const repeat = session.repeat || "off";
   const current = currentPlayTrack(session);
 
-  // Réinitialiser la durée lors du changement de morceau
   useEffect(() => {
     if (!current) {
       setDuration(0);
@@ -110,19 +151,51 @@ export default function PlayerPage() {
       setAudioError("");
       return;
     }
-    // Essayer d'utiliser la durée stockée immédiatement
     if (current.duration && Number.isFinite(current.duration) && current.duration > 0) {
       setDuration(current.duration);
     }
+    pushRecentId(current.id);
+    setRecentIds(readRecentIds());
   }, [current?.id]);
 
-  const visibleTracks = filterArtist
-    ? tracks.filter((t) => t.slug === filterArtist)
-    : tracks;
+  const visibleTracks = useMemo(() => {
+    let list = filterArtist ? tracks.filter((t) => t.slug === filterArtist) : tracks;
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (t) =>
+          String(t.trackTitle || "").toLowerCase().includes(q) ||
+          String(t.artistName || "").toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [tracks, filterArtist, searchQuery]);
 
-  useEffect(() => {
-    return subscribePlaySession(setSession);
-  }, []);
+  const artistGroups = useMemo(
+    () =>
+      artists
+        .map((a) => ({
+          ...a,
+          trackCount: tracks.filter((t) => t.slug === a.slug).length,
+          cover:
+            a.profile?.imageUrl ||
+            tracks.find((t) => t.slug === a.slug)?.coverUrl ||
+            tracks.find((t) => t.slug === a.slug)?.artistImage ||
+            "",
+        }))
+        .filter((a) => a.trackCount > 0),
+    [artists, tracks],
+  );
+
+  const recentTracks = useMemo(() => {
+    const byId = new Map(tracks.map((t) => [String(t.id), t]));
+    const fromRecent = recentIds.map((id) => byId.get(String(id))).filter(Boolean);
+    if (fromRecent.length >= 6) return fromRecent.slice(0, 12);
+    const rest = tracks.filter((t) => !fromRecent.some((r) => r.id === t.id));
+    return [...fromRecent, ...rest].slice(0, 12);
+  }, [tracks, recentIds]);
+
+  useEffect(() => subscribePlaySession(setSession), []);
 
   useEffect(() => {
     setPlayExpanded(expanded);
@@ -151,12 +224,15 @@ export default function PlayerPage() {
     };
   }, []);
 
-  // Chargement bibliothèque
   useEffect(() => {
     const q = readQuery();
     if (q.artist) {
       setFilterArtist(q.artist);
-      setTab("titres");
+      setView("titres");
+    }
+    if (q.q) {
+      setSearchQuery(q.q);
+      setView("titres");
     }
     (async () => {
       try {
@@ -194,14 +270,12 @@ export default function PlayerPage() {
     })();
   }, []);
 
-  // Horloge audio globale
   useEffect(() => {
     const el = getPlayAudio();
     if (!el) return;
     const onTime = () => {
       if (seekingRef.current) return;
       setCurrentTime(el.currentTime || 0);
-      // Utiliser el.duration si disponible, sinon fallback sur current.duration stockée
       if (Number.isFinite(el.duration) && el.duration > 0) {
         setDuration(el.duration);
       } else if (current?.duration && Number.isFinite(current.duration) && current.duration > 0) {
@@ -227,7 +301,6 @@ export default function PlayerPage() {
     bindMediaSession();
   }, [current?.id, queue.length, index, repeat, shuffle]);
 
-  // Charger la note et les stats du morceau actuel
   useEffect(() => {
     if (!current?.id || !playerId) {
       setTrackRating(null);
@@ -236,7 +309,9 @@ export default function PlayerPage() {
     }
     (async () => {
       try {
-        const res = await fetch(`/api/ratings?trackId=${encodeURIComponent(current.id)}&playerId=${encodeURIComponent(playerId)}`);
+        const res = await fetch(
+          `/api/ratings?trackId=${encodeURIComponent(current.id)}&playerId=${encodeURIComponent(playerId)}`,
+        );
         if (!res.ok) return;
         const data = await res.json();
         setTrackRating(data.userRating);
@@ -283,14 +358,9 @@ export default function PlayerPage() {
     if (expand) setExpanded(true);
   }
 
-  function playAll() {
-    playList(visibleTracks);
-  }
-
   function playArtist(slug) {
     const list = tracks.filter((t) => t.slug === slug);
     setFilterArtist(slug);
-    setTab("titres");
     playList(list);
   }
 
@@ -343,245 +413,379 @@ export default function PlayerPage() {
     setPlayShuffle(!shuffle, current);
   }
 
+  function clearSearch() {
+    setSearchQuery("");
+    setFilterArtist("");
+    setView("home");
+    const url = new URL(location.href);
+    url.searchParams.delete("q");
+    url.searchParams.delete("artist");
+    history.replaceState({}, "", url.pathname + url.search);
+  }
+
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
   const cover = current?.coverUrl || current?.artistImage || null;
+  const showHome = view === "home" && !searchQuery && !filterArtist;
 
-  const artistGroups = artists
-    .map((a) => ({
-      ...a,
-      trackCount: tracks.filter((t) => t.slug === a.slug).length,
-    }))
-    .filter((a) => a.trackCount > 0);
+  const quickAccess = [];
+  if (tracks.length) {
+    quickAccess.push({
+      id: "all",
+      title: "Tous les titres",
+      subtitle: `${tracks.length} morceau${tracks.length > 1 ? "x" : ""}`,
+      cover: tracks[0]?.coverUrl || tracks[0]?.artistImage || "",
+      onClick: () => playList(tracks),
+    });
+  }
+  if (queue.length) {
+    quickAccess.push({
+      id: "queue",
+      title: "File d’attente",
+      subtitle: `${queue.length} en file`,
+      cover: queue[0]?.coverUrl || queue[0]?.artistImage || "",
+      onClick: () => setView("file"),
+    });
+  }
+  for (const a of artistGroups.slice(0, 6)) {
+    quickAccess.push({
+      id: `artist-${a.slug}`,
+      title: a.name,
+      subtitle: `${a.trackCount} titre${a.trackCount > 1 ? "s" : ""}`,
+      cover: a.cover,
+      onClick: () => playArtist(a.slug),
+    });
+  }
+  const quickCards = quickAccess.slice(0, 8);
+
+  const dailyMixes = artistGroups.slice(0, 3).map((a, i) => ({
+    id: `mix-${a.slug}`,
+    title: `Mix ${i + 1}`,
+    subtitle: a.name,
+    cover: a.cover,
+    gradient: [
+      "from-primary/50 via-base-300 to-secondary/40",
+      "from-secondary/50 via-base-300 to-accent/35",
+      "from-accent/45 via-base-300 to-primary/40",
+    ][i % 3],
+    onClick: () => playArtist(a.slug),
+  }));
+  if (dailyMixes.length < 3 && tracks.length) {
+    dailyMixes.push({
+      id: "mix-all",
+      title: `Mix ${dailyMixes.length + 1}`,
+      subtitle: "Tout le catalogue",
+      cover: tracks[0]?.coverUrl || "",
+      gradient: "from-primary/40 via-base-300 to-base-100",
+      onClick: () => playList(shuffleCopy(tracks)),
+    });
+  }
+  const mixes = dailyMixes.slice(0, 3);
+
+  function TrackList({ list, empty }) {
+    return (
+      <ul class="min-h-0 flex-1 divide-y divide-base-content/8 overflow-y-auto overscroll-contain rounded-xl bg-base-300/25">
+        {list.map((t, i) => {
+          const isCurrent = current?.id === t.id;
+          return (
+            <li key={t.id}>
+              <button
+                type="button"
+                class={`flex w-full min-h-14 items-center gap-3 px-3 py-2.5 text-left touch-manipulation transition hover:bg-base-content/5 sm:min-h-16 sm:gap-4 sm:px-4 ${
+                  isCurrent ? "bg-primary/10" : ""
+                }`}
+                onClick={() => playTrack(t, list)}
+              >
+                <span class="w-6 shrink-0 text-center text-xs text-base-content/40">
+                  {isCurrent && playing ? (
+                    <span class="inline-block h-2.5 w-2.5 animate-pulse-soft rounded-full bg-primary" />
+                  ) : (
+                    i + 1
+                  )}
+                </span>
+                <CoverThumb src={t.coverUrl || t.artistImage} class="h-12 w-12 shrink-0" rounded="rounded" />
+                <div class="min-w-0 flex-1">
+                  <p class={`truncate text-sm font-semibold sm:text-base ${isCurrent ? "text-primary" : ""}`}>
+                    {t.trackTitle}
+                  </p>
+                  <p class="truncate text-xs text-base-content/50">{t.artistName}</p>
+                </div>
+                <span class="flex h-10 w-10 shrink-0 items-center justify-center text-base-content/60">
+                  {isCurrent && playing ? <Pause size={20} /> : <Play size={20} />}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+        {!list.length && (
+          <li class="px-4 py-10 text-center text-sm text-base-content/50">{empty}</li>
+        )}
+      </ul>
+    );
+  }
 
   return (
-    <AppShell
-      active="play"
-      title="Play"
-      subtitle="Lecteur tactile — tous les titres, un artiste, ou ta file d’attente."
-      fillViewport
-    >
-      <div class="flex min-h-0 flex-1 flex-col">
-        {/* Filtres / actions */}
-        <div class="mb-3 flex shrink-0 flex-wrap items-center gap-2 sm:mb-4 sm:gap-3">
-          <button
-            type="button"
-            class="btn btn-primary min-h-11 gap-2 px-5 text-sm touch-manipulation sm:min-h-12 sm:gap-3 sm:px-6 sm:text-base"
-            disabled={loading || !visibleTracks.length}
-            onClick={playAll}
-          >
-            <Play size={20} fill="currentColor" />
-            Tout lire
-            {filterArtist ? " (artiste)" : ""}
-          </button>
-          {filterArtist && (
-            <button
-              type="button"
-              class="btn btn-ghost min-h-11 px-4 text-sm touch-manipulation sm:min-h-12 sm:px-5 sm:text-base"
-              onClick={() => setFilterArtist("")}
-            >
-              Effacer filtre
-            </button>
-          )}
-          {!loading && visibleTracks.length > 0 && (
-            <span class="w-full text-sm text-base-content/45 sm:ml-auto sm:w-auto">
-              {visibleTracks.length} titre{visibleTracks.length !== 1 ? "s" : ""}
-            </span>
-          )}
-        </div>
-
-        {/* Onglets */}
-        <div
-          class="mb-3 grid shrink-0 grid-cols-3 gap-1 rounded-xl border border-base-content/10 bg-base-200/50 p-1 sm:mb-4 sm:gap-1.5 sm:p-1.5"
-          role="tablist"
-        >
-          {[
-            { id: "titres", label: "Titres", icon: Music2 },
-            { id: "artistes", label: "Artistes", icon: Users },
-            { id: "file", label: "File", icon: ListMusic },
-          ].map((t) => {
-            const Icon = t.icon;
-            const active = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                class={`flex min-h-11 items-center justify-center gap-1.5 rounded-lg text-sm font-semibold touch-manipulation transition sm:min-h-12 sm:gap-2 sm:text-base ${
-                  active
-                    ? "bg-primary/20 text-primary"
-                    : "text-base-content/60 active:bg-base-content/5"
-                }`}
-                onClick={() => setTab(t.id)}
-              >
-                <Icon size={18} class="shrink-0" />
-                <span class="truncate">{t.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
+    <AppShell active="play" fillViewport>
+      <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
         {loading && (
           <div class="flex min-h-0 flex-1 items-center justify-center">
             <span class="loading loading-spinner loading-lg text-primary" />
           </div>
         )}
-        {error && <p class="shrink-0 text-error">{error}</p>}
+        {error && <p class="mb-2 shrink-0 text-error">{error}</p>}
         {audioError && <p class="mb-2 shrink-0 text-sm text-warning">{audioError}</p>}
 
-        {/* Liste titres */}
-        {!loading && tab === "titres" && (
-          <ul class="min-h-0 flex-1 divide-y divide-base-content/8 overflow-y-auto overscroll-contain border border-base-content/10 bg-base-200/30">
-            {visibleTracks.map((t, i) => {
-              const isCurrent = current?.id === t.id;
-              return (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    class={`flex w-full min-h-16 items-center gap-3 px-3 py-2.5 text-left touch-manipulation transition active:bg-primary/10 sm:min-h-[5.75rem] sm:gap-4 sm:px-4 sm:py-3 ${
-                      isCurrent ? "bg-primary/10" : ""
-                    }`}
-                    onClick={() => playTrack(t)}
-                  >
-                    <span class="w-6 shrink-0 text-center text-xs text-base-content/40 sm:w-8 sm:text-sm">
-                      {isCurrent && playing ? (
-                        <span class="inline-block h-3 w-3 animate-pulse-soft rounded-full bg-primary sm:h-3.5 sm:w-3.5" />
-                      ) : (
-                        i + 1
-                      )}
-                    </span>
-                    {t.coverUrl ? (
-                      <img
-                        src={t.coverUrl}
-                        alt=""
-                        class="h-12 w-12 shrink-0 object-cover sm:h-16 sm:w-16"
-                        width="64"
-                        height="64"
-                      />
-                    ) : (
-                      <div class="flex h-12 w-12 shrink-0 items-center justify-center bg-base-300 sm:h-16 sm:w-16">
-                        <Disc3 size={22} class="opacity-35" />
-                      </div>
-                    )}
-                    <div class="min-w-0 flex-1">
-                      <p
-                        class={`truncate text-base font-semibold sm:text-lg ${
-                          isCurrent ? "text-primary" : ""
-                        }`}
-                      >
-                        {t.trackTitle}
-                      </p>
-                      <p class="truncate text-xs text-base-content/50 sm:text-sm">{t.artistName}</p>
-                    </div>
-                    <span class="flex h-11 w-11 shrink-0 items-center justify-center text-base-content/70 sm:h-14 sm:w-14">
-                      {isCurrent && playing ? <Pause size={24} /> : <Play size={24} />}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-            {!visibleTracks.length && (
-              <li class="px-4 py-10 text-center text-sm text-base-content/50 sm:text-base">
-                Aucun titre audio — génère ou importe un morceau dans le Studio.
-              </li>
-            )}
-          </ul>
-        )}
-
-        {/* Artistes */}
-        {!loading && tab === "artistes" && (
-          <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain sm:space-y-3">
-            {artistGroups.map((a) => (
-              <li key={a.slug}>
-                <div class="flex items-stretch gap-0 border border-base-content/10 bg-base-200/30">
-                  <button
-                    type="button"
-                    class="flex min-h-16 min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left touch-manipulation active:bg-primary/10 sm:min-h-[6rem] sm:gap-4 sm:px-4 sm:py-3"
-                    onClick={() => {
-                      setFilterArtist(a.slug);
-                      setTab("titres");
-                    }}
-                  >
-                    {a.profile?.imageUrl ? (
-                      <img
-                        src={a.profile.imageUrl}
-                        alt=""
-                        class="h-12 w-12 shrink-0 object-cover sm:h-16 sm:w-16"
-                        width="64"
-                        height="64"
-                      />
-                    ) : (
-                      <div class="flex h-12 w-12 shrink-0 items-center justify-center bg-base-300 sm:h-16 sm:w-16">
-                        <Users size={22} class="opacity-40" />
-                      </div>
-                    )}
-                    <div class="min-w-0">
-                      <p class="font-display truncate text-lg font-semibold sm:text-xl">{a.name}</p>
-                      <p class="text-xs text-base-content/50 sm:text-sm">
-                        {a.trackCount} titre{a.trackCount !== 1 ? "s" : ""}
-                      </p>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-ghost h-auto min-w-14 rounded-none border-l border-base-content/10 touch-manipulation sm:min-w-20"
-                    aria-label={`Lire ${a.name}`}
-                    onClick={() => playArtist(a.slug)}
-                  >
-                    <Play size={24} fill="currentColor" />
-                  </button>
-                </div>
-              </li>
-            ))}
-            {!artistGroups.length && (
-              <li class="py-10 text-center text-sm text-base-content/50 sm:text-base">
-                Aucun artiste avec audio pour l’instant.
-              </li>
-            )}
-          </ul>
-        )}
-
-        {/* File d'attente */}
-        {!loading && tab === "file" && (
-          <ul class="min-h-0 flex-1 divide-y divide-base-content/8 overflow-y-auto overscroll-contain border border-base-content/10 bg-base-200/30">
-            {queue.map((t, i) => (
-              <li key={`${t.id}-${i}`}>
+        {!loading && showHome && (
+          <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4 animate-rise">
+            <div class="mb-5 flex items-center justify-between gap-3">
+              <h1 class="font-display text-2xl font-extrabold tracking-tight sm:text-3xl md:text-4xl">
+                {greeting()}
+              </h1>
+              <div class="flex items-center gap-1">
                 <button
                   type="button"
-                  class={`flex w-full min-h-14 items-center gap-3 px-3 py-2.5 text-left touch-manipulation sm:min-h-[5.25rem] sm:gap-4 sm:px-4 sm:py-3 ${
-                    i === index ? "bg-primary/10 text-primary" : ""
-                  }`}
-                  onClick={() => {
-                    playIndex(i);
-                    setExpanded(true);
-                  }}
+                  class="btn btn-ghost btn-circle btn-sm text-base-content/45"
+                  aria-label="Accueil"
+                  onClick={() => setView("home")}
                 >
-                  <span class="w-6 shrink-0 text-center text-xs opacity-50 sm:w-8 sm:text-sm">
-                    {i + 1}
-                  </span>
-                  <div class="min-w-0 flex-1">
-                    <p class="truncate text-base font-semibold sm:text-lg">{t.trackTitle}</p>
-                    <p class="truncate text-xs opacity-50 sm:text-sm">{t.artistName}</p>
-                  </div>
+                  <ChevronLeft size={18} />
                 </button>
-              </li>
-            ))}
-            {!queue.length && (
-              <li class="px-4 py-10 text-center text-sm text-base-content/50 sm:text-base">
-                La file est vide — lance « Tout lire » ou un titre.
-              </li>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-circle btn-sm text-base-content/45"
+                  aria-label="Tous les titres"
+                  onClick={() => setView("titres")}
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Accès rapide — cartes horizontales */}
+            {quickCards.length > 0 && (
+              <section class="mb-8">
+                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {quickCards.map((card) => (
+                    <button
+                      key={card.id}
+                      type="button"
+                      class="group flex items-center gap-0 overflow-hidden rounded-md bg-base-300/70 text-left transition hover:bg-base-300"
+                      onClick={card.onClick}
+                    >
+                      <CoverThumb
+                        src={card.cover}
+                        class="h-14 w-14 shrink-0 sm:h-16 sm:w-16"
+                        rounded="rounded-none"
+                      />
+                      <span class="min-w-0 flex-1 px-3 py-2">
+                        <span class="block truncate text-sm font-bold sm:text-base">{card.title}</span>
+                        <span class="block truncate text-xs text-base-content/50">{card.subtitle}</span>
+                      </span>
+                      <span class="mr-3 hidden h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-content opacity-0 shadow-lg transition group-hover:flex group-hover:opacity-100">
+                        <Play size={18} fill="currentColor" />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
             )}
-          </ul>
+
+            {/* Récemment écoutés */}
+            <section class="mb-8">
+              <div class="mb-3 flex items-end justify-between gap-3">
+                <h2 class="font-display text-xl font-bold sm:text-2xl">Récemment écoutés</h2>
+                <button
+                  type="button"
+                  class="text-sm font-medium text-primary hover:underline"
+                  onClick={() => setView("titres")}
+                >
+                  Voir tout
+                </button>
+              </div>
+              <div class="-mx-1 flex gap-4 overflow-x-auto px-1 pb-2">
+                {recentTracks.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    class="group w-32 shrink-0 text-left sm:w-36"
+                    onClick={() => playTrack(t, recentTracks)}
+                  >
+                    <div class="relative aspect-square overflow-hidden rounded-md bg-base-300 shadow-md shadow-black/25">
+                      <CoverThumb
+                        src={t.coverUrl || t.artistImage}
+                        class="h-full w-full transition duration-300 group-hover:scale-[1.03]"
+                        rounded="rounded-none"
+                      />
+                      <span class="absolute bottom-2 right-2 flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-content opacity-0 shadow-lg transition group-hover:opacity-100">
+                        <Play size={18} fill="currentColor" />
+                      </span>
+                    </div>
+                    <p class="mt-2 truncate text-sm font-semibold">{t.trackTitle}</p>
+                    <p class="truncate text-xs text-base-content/50">{t.artistName}</p>
+                  </button>
+                ))}
+                {!recentTracks.length && (
+                  <p class="py-6 text-sm text-base-content/45">Aucun titre audio pour l’instant.</p>
+                )}
+              </div>
+            </section>
+
+            {/* Fait pour toi */}
+            <section class="mb-4">
+              <div class="mb-3 flex items-end justify-between gap-3">
+                <h2 class="font-display text-xl font-bold sm:text-2xl">Fait pour toi</h2>
+                <button
+                  type="button"
+                  class="text-sm font-medium text-primary hover:underline"
+                  onClick={() => setView("artistes")}
+                >
+                  Voir tout
+                </button>
+              </div>
+              <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {mixes.map((mix) => (
+                  <button
+                    key={mix.id}
+                    type="button"
+                    class={`relative flex min-h-[7.5rem] items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br ${mix.gradient} p-4 text-center shadow-md shadow-black/20 transition hover:brightness-110 sm:min-h-[8.5rem]`}
+                    onClick={mix.onClick}
+                  >
+                    {mix.cover ? (
+                      <img
+                        src={mix.cover}
+                        alt=""
+                        class="absolute inset-0 h-full w-full object-cover opacity-35"
+                      />
+                    ) : null}
+                    <span class="relative z-[1]">
+                      <span class="font-display block text-lg font-extrabold tracking-tight sm:text-xl">
+                        {mix.title}
+                      </span>
+                      <span class="mt-1 block text-xs text-base-content/70 sm:text-sm">{mix.subtitle}</span>
+                    </span>
+                  </button>
+                ))}
+                {!mixes.length && (
+                  <p class="text-sm text-base-content/45 sm:col-span-3">
+                    Crée un artiste et un morceau dans le Studio pour remplir cette section.
+                  </p>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {/* Listes (recherche / voir tout / file / artistes) */}
+        {!loading && !showHome && (
+          <div class="flex min-h-0 flex-1 flex-col">
+            <div class="mb-3 flex shrink-0 flex-wrap items-center gap-2">
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm gap-1 rounded-full"
+                onClick={clearSearch}
+              >
+                <ChevronLeft size={16} /> Accueil
+              </button>
+              <h2 class="font-display text-lg font-bold sm:text-xl">
+                {searchQuery
+                  ? `Résultats « ${searchQuery} »`
+                  : filterArtist
+                    ? artistGroups.find((a) => a.slug === filterArtist)?.name || "Artiste"
+                    : view === "artistes"
+                      ? "Artistes"
+                      : view === "file"
+                        ? "File d’attente"
+                        : "Tous les titres"}
+              </h2>
+              <div class="ml-auto flex gap-1">
+                {[
+                  { id: "titres", icon: Music2, label: "Titres" },
+                  { id: "artistes", icon: Users, label: "Artistes" },
+                  { id: "file", icon: ListMusic, label: "File" },
+                ].map((t) => {
+                  const Icon = t.icon;
+                  const active =
+                    view === t.id ||
+                    ((searchQuery || filterArtist) && t.id === "titres" && view !== "artistes" && view !== "file");
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      class={`btn btn-ghost btn-sm btn-square rounded-full ${active ? "text-primary" : "text-base-content/45"}`}
+                      aria-label={t.label}
+                      onClick={() => {
+                        setFilterArtist("");
+                        setView(t.id);
+                      }}
+                    >
+                      <Icon size={16} />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {(view === "titres" || searchQuery || filterArtist) && view !== "artistes" && view !== "file" && (
+              <>
+                <div class="mb-3 flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-sm gap-2 rounded-full"
+                    disabled={!visibleTracks.length}
+                    onClick={() => playList(visibleTracks)}
+                  >
+                    <Play size={16} fill="currentColor" /> Tout lire
+                  </button>
+                  {filterArtist && (
+                    <button type="button" class="btn btn-ghost btn-sm rounded-full" onClick={() => setFilterArtist("")}>
+                      Effacer filtre
+                    </button>
+                  )}
+                </div>
+                <TrackList
+                  list={visibleTracks}
+                  empty="Aucun titre — génère ou importe un morceau dans le Studio."
+                />
+              </>
+            )}
+
+            {view === "artistes" && (
+              <div class="-mx-1 flex min-h-0 flex-1 gap-4 overflow-x-auto px-1 pb-2 sm:grid sm:grid-cols-3 sm:overflow-y-auto md:grid-cols-4 lg:grid-cols-5">
+                {artistGroups.map((a) => (
+                  <button
+                    key={a.slug}
+                    type="button"
+                    class="group w-36 shrink-0 text-left sm:w-auto"
+                    onClick={() => playArtist(a.slug)}
+                  >
+                    <div class="relative aspect-square overflow-hidden rounded-full bg-base-300 shadow-md">
+                      <CoverThumb src={a.cover} class="h-full w-full" rounded="rounded-none" />
+                    </div>
+                    <p class="mt-2 truncate text-center text-sm font-semibold">{a.name}</p>
+                    <p class="truncate text-center text-xs text-base-content/50">
+                      {a.trackCount} titre{a.trackCount > 1 ? "s" : ""}
+                    </p>
+                  </button>
+                ))}
+                {!artistGroups.length && (
+                  <p class="py-10 text-sm text-base-content/50">Aucun artiste avec audio.</p>
+                )}
+              </div>
+            )}
+
+            {view === "file" && (
+              <TrackList list={queue} empty="La file est vide — lance un titre depuis l’accueil." />
+            )}
+          </div>
         )}
       </div>
 
-      {/* Now playing plein écran — tout tient dans le viewport, sans scroll */}
+      {/* Now playing plein écran */}
       {current && expanded && (
-        <div class="fixed inset-x-0 top-0 bottom-[var(--sonozz-now-playing,5.25rem)] z-[60] flex flex-col overflow-hidden bg-base-200/98 backdrop-blur-xl animate-rise">
+        <div class="fixed inset-x-0 top-0 bottom-[var(--sonozz-now-playing,5.5rem)] z-40 flex flex-col overflow-hidden bg-base-200/98 backdrop-blur-xl animate-rise">
           <div class="flex h-12 shrink-0 items-center justify-between px-1 pt-[env(safe-area-inset-top)] sm:h-14 sm:px-3">
             <button
               type="button"
-              class="btn btn-ghost btn-square h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:h-12 sm:min-h-12 sm:w-12 sm:min-w-12"
+              class="btn btn-ghost btn-square h-11 min-h-11 w-11 min-w-11 touch-manipulation"
               aria-label="Réduire"
               onClick={() => setExpanded(false)}
             >
@@ -592,11 +796,11 @@ export default function PlayerPage() {
             </p>
             <button
               type="button"
-              class="btn btn-ghost btn-square h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:h-12 sm:min-h-12 sm:w-12 sm:min-w-12"
+              class="btn btn-ghost btn-square h-11 min-h-11 w-11 min-w-11 touch-manipulation"
               aria-label="File d’attente"
               onClick={() => {
                 setExpanded(false);
-                setTab("file");
+                setView("file");
               }}
             >
               <ListMusic size={22} />
@@ -611,7 +815,7 @@ export default function PlayerPage() {
               onTouchEnd={onCoverTouchEnd}
             >
               <div
-                class={`overflow-hidden shadow-2xl shadow-black/40 ring-1 ring-base-content/10 ${
+                class={`overflow-hidden rounded-md shadow-2xl shadow-black/40 ring-1 ring-base-content/10 ${
                   playing ? "play-cover-playing" : ""
                 }`}
                 style={{ width: "min(100%, 100cqh)", aspectRatio: "1 / 1" }}
@@ -626,54 +830,53 @@ export default function PlayerPage() {
                   />
                 ) : (
                   <div class="flex h-full w-full items-center justify-center bg-gradient-to-br from-secondary/40 to-base-300">
-                    <Disc3
-                      size={64}
-                      class={`opacity-30 sm:h-20 sm:w-20 ${playing ? "animate-pulse-soft" : ""}`}
-                    />
+                    <Disc3 size={64} class={`opacity-30 ${playing ? "animate-pulse-soft" : ""}`} />
                   </div>
                 )}
               </div>
             </div>
 
-            <div class="mx-auto w-full max-w-lg shrink-0 py-2 text-center sm:py-3">
-              <h2 class="font-display line-clamp-1 text-xl font-extrabold tracking-tight sm:text-2xl md:text-3xl">
-                {current.trackTitle}
-              </h2>
-              <p class="mt-0.5 truncate text-sm text-base-content/55 sm:text-base">
-                {current.artistName}
-              </p>
-
-              {/* Système de notation */}
-              {playerId && (
-                <div class="mt-3 flex flex-col items-center gap-2">
-                  <div class="flex gap-1">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        type="button"
-                        class="btn btn-ghost btn-circle btn-sm touch-manipulation"
-                        onClick={() => rateTrack(star)}
-                        disabled={ratingBusy}
-                        aria-label={`Noter ${star} étoile${star > 1 ? "s" : ""}`}
-                      >
-                        <Star
-                          size={20}
-                          fill={trackRating && star <= trackRating ? "currentColor" : "none"}
-                          class={trackRating && star <= trackRating ? "text-warning" : "text-base-content/30"}
-                        />
-                      </button>
-                    ))}
-                  </div>
-                  {ratingStats && ratingStats.count > 0 && (
-                    <p class="text-xs text-base-content/45">
-                      {ratingStats.average.toFixed(1)} / 5 · {ratingStats.count} note{ratingStats.count > 1 ? "s" : ""}
-                    </p>
-                  )}
-                </div>
-              )}
+            <div class="mx-auto flex w-full max-w-lg shrink-0 items-start justify-between gap-3 py-2 sm:py-3">
+              <div class="min-w-0 text-left">
+                <h2 class="font-display line-clamp-1 text-xl font-extrabold tracking-tight sm:text-2xl md:text-3xl">
+                  {current.trackTitle}
+                </h2>
+                <p class="mt-0.5 truncate text-sm text-base-content/55 sm:text-base">{current.artistName}</p>
+              </div>
+              <button type="button" class="btn btn-ghost btn-circle btn-sm text-base-content/40" aria-label="Favori">
+                <Heart size={18} />
+              </button>
             </div>
 
-            {/* Seek tactile */}
+            {playerId && (
+              <div class="mx-auto mb-2 flex w-full max-w-lg shrink-0 flex-col items-center gap-1">
+                <div class="flex gap-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      class="btn btn-ghost btn-circle btn-sm touch-manipulation"
+                      onClick={() => rateTrack(star)}
+                      disabled={ratingBusy}
+                      aria-label={`Noter ${star} étoile${star > 1 ? "s" : ""}`}
+                    >
+                      <Star
+                        size={18}
+                        fill={trackRating && star <= trackRating ? "currentColor" : "none"}
+                        class={trackRating && star <= trackRating ? "text-warning" : "text-base-content/30"}
+                      />
+                    </button>
+                  ))}
+                </div>
+                {ratingStats && ratingStats.count > 0 && (
+                  <p class="text-xs text-base-content/45">
+                    {ratingStats.average.toFixed(1)} / 5 · {ratingStats.count} note
+                    {ratingStats.count > 1 ? "s" : ""}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div class="mx-auto w-full max-w-lg shrink-0">
               <div
                 ref={seekRef}
@@ -700,10 +903,7 @@ export default function PlayerPage() {
                 }}
               >
                 <div class="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-base-content/15 sm:h-2">
-                  <div
-                    class="h-full rounded-full bg-primary"
-                    style={{ width: `${progress}%` }}
-                  />
+                  <div class="h-full rounded-full bg-primary" style={{ width: `${progress}%` }} />
                 </div>
                 <div
                   class="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary shadow-md sm:h-5 sm:w-5"
@@ -716,64 +916,55 @@ export default function PlayerPage() {
               </div>
             </div>
 
-            {/* Contrôles */}
             <div class="mx-auto flex w-full max-w-lg shrink-0 items-center justify-between gap-1 py-1 sm:py-2">
               <button
                 type="button"
-                class={`btn btn-ghost btn-square h-10 min-h-10 w-10 min-w-10 touch-manipulation sm:h-12 sm:min-h-12 sm:w-12 sm:min-w-12 ${
+                class={`btn btn-ghost btn-square h-10 min-h-10 w-10 min-w-10 touch-manipulation ${
                   shuffle ? "text-primary" : "text-base-content/50"
                 }`}
                 aria-label="Aléatoire"
                 aria-pressed={shuffle}
                 onClick={toggleShuffle}
               >
-                <Shuffle size={20} class="sm:h-6 sm:w-6" />
+                <Shuffle size={20} />
               </button>
-
               <button
                 type="button"
-                class="btn btn-ghost btn-circle h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14"
+                class="btn btn-ghost btn-circle h-11 min-h-11 w-11 min-w-11 touch-manipulation"
                 aria-label="Précédent"
                 onClick={goPrev}
               >
-                <SkipBack size={24} fill="currentColor" class="sm:h-7 sm:w-7" />
+                <SkipBack size={24} fill="currentColor" />
               </button>
-
               <button
                 type="button"
-                class="btn btn-primary btn-circle h-14 w-14 min-h-14 min-w-14 touch-manipulation shadow-lg shadow-primary/25 sm:h-16 sm:w-16 sm:min-h-16 sm:min-w-16"
+                class="btn btn-primary btn-circle h-14 w-14 min-h-14 min-w-14 touch-manipulation shadow-lg shadow-primary/25"
                 aria-label={playing ? "Pause" : "Lecture"}
                 onClick={() => togglePlay()}
               >
                 {playing ? (
-                  <Pause size={28} fill="currentColor" class="sm:h-8 sm:w-8" />
+                  <Pause size={28} fill="currentColor" />
                 ) : (
-                  <Play size={28} fill="currentColor" class="ml-0.5 sm:h-8 sm:w-8" />
+                  <Play size={28} fill="currentColor" class="ml-0.5" />
                 )}
               </button>
-
               <button
                 type="button"
-                class="btn btn-ghost btn-circle h-11 min-h-11 w-11 min-w-11 touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14"
+                class="btn btn-ghost btn-circle h-11 min-h-11 w-11 min-w-11 touch-manipulation"
                 aria-label="Suivant"
                 onClick={goNext}
               >
-                <SkipForward size={24} fill="currentColor" class="sm:h-7 sm:w-7" />
+                <SkipForward size={24} fill="currentColor" />
               </button>
-
               <button
                 type="button"
-                class={`btn btn-ghost btn-square h-10 min-h-10 w-10 min-w-10 touch-manipulation sm:h-12 sm:min-h-12 sm:w-12 sm:min-w-12 ${
+                class={`btn btn-ghost btn-square h-10 min-h-10 w-10 min-w-10 touch-manipulation ${
                   repeat !== "off" ? "text-primary" : "text-base-content/50"
                 }`}
                 aria-label="Répéter"
                 onClick={cycleRepeat}
               >
-                {repeat === "one" ? (
-                  <Repeat1 size={20} class="sm:h-6 sm:w-6" />
-                ) : (
-                  <Repeat size={20} class="sm:h-6 sm:w-6" />
-                )}
+                {repeat === "one" ? <Repeat1 size={20} /> : <Repeat size={20} />}
               </button>
             </div>
           </div>

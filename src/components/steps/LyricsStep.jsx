@@ -3,14 +3,18 @@ import { PenLine, Languages, Music2 } from "lucide-preact";
 import { languageLabel, languagesForProvider, songGenLanguageHint, languageEngineLabel } from "../../lib/studio.js";
 import { loadKeys } from "../../lib/keys.js";
 import VersionPicker from "../VersionPicker.jsx";
+import FeatArtistPicker from "../FeatArtistPicker.jsx";
 
 export default function LyricsStep({
   lyrics,
   versions = [],
   activeId = null,
   artist,
+  featArtist = null,
+  catalogArtists = [],
   loading,
   onGenerate,
+  onFeatArtistChange,
   onSelectVersion,
   onDeleteVersion,
 }) {
@@ -50,6 +54,12 @@ export default function LyricsStep({
         <p class="max-w-xl text-base-content/70">
           Couplets, refrain et pont calibrés pour{" "}
           {artist?.name || "l'artiste"}
+          {featArtist?.name ? (
+            <>
+              {" "}
+              feat. <span class="text-base-content">{featArtist.name}</span>
+            </>
+          ) : null}
           {artist?.genre ? ` · ${artist.genre}` : ""}.
           {hasVersions ? " Chaque génération ajoute une version sans écraser les autres." : ""}
         </p>
@@ -59,9 +69,19 @@ export default function LyricsStep({
         {artist?.genre && (
           <p class="inline-flex items-center gap-2 text-sm text-base-content/65">
             <Music2 size={14} class="text-primary" />
-            Style : <span class="text-base-content">{artist.genre}</span>
+            Style lead : <span class="text-base-content">{artist.genre}</span>
           </p>
         )}
+
+        {artist && onFeatArtistChange ? (
+          <FeatArtistPicker
+            leadArtist={artist}
+            featArtist={featArtist}
+            catalogArtists={catalogArtists}
+            disabled={loading}
+            onChange={onFeatArtistChange}
+          />
+        ) : null}
 
         <fieldset class="space-y-2">
           <legend class="mb-1 flex items-center gap-2 text-sm text-base-content/60">

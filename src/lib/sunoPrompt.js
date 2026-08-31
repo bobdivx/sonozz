@@ -5,6 +5,12 @@ import {
   isDefaultMusicArrange,
 } from "./musicArrange.js";
 import { resolveArtistGender } from "./artistGender.js";
+import {
+  normalizeFeatArtist,
+  duoVocalPromptBits,
+  duoStylePromptBits,
+  displayArtistCredit,
+} from "./featArtist.js";
 import { defaultBpmForGenre, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "./musicLane.js";
 
 function voiceHintFromArtist(artist) {
@@ -28,6 +34,7 @@ export function buildSunoPrompt({
 } = {}) {
   const lock = withKnownArtistLane(styleLock || artist?.styleLock || {});
   const seed = lock.seedTrack;
+  const feat = normalizeFeatArtist(artist?.featArtist);
 
   let arrange = normalizeMusicArrange(musicArrange ?? artist?.musicArrange);
   if (isDefaultMusicArrange(arrange) && lock && Object.keys(lock).length) {
@@ -102,19 +109,31 @@ export function buildSunoPrompt({
     .slice(0, 10)
     .join(", ");
 
-  const voice = vocalHint || (metal ? metalVoiceHint(resolveArtistGender(artist)?.code, genreBlob, lock) : voiceHintFromArtist(artist));
+  const duoBits = feat
+    ? [...duoVocalPromptBits(artist, feat), ...duoStylePromptBits(artist, feat)].join(". ")
+    : "";
+  // En duo, ne jamais laisser un vocalHint mono-sexe écraser les bits duo.
+  const voice = feat
+    ? duoBits
+    : vocalHint ||
+      (metal
+        ? metalVoiceHint(resolveArtistGender(artist)?.code, genreBlob, lock)
+        : voiceHintFromArtist(artist));
 
   return `Style: ${lock.genreSummary || artist?.genre || (metal ? "metal" : "indie pop")}${
     lock.matchedName || seed?.artistName
       ? ` (lane of ${lock.matchedName || seed.artistName})`
       : ""
   }. ${voice}. Mood: ${artist?.mood || lock.mood || (metal ? "aggressive" : "emotional")}.
+Artist: ${displayArtistCredit(artist, feat)}
 Production: ${production}
 Keywords: ${keywords}
 Instruments: ${instru}
 Groove: ${lock.rhythmFeel || arrange?.drums || (metal ? "live kit" : "natural soft groove")} · BPM ${bpm}${
     seed?.title ? ` · ref « ${seed.title} »` : ""
-  }${arrangeLine ? `\nArrange: ${arrangeLine}` : ""}
+  }${arrangeLine ? `\nArrange: ${arrangeLine}` : ""}${
+    feat && duoBits ? `\nDuo: ${duoBits}` : ""
+  }
 Title: ${lyrics?.title || "Untitled"}
 Lyrics:
 ${lyrics?.text || ""}`.trim();

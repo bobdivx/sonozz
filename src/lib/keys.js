@@ -105,15 +105,15 @@ export const KEY_FIELDS = [
       {
         id: "aceStepPreferredModel",
         label: "Modèle ACE-Step",
-        help: "Turbo = rapide. SFT = qualité max (plus de VRAM / plus lent).",
+        help: "DiT Gradio uniquement (Turbo / SFT / BF16). Merge dans l’UI Pinokio n’est pas un vrai DiT.",
         required: false,
         inputType: "select",
         options: [
           { value: "", label: "Auto (modèle déjà chargé)" },
           { value: "acestep-v15-xl-turbo", label: "XL Turbo (8 steps, rapide)" },
           { value: "acestep-v15-xl-sft", label: "XL SFT (50 steps, qualité)" },
-          { value: "marcorez8/acestep-v15-xl-turbo-bf16", label: "XL Turbo BF16 (compact)" },
-          { value: "acestep-v15-xl-merge-sft-turbo", label: "XL Merge SFT+Turbo" },
+          { value: "acestep-v15-xl-turbo-bf16", label: "XL Turbo BF16 (compact)" },
+          { value: "marcorez8/acestep-v15-xl-turbo-bf16", label: "XL Turbo BF16 (HF)" },
         ],
       },
       {
@@ -392,8 +392,8 @@ export function keysAfterStudioToggle(keys, id, enabled) {
 const ACE_STEP_MODELS = [
   "acestep-v15-xl-turbo",
   "acestep-v15-xl-sft",
+  "acestep-v15-xl-turbo-bf16",
   "marcorez8/acestep-v15-xl-turbo-bf16",
-  "acestep-v15-xl-merge-sft-turbo",
 ];
 
 export const EMPTY_KEYS = () => {

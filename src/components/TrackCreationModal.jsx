@@ -3,10 +3,12 @@ import { X, Search } from "lucide-preact";
 import { MUSIC_STYLES, catalogGenresToStyleValues, styleLabelForValue } from "../lib/studio.js";
 import StyleArtistPicker from "./StyleArtistPicker.jsx";
 import StyleTrackPicker from "./StyleTrackPicker.jsx";
+import FeatArtistPicker from "./FeatArtistPicker.jsx";
+import { normalizeFeatArtist } from "../lib/featArtist.js";
 
 /**
  * Modal de confirmation lors de la création d'un nouveau morceau.
- * Permet de confirmer/modifier le genre et les références artistiques.
+ * Genre / références + duo / feat. optionnel.
  */
 export default function TrackCreationModal({
   open,
@@ -15,10 +17,16 @@ export default function TrackCreationModal({
   currentGenre = "",
   currentReferences = [],
   currentReferenceTrack = "",
+  leadArtist = null,
+  catalogArtists = null,
 }) {
   const [keepSettings, setKeepSettings] = useState(true);
-  
-  // Pour "Modifier pour ce titre"
+  const [featArtist, setFeatArtist] = useState(null);
+  const [catalog, setCatalog] = useState(() =>
+    Array.isArray(catalogArtists) ? catalogArtists : [],
+  );
+  const [catalogLoading, setCatalogLoading] = useState(false);
+
   const [genres, setGenres] = useState(() => {
     const vals = catalogGenresToStyleValues([currentGenre].filter(Boolean));
     return vals.length > 0 ? vals : [];
@@ -51,12 +59,13 @@ export default function TrackCreationModal({
   useEffect(() => {
     if (!open) {
       setKeepSettings(true);
+      setFeatArtist(null);
       return;
     }
-    // Réinitialiser avec les valeurs actuelles quand le modal s'ouvre
     const vals = catalogGenresToStyleValues([currentGenre].filter(Boolean));
     setGenres(vals.length > 0 ? vals : []);
-    
+    setFeatArtist(null);
+
     if (Array.isArray(currentReferences) && currentReferences.length > 0) {
       setArtistPicks(
         currentReferences.map((name, idx) => ({
@@ -65,7 +74,7 @@ export default function TrackCreationModal({
           name: name,
           image: null,
           genres: [],
-        }))
+        })),
       );
     } else {
       setArtistPicks([]);
@@ -85,25 +94,51 @@ export default function TrackCreationModal({
     }
   }, [open, currentGenre, currentReferences, currentReferenceTrack]);
 
+  useEffect(() => {
+    if (Array.isArray(catalogArtists)) {
+      setCatalog(catalogArtists);
+      return;
+    }
+    if (!open) return undefined;
+    let cancelled = false;
+    setCatalogLoading(true);
+    (async () => {
+      try {
+        const res = await fetch("/api/artists");
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok) setCatalog(data.artists || []);
+      } catch {
+        /* ignore */
+      } finally {
+        if (!cancelled) setCatalogLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, catalogArtists]);
+
   if (!open) return null;
 
   const handleConfirm = () => {
+    const feat = normalizeFeatArtist(featArtist);
     if (keepSettings) {
       onConfirm({
         genre: currentGenre,
         references: currentReferences,
         referenceTrack: currentReferenceTrack,
+        featArtist: feat,
       });
     } else {
-      // Utiliser les nouveaux choix
       const genreValue = genres.length > 0 ? genres.join(", ") : currentGenre;
-      const refs = artistPicks.map(p => p.name);
+      const refs = artistPicks.map((p) => p.name);
       const refTrack = trackPick?.name || "";
-      
+
       onConfirm({
         genre: genreValue || currentGenre,
         references: refs.length > 0 ? refs : currentReferences,
         referenceTrack: refTrack || currentReferenceTrack,
+        featArtist: feat,
       });
     }
   };
@@ -131,7 +166,7 @@ export default function TrackCreationModal({
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-rise">
-      <div class="relative mx-4 w-full max-w-lg rounded-3xl border border-base-content/10 bg-base-200 p-6 shadow-2xl">
+      <div class="relative mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-base-content/10 bg-base-200 p-6 shadow-2xl">
         <button
           type="button"
           class="btn btn-ghost btn-circle btn-sm absolute right-4 top-4"
@@ -141,9 +176,10 @@ export default function TrackCreationModal({
           <X size={18} />
         </button>
 
-        <h2 class="font-display text-2xl font-bold">Créer un nouveau morceau</h2>
+        <h2 class="font-display pr-10 text-2xl font-bold">Créer un nouveau morceau</h2>
         <p class="mt-2 text-sm text-base-content/60">
-          Veux-tu garder le genre et les références actuels, ou en choisir d'autres pour ce nouveau titre ?
+          Garde le genre et les références, ou ajuste-les. Tu peux aussi ajouter un duo / feat.
+          avec un autre de tes artistes.
         </p>
 
         <div class="mt-6 space-y-4">
@@ -292,7 +328,9 @@ export default function TrackCreationModal({
                         if (!shown.length) {
                           return (
                             <li class="px-3 py-2 text-xs text-base-content/50">
-                              {q ? `Aucun style pour « ${styleQuery.trim()} »` : "Tous les styles sont déjà ajoutés"}
+                              {q
+                                ? `Aucun style pour « ${styleQuery.trim()} »`
+                                : "Tous les styles sont déjà ajoutés"}
                             </li>
                           );
                         }
@@ -315,6 +353,19 @@ export default function TrackCreationModal({
               </div>
             </div>
           )}
+
+          {leadArtist ? (
+            catalogLoading && catalog.length === 0 ? (
+              <p class="text-xs text-base-content/45">Chargement des artistes…</p>
+            ) : (
+              <FeatArtistPicker
+                leadArtist={leadArtist}
+                featArtist={featArtist}
+                catalogArtists={catalog}
+                onChange={setFeatArtist}
+              />
+            )
+          ) : null}
         </div>
 
         <div class="mt-6 flex gap-2">

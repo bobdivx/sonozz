@@ -1,5 +1,13 @@
 import { isStudioEnabled } from "../lib/keys.js";
 import { composeAceStepStyle } from "../lib/musicLane.js";
+import {
+  normalizeFeatArtist,
+  prepareAceStepLyrics,
+  ensureAceStepDuoSingerTags,
+  buildAceStepDuoStyle,
+  vocalLockForArtist,
+  vocalTimbreLine,
+} from "../lib/featArtist.js";
 
 /**
  * Client ACE-Step Studio (Pinokio).
@@ -12,7 +20,20 @@ const POLL_MS = 3000;
 const MAX_POLLS = 400;
 const AUTH_USER = "sonozz";
 
-/** Catalogue DiT XL connu du Studio. */
+/**
+ * DiT réellement reconnus par le moteur Gradio ACE-Step (pas le catalogue UI Express).
+ * L’UI Pinokio peut lister d’autres IDs (ex. Merge) avec is_preloaded — Gradio les refuse
+ * (« Unknown DiT model »). Source : ACE-Step Studio README + IDs actifs observés.
+ */
+export const ACE_STEP_ENGINE_DIT_IDS = [
+  "acestep-v15-xl-turbo",
+  "acestep-v15-xl-sft",
+  "acestep-v15-xl-base",
+  "acestep-v15-xl-turbo-bf16",
+  "marcorez8/acestep-v15-xl-turbo-bf16",
+];
+
+/** Métadonnées affichage / steps (hors moteur). */
 export const ACE_STEP_MODELS = [
   {
     id: "acestep-v15-xl-turbo",
@@ -36,13 +57,31 @@ export const ACE_STEP_MODELS = [
     vramGb: 8,
   },
   {
+    id: "acestep-v15-xl-turbo-bf16",
+    label: "XL Turbo BF16",
+    steps: 8,
+    guidance: 0,
+    vramGb: 8,
+  },
+  {
+    id: "acestep-v15-xl-base",
+    label: "XL Base",
+    steps: 50,
+    guidance: 7,
+    vramGb: 20,
+  },
+  // Ghost UI Pinokio — pas un DiT Gradio
+  {
     id: "acestep-v15-xl-merge-sft-turbo",
     label: "XL Merge",
     steps: 50,
     guidance: 7,
     vramGb: 16,
+    engineKnown: false,
   },
 ];
+
+const ENGINE_DIT_SET = new Set(ACE_STEP_ENGINE_DIT_IDS);
 
 const tokenCache = new Map();
 
@@ -57,13 +96,34 @@ export function isAceStepMusicProvider(keys) {
   );
 }
 
+export function isAceStepEngineDit(modelId) {
+  const id = String(modelId || "").trim();
+  if (!id) return false;
+  if (ENGINE_DIT_SET.has(id)) return true;
+  const meta = ACE_STEP_MODELS.find((m) => m.id === id);
+  if (meta && meta.engineKnown === false) return false;
+  // ID custom / HF inconnu : on laisse tenter le switch (pas Merge ghost)
+  return !/merge-sft-turbo/i.test(id);
+}
+
 export function aceStepModelMeta(modelId) {
   const id = String(modelId || "").trim();
-  return ACE_STEP_MODELS.find((m) => m.id === id) || null;
+  return (
+    ACE_STEP_MODELS.find((m) => m.id === id) ||
+    ACE_STEP_MODELS.find((m) => m.id.endsWith(id.replace(/^.*\//, "")) && /turbo-bf16/i.test(m.id)) ||
+    null
+  );
 }
 
 export function aceStepModelLabel(modelId) {
   return aceStepModelMeta(modelId)?.label || String(modelId || "").replace(/^.*\//, "") || "auto";
+}
+
+/** IDs Gradio réellement utilisables, issus du catalogue Studio live. */
+export function listAceStepSwitchableModels(catalogModels = []) {
+  return (Array.isArray(catalogModels) ? catalogModels : []).filter(
+    (m) => m?.engineKnown !== false && isAceStepEngineDit(m?.id || m?.name),
+  );
 }
 
 function errText(err) {
@@ -208,13 +268,21 @@ function normalizeModels(raw) {
       const id = String(m?.name || m?.id || m || "").trim();
       if (!id) return null;
       const meta = aceStepModelMeta(id);
+      const engineKnown = isAceStepEngineDit(id);
+      const diskReady = Boolean(m?.is_preloaded || m?.is_active);
       return {
         id,
         name: meta?.label || id.replace(/^.*\//, ""),
-        status: m?.is_preloaded || m?.is_active ? "ready" : "not_downloaded",
+        status: !engineKnown
+          ? "unsupported"
+          : diskReady
+            ? "ready"
+            : "not_downloaded",
         isActive: Boolean(m?.is_active),
-        isPreloaded: Boolean(m?.is_preloaded),
+        isPreloaded: diskReady && engineKnown,
         isCustom: Boolean(m?.is_custom),
+        engineKnown,
+        switchable: engineKnown,
         steps: meta?.steps || null,
         vramGb: meta?.vramGb || null,
       };
@@ -223,38 +291,64 @@ function normalizeModels(raw) {
 }
 
 /**
- * Choisit le DiT à envoyer : préférence user, sinon actif, sinon premier préchargé.
+ * Choisit le DiT à envoyer : préférence user (si Gradio), sinon actif, sinon premier préchargé.
+ * Ignore les IDs ghost UI (Merge, etc.).
  */
 export function pickAceStepModel(catalog = {}, opts = {}) {
   const models = Array.isArray(catalog?.models) ? catalog.models : [];
+  const switchable = listAceStepSwitchableModels(models);
   const preferredId = String(opts?.preferredId || "").trim();
   const activeId = String(catalog?.activeModel || opts?.activeId || "").trim();
-  const readyIds = models.filter((m) => m.isPreloaded || m.isActive).map((m) => m.id);
+  const readyIds = switchable.filter((m) => m.isPreloaded || m.isActive).map((m) => m.id);
   const readySet = new Set(readyIds);
+  const allSwitchableIds = new Set(switchable.map((m) => m.id));
+  const duo = Boolean(opts?.duo);
+  const forceId = String(opts?.forceModelId || "").trim();
 
-  if (preferredId) {
+  const turboBf16Short = "acestep-v15-xl-turbo-bf16";
+  const turboBf16 = "marcorez8/acestep-v15-xl-turbo-bf16";
+  const turbo = "acestep-v15-xl-turbo";
+  const sft = "acestep-v15-xl-sft";
+
+  if (forceId && isAceStepEngineDit(forceId)) {
+    return { modelId: forceId, reason: `retry · ${aceStepModelLabel(forceId)}` };
+  }
+
+  // Préférence utilisateur = priorité, seulement si DiT Gradio.
+  if (preferredId && isAceStepEngineDit(preferredId)) {
     return {
       modelId: preferredId,
-      reason: readySet.has(preferredId)
-        ? `forcé · ${aceStepModelLabel(preferredId)}`
+      reason: readySet.has(preferredId) || allSwitchableIds.has(preferredId)
+        ? `forcé · ${aceStepModelLabel(preferredId)}${duo ? " · duo" : ""}`
         : `forcé · ${aceStepModelLabel(preferredId)} (téléchargement possible)`,
     };
   }
-  if (activeId) {
-    return { modelId: activeId, reason: `auto · déjà chargé (${aceStepModelLabel(activeId)})` };
+
+  if (activeId && isAceStepEngineDit(activeId)) {
+    return {
+      modelId: activeId,
+      reason: `auto · déjà chargé (${aceStepModelLabel(activeId)})${duo ? " · duo" : ""}`,
+    };
   }
-  const turboBf16 = "marcorez8/acestep-v15-xl-turbo-bf16";
-  if (readySet.has(turboBf16)) {
-    return { modelId: turboBf16, reason: "auto · Turbo BF16 (compact)" };
+
+  const pickReady = (...ids) => {
+    for (const id of ids) {
+      if (readySet.has(id)) return id;
+    }
+    return null;
+  };
+
+  if (duo) {
+    const id = pickReady(turboBf16Short, turboBf16, turbo, sft) || readyIds[0];
+    if (id) return { modelId: id, reason: `duo · ${aceStepModelLabel(id)} (auto)` };
   }
-  const turbo = "acestep-v15-xl-turbo";
-  if (readySet.has(turbo)) {
-    return { modelId: turbo, reason: "auto · Turbo" };
-  }
-  if (readyIds[0]) {
-    return { modelId: readyIds[0], reason: `auto · ${aceStepModelLabel(readyIds[0])}` };
-  }
-  return { modelId: turboBf16, reason: "auto · Turbo BF16 (défaut Studio)" };
+
+  const auto =
+    pickReady(turboBf16Short, turboBf16, turbo, sft) ||
+    readyIds[0] ||
+    switchable[0]?.id ||
+    turboBf16Short;
+  return { modelId: auto, reason: `auto · ${aceStepModelLabel(auto)}` };
 }
 
 export function lyricsForAceStepPreview(text) {
@@ -268,8 +362,13 @@ export function lyricsForAceStepPreview(text) {
 /**
  * Force du source audio en mode cover (0 = texte seul, 1 = clone).
  * 0.5 = groove / structure du titre phare, paroles originales.
+ * Duo mixte : plus bas pour ne pas cloner une seule voix (ex. Lose Yourself).
  */
 export const ACE_STYLE_TRANSFER_STRENGTH = 0.5;
+export const ACE_DUO_STYLE_TRANSFER_STRENGTH = 0.22;
+
+/** BPM max conseillé quand un feat doit rester audible (évite 172 Lose Yourself). */
+export const ACE_DUO_BPM_CAP = 118;
 
 export function buildAceStepBody({
   title,
@@ -285,6 +384,8 @@ export function buildAceStepBody({
   audioCoverStrength,
   studioBase,
   styleLock,
+  artist = null,
+  featArtist = null,
 }) {
   const meta = aceStepModelMeta(modelId);
   const isTurbo = Boolean(meta && meta.steps <= 8);
@@ -293,20 +394,70 @@ export function buildAceStepBody({
     : Math.min(480, Math.max(60, Number(durationSec) || 180));
   let refUrl = String(referenceAudioUrl || "").trim();
   if (isAceHostedAudioUrl(studioBase, refUrl)) refUrl = "";
+
+  const lead = artist && typeof artist === "object" ? artist : null;
+  const feat = normalizeFeatArtist(featArtist || lead?.featArtist);
+  const isDuo = Boolean(feat?.name);
+  const lyricsRaw = String(preview ? lyricsForAceStepPreview(lyrics) : lyrics || "");
+  let lyricsClean = isDuo
+    ? prepareAceStepLyrics(lyricsRaw, lead || { name: "Lead" }, feat)
+    : lyricsRaw;
+  if (isDuo) {
+    lyricsClean = ensureAceStepDuoSingerTags(lyricsClean, lead || { name: "Lead" }, feat);
+  }
+
   const strengthNum = Number(audioCoverStrength);
+  const defaultStrength = isDuo ? ACE_DUO_STYLE_TRANSFER_STRENGTH : ACE_STYLE_TRANSFER_STRENGTH;
   const strength = Number.isFinite(strengthNum)
     ? Math.min(1, Math.max(0.05, strengthNum))
-    : ACE_STYLE_TRANSFER_STRENGTH;
+    : defaultStrength;
+
+  let bpmOut = Number.isFinite(Number(bpm))
+    ? Math.min(200, Math.max(60, Math.round(Number(bpm))))
+    : undefined;
+  if (isDuo && bpmOut != null && bpmOut > ACE_DUO_BPM_CAP) {
+    bpmOut = ACE_DUO_BPM_CAP;
+  }
+
+  const styleBase = String(style || "");
+  // Duo : style dédié depuis les genres réels — jamais « male rap + female » hardcodé,
+  // et on évite le DNA mono-voix du styleLock (Eminem, etc.).
+  let styleFinal;
+  if (isDuo) {
+    styleFinal = buildAceStepDuoStyle(lead || { name: "Lead" }, feat, {
+      genreSummary: styleLock?.genreSummary || lead?.genre,
+      mood: styleLock?.mood || lead?.mood,
+    });
+    if (!styleFinal) {
+      styleFinal = composeAceStepStyle(styleBase, null).slice(0, 1000);
+    }
+  } else {
+    const lock = vocalLockForArtist(lead);
+    const timbre = vocalTimbreLine(lock);
+    const sig = lock
+      ? [
+          `signature ${lock.genderCode || "lead"} vocals for ${lock.name}`,
+          timbre || lock.voiceHint,
+          lock.timbreHint ? `LOCK timbre = ${lock.timbreHint}` : null,
+          `keep the same vocal identity and timbre as prior songs by ${lock.name}`,
+        ]
+          .filter(Boolean)
+          .join(": ")
+      : "";
+    const composed = composeAceStepStyle(styleBase, styleLock);
+    styleFinal = [sig, composed].filter(Boolean).join(". ").slice(0, 1000);
+  }
+
   const body = {
     customMode: true,
     title: String(preview ? `${title || "SONOZZ"} · extrait` : title || "SONOZZ Track").slice(0, 120),
-    style: composeAceStepStyle(style, styleLock),
-    lyrics: String(preview ? lyricsForAceStepPreview(lyrics) : lyrics || "").slice(0, 8000),
-    prompt: String(preview ? lyricsForAceStepPreview(lyrics) : lyrics || "").slice(0, 8000),
+    style: styleFinal,
+    lyrics: lyricsClean.slice(0, 8000),
+    prompt: lyricsClean.slice(0, 8000),
     instrumental: false,
     vocalLanguage: String(language || "fr").slice(0, 8),
     duration,
-    bpm: Number.isFinite(Number(bpm)) ? Math.min(200, Math.max(60, Math.round(Number(bpm)))) : undefined,
+    bpm: bpmOut,
     inferenceSteps: meta?.steps || (isTurbo ? 8 : 50),
     guidanceScale: meta ? meta.guidance : 0,
     ditModel: modelId || undefined,
@@ -320,9 +471,11 @@ export function buildAceStepBody({
     const refTitle = String(referenceAudioTitle || "").trim();
     if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
     body.audioCoverStrength = strength;
-    body.coverNoiseStrength = 0.35;
+    body.coverNoiseStrength = isDuo ? 0.5 : 0.35;
     body.taskType = "cover";
-    body.instruction = "Generate audio semantic tokens based on the given conditions:";
+    body.instruction = isDuo
+      ? "Generate a two-singer vocal duet from the given conditions; obey [singer 1]/[singer 2] gender tags; keep groove from reference but do not clone a single voice:"
+      : "Generate audio semantic tokens based on the given conditions:";
     if (!isTurbo && (body.guidanceScale == null || body.guidanceScale < 7)) {
       body.guidanceScale = 7;
     }
@@ -334,7 +487,8 @@ const ACE_UNREACHABLE_RE =
   /injoignable|fetch failed|ECONNREFUSED|délai dépassé|TimeoutError|ENOTFOUND|EHOSTUNREACH/i;
 
 /**
- * Distingue « ACE carrément injoignable » de « UI up / moteur Python down ».
+ * Distingue « ACE injoignable », « moteur down », et « DiT en cours de chargement ».
+ * Pendant un switch SFT, Gradio coupe souvent `connected` → ce n’est pas un crash.
  * @param {{ health?: object, status?: object, base?: string }} input
  */
 export function interpretAceProbe({ health, status, base } = {}) {
@@ -354,21 +508,46 @@ export function interpretAceProbe({ health, status, base } = {}) {
       healthy: false,
       connected: false,
       pipelineUp: false,
+      loading: false,
+      loadingModel: null,
       message: healthError || `ACE-Step Studio injoignable (${base})`,
+    };
+  }
+
+  const state = String(status?.state || status?.status || status?.phase || "").toLowerCase();
+  const loadingModel = String(status?.model || "").trim() || null;
+  const isLoading = /loading|switching|initializ/.test(state);
+
+  if (isLoading) {
+    const label = loadingModel ? aceStepModelLabel(loadingModel) : "DiT";
+    return {
+      unreachable: false,
+      healthy: health?.healthy === true,
+      connected: status?.connected === true,
+      pipelineUp: false,
+      loading: true,
+      loadingModel,
+      message: `Chargement ${label} en cours — patiente (souvent plusieurs minutes). Ne fais pas Stop/Start Pinokio.`,
     };
   }
 
   const healthy = health?.healthy === true;
   const connected = status?.connected === true;
+  const activeModel = String(status?.activeModel || "").trim();
+  // Après un switch, Studio laisse parfois connected=false alors que le DiT est Ready.
+  const readyWithModel =
+    (/^ready$|^idle$|^ok$/i.test(state) || !state) && Boolean(activeModel);
+  const pipelineUp = (healthy && connected) || readyWithModel;
   return {
     unreachable: false,
     healthy,
     connected,
-    pipelineUp: healthy && connected,
-    message:
-      !healthy || !connected
-        ? "UI joignable, mais le moteur Python (port 8001) est down — Stop puis Start dans Pinokio"
-        : null,
+    pipelineUp,
+    loading: false,
+    loadingModel: null,
+    message: pipelineUp
+      ? null
+      : "UI joignable, mais le moteur Python (port 8001) est down — Stop puis Start dans Pinokio",
   };
 }
 
@@ -394,18 +573,7 @@ export async function testAceStep(keys) {
     health?.healthy === true ||
     status?.connected === true ||
     models.some((m) => m.isPreloaded || m.isActive);
-  const gpu =
-    sys && typeof sys === "object"
-      ? {
-          name: sys.gpu || null,
-          totalGb: Number(sys.vram_total) || null,
-          usedGb: Number(sys.vram_used) || null,
-          freeGb:
-            Number.isFinite(Number(sys.vram_total)) && Number.isFinite(Number(sys.vram_used))
-              ? Math.round((Number(sys.vram_total) - Number(sys.vram_used)) * 10) / 10
-              : null,
-        }
-      : null;
+  const gpu = parseAceStepGpu(sys);
 
   return {
     base,
@@ -419,6 +587,8 @@ export async function testAceStep(keys) {
     hasReadyModel,
     gpu,
     pipelineUp: interpreted.pipelineUp,
+    loading: Boolean(interpreted.loading),
+    loadingModel: interpreted.loadingModel || null,
     message:
       interpreted.message ||
       (hasReadyModel
@@ -427,28 +597,72 @@ export async function testAceStep(keys) {
   };
 }
 
-export async function switchAceStepModel(keys, modelId) {
+/**
+ * @param {object} keys
+ * @param {string} modelId
+ * @param {{ initLm?: boolean, timeoutMs?: number }} [opts]
+ */
+export async function switchAceStepModel(keys, modelId, opts = {}) {
   const base = resolveAceStepBaseUrl(keys);
   const id = String(modelId || "").trim();
   if (!id) throw new Error("modelId ACE-Step manquant");
+
+  let catalogModels = [];
   try {
     const info = await testAceStep(keys);
-    if (info.pipelineUp === false) {
+    catalogModels = info.models || [];
+    if (info.loading) {
+      const target = info.loadingModel || id;
+      console.info(`[acestep] DiT déjà en chargement (${aceStepModelLabel(target)}) — attente…`);
+      const waited = await waitForAceStepModel(keys, target);
+      if (waited.ok && target === id) {
+        return { ok: true, model: id, waited: true };
+      }
+      if (!waited.ok && target === id) {
+        throw new Error(info.message || "Chargement DiT trop long");
+      }
+      // Autre modèle en cours : on retente le probe puis le switch
+    } else if (info.pipelineUp === false) {
       throw new Error(
         "Moteur ACE-Step down (Gradio :8001). Dans Pinokio : Stop, puis Start (No LM si Sonozz). Attends que l’UI soit prête avant de changer de modèle.",
       );
     }
   } catch (e) {
-    if (/Moteur ACE-Step down/i.test(e.message)) throw e;
+    if (/Moteur ACE-Step down|Chargement DiT/i.test(e.message)) throw e;
     /* probe raté : on tente le switch quand même */
   }
+
+  const available = listAceStepSwitchableModels(catalogModels);
+  const availableLabels = available
+    .map((m) => aceStepModelLabel(m.id))
+    .filter((x, i, a) => a.indexOf(x) === i);
+  const availableHint =
+    availableLabels.length > 0
+      ? availableLabels.join(", ")
+      : "XL Turbo, XL SFT, XL Turbo BF16";
+
+  if (!isAceStepEngineDit(id)) {
+    throw new Error(
+      `« ${aceStepModelLabel(id)} » n’est pas un DiT Gradio (souvent un fantôme de l’UI Pinokio). ` +
+        `Modèles utilisables : ${availableHint}.`,
+    );
+  }
+
+  const body = { model: id };
+  if (opts.initLm === false) {
+    body.init_llm = false;
+  } else if (opts.initLm === true && opts.lmModel) {
+    body.init_llm = true;
+    body.lm_model_path = String(opts.lmModel);
+  }
+  const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : ACE_SWITCH_TIMEOUT_MS;
   try {
     const result = await withAuth(base, (token) =>
       aceFetch(base, "/api/generate/switch-model", {
         method: "POST",
         token,
-        body: { model: id },
-        timeoutMs: 180000,
+        body,
+        timeoutMs,
       }),
     );
     return { ok: true, model: id, result };
@@ -459,9 +673,213 @@ export async function switchAceStepModel(keys, modelId) {
         "Changement de modèle impossible : le moteur Python ACE-Step ne répond plus. Pinokio → Stop → Start (No LM), puis réessaie.",
       );
     }
+    if (/Unknown DiT model|Failed to download DiT/i.test(raw)) {
+      throw new Error(
+        `DiT « ${aceStepModelLabel(id)} » inconnu de Gradio. Modèles utilisables : ${availableHint}.`,
+      );
+    }
     throw e;
   }
 }
+
+const ACE_SWITCH_TIMEOUT_MS = 300_000;
+const ACE_MODEL_READY_POLL_MS = 4_000;
+const ACE_MODEL_READY_BUDGET_MS = 300_000;
+
+/**
+ * Pendant un load SFT, Studio ne répond souvent plus → on poll jusqu’à Ready.
+ */
+export async function waitForAceStepModel(keys, modelId, { budgetMs = ACE_MODEL_READY_BUDGET_MS } = {}) {
+  const id = String(modelId || "").trim();
+  if (!id) return { ok: false, message: "modelId manquant" };
+  const base = resolveAceStepBaseUrl(keys);
+  const start = Date.now();
+  let lastErr = "";
+  while (Date.now() - start < budgetMs) {
+    try {
+      const status = await withAuth(base, (token) =>
+        aceFetch(base, "/api/generate/model-status", { token, timeoutMs: 20000 }),
+      );
+      const active = String(status?.activeModel || status?.model || "").trim();
+      const state = String(status?.state || status?.status || status?.phase || "").toLowerCase();
+      if (active === id && !/unload|loading|error|failed/.test(state)) {
+        return { ok: true, activeModel: active, state: state || "ready" };
+      }
+      if (/error|failed/.test(state)) {
+        return {
+          ok: false,
+          activeModel: active,
+          state,
+          message: String(status?.error || status?.message || state),
+        };
+      }
+      const elapsed = Math.round((Date.now() - start) / 1000);
+      console.info(
+        `[acestep] attente ${aceStepModelLabel(id)}… ${elapsed}s` +
+          ` · active=${active || "?"} · state=${state || "?"}`,
+      );
+    } catch (e) {
+      lastErr = String(e?.message || e);
+      console.info("[acestep] poll modèle (Studio occupé):", lastErr.slice(0, 120));
+    }
+    await new Promise((r) => setTimeout(r, ACE_MODEL_READY_POLL_MS));
+  }
+  return { ok: false, message: lastErr || `timeout ${Math.round(budgetMs / 1000)}s attente modèle` };
+}
+
+function parseAceStepGpu(sys) {
+  if (!sys || typeof sys !== "object") {
+    return { name: null, totalGb: null, usedGb: null, freeGb: null };
+  }
+  const totalGb = Number(sys.vram_total);
+  const usedGb = Number(sys.vram_used);
+  return {
+    name: sys.gpu || null,
+    totalGb: Number.isFinite(totalGb) ? totalGb : null,
+    usedGb: Number.isFinite(usedGb) ? usedGb : null,
+    freeGb:
+      Number.isFinite(totalGb) && Number.isFinite(usedGb)
+        ? Math.round((totalGb - usedGb) * 10) / 10
+        : null,
+  };
+}
+
+/** Marge libre minimale pendant la diffusion (activations), hors poids du DiT déjà chargé. */
+export function aceStepVramHeadroomGb(modelId) {
+  const vram = aceStepModelMeta(modelId)?.vramGb || 12;
+  return Math.max(2.5, Math.round(vram * 0.2 * 10) / 10);
+}
+
+export async function readAceStepGpu(keys) {
+  const base = resolveAceStepBaseUrl(keys);
+  const sys = await aceFetch(base, "/api/generate/system-info").catch(() => null);
+  return parseAceStepGpu(sys);
+}
+
+/**
+ * Avant génération : lit la VRAM libre ; si trop serrée, tente de libérer
+ * (reset GPU Studio + unload SongGen ; re-init DiT seulement si critique).
+ * @param {{ modelId?: string, skipSwitch?: boolean }} [opts]
+ *   skipSwitch: true après un switch SFT — évite un 2e chargement de plusieurs minutes.
+ */
+export async function ensureAceStepVram(keys, { modelId, skipSwitch = false } = {}) {
+  const id = String(modelId || "").trim();
+  const needFree = aceStepVramHeadroomGb(id);
+  let gpu = await readAceStepGpu(keys);
+  const actions = [];
+
+  if (gpu.freeGb == null) {
+    console.info("[acestep] VRAM indisponible via system-info — skip préflight");
+    return { ok: true, skipped: true, gpu, needFree, actions };
+  }
+
+  console.info(
+    `[acestep] VRAM préflight · libre ${gpu.freeGb}/${gpu.totalGb} Go` +
+      (gpu.name ? ` · ${gpu.name}` : "") +
+      ` · marge cible ≥${needFree} Go` +
+      (id ? ` (${aceStepModelLabel(id)})` : ""),
+  );
+
+  if (gpu.freeGb >= needFree) {
+    return { ok: true, freed: false, gpu, needFree, actions };
+  }
+
+  console.warn(
+    `[acestep] VRAM serrée (${gpu.freeGb} Go libres < ${needFree}) — tentative libération…`,
+  );
+
+  const base = resolveAceStepBaseUrl(keys);
+
+  // 1) Annuler un job GPU coincé (si l’API Studio le propose)
+  try {
+    await withAuth(base, (token) =>
+      aceFetch(base, "/api/generate/reset", {
+        method: "POST",
+        token,
+        timeoutMs: 30000,
+      }),
+    );
+    actions.push("reset");
+    console.info("[acestep] reset GPU Studio OK");
+  } catch {
+    /* endpoint absent ou rien à reset */
+  }
+
+  // 2) Décharger SongGen s’il tient encore la carte (même machine)
+  try {
+    if (isStudioEnabled(keys, "songgen")) {
+      const { unloadSongGenModel } = await import("./songGeneration.js");
+      await unloadSongGenModel(keys);
+      actions.push("unload-songgen");
+      console.info("[acestep] SongGen unload OK (libération VRAM)");
+    }
+  } catch (e) {
+    console.warn("[acestep] unload SongGen ignoré:", e?.message || e);
+  }
+
+  // 3) Re-init DiT sans LM seulement si VRAM quasi nulle (sinon SFT = +5 min inutiles)
+  const criticallyLow = gpu.freeGb < 1.5;
+  if (!skipSwitch && criticallyLow) {
+    const target =
+      id || String((await testAceStep(keys).catch(() => ({})))?.activeModel || "").trim();
+    if (target) {
+      try {
+        await switchAceStepModel(keys, target, { initLm: false });
+        actions.push("unload-lm");
+        console.info("[acestep] switch-model sans LM OK ·", aceStepModelLabel(target));
+      } catch (e) {
+        console.warn("[acestep] libération LM ignorée:", e.message);
+      }
+    }
+  } else if (skipSwitch || !criticallyLow) {
+    console.info(
+      "[acestep] skip re-init DiT (évite rechargement long)" +
+        (skipSwitch ? " · après switch" : ` · libre ${gpu.freeGb} Go`),
+    );
+  }
+
+  await new Promise((r) => setTimeout(r, 800));
+  gpu = await readAceStepGpu(keys);
+
+  const stillTight = gpu.freeGb != null && gpu.freeGb < Math.min(needFree, 2.5);
+  if (stillTight) {
+    console.warn(
+      `[acestep] VRAM encore serrée après libération (${gpu.freeGb}/${gpu.totalGb} Go). ` +
+        `Ferme d’autres apps GPU ou relance ACE-Step en No LM.`,
+    );
+  } else if (gpu.freeGb != null) {
+    console.info(`[acestep] VRAM après libération · libre ${gpu.freeGb}/${gpu.totalGb} Go`);
+  }
+
+  return {
+    ok: !stillTight,
+    freed: actions.length > 0,
+    gpu,
+    needFree,
+    actions,
+    message: stillTight
+      ? `VRAM encore serrée (${gpu.freeGb}/${gpu.totalGb} Go libres). Relance ACE-Step en No LM ou ferme les apps GPU.`
+      : null,
+  };
+}
+
+const ACE_NAN_LATENTS_RE =
+  /NaN or Inf latents|produced NaN|nan=\d+/i;
+const ACE_VRAM_RE =
+  /out of memory|CUDA out of memory|cuDNN.*OOM|insufficient.*VRAM|ran out of memory/i;
+
+export function isAceNanLatentsError(err) {
+  return ACE_NAN_LATENTS_RE.test(String(err?.message || err || ""));
+}
+
+export function isAceVramError(err) {
+  const raw = String(err?.message || err || "");
+  if (ACE_NAN_LATENTS_RE.test(raw)) return false;
+  return ACE_VRAM_RE.test(raw);
+}
+
+/** Modèle de secours léger après NaN / OOM. */
+export const ACE_FALLBACK_LIGHT_MODEL = "marcorez8/acestep-v15-xl-turbo-bf16";
 
 const GRADIO_CACHE_ERROR_RE =
   /not uploaded by a user|check_in_upload_folder|InvalidPathError|gradio cache dir/i;
@@ -728,31 +1146,83 @@ export async function startAceStep(keys, {
   referenceAudioUrl,
   referenceAudioTitle,
   styleLock,
+  artist = null,
+  audioCoverStrength,
+  forceModelId = null,
 } = {}) {
   const base = resolveAceStepBaseUrl(keys);
-  const info = await testAceStep(keys);
-  if (info.pipelineUp === false) {
+  let info = await testAceStep(keys);
+  if (info.loading) {
+    const target = info.loadingModel || String(keys?.aceStepPreferredModel || "").trim();
+    console.info(
+      `[acestep] attente fin de chargement (${aceStepModelLabel(target || "DiT")})…`,
+    );
+    if (target) await waitForAceStepModel(keys, target);
+    info = await testAceStep(keys);
+  }
+  if (info.pipelineUp === false && !info.loading) {
     throw new Error(
       info.message ||
         `Moteur ACE-Step down (${base}). Pinokio : Stop puis Start (No LM si Sonozz).`,
     );
   }
   const catalog = { models: info.models, activeModel: info.activeModel };
+  const duo = Boolean(normalizeFeatArtist(artist?.featArtist)?.name);
   const pick = pickAceStepModel(catalog, {
     preferredId: String(keys?.aceStepPreferredModel || "").trim() || null,
+    duo,
+    forceModelId,
   });
   const active = String(catalog.activeModel || "").trim();
-  if (pick.modelId && active && pick.modelId !== active) {
+  const needSwitch = Boolean(pick.modelId && active && pick.modelId !== active);
+  if (needSwitch) {
     try {
       const probe = await testAceStep(keys);
       if (probe.pipelineUp === false) {
-        console.warn("[acestep] switch-model sauté — moteur Python down");
-      } else {
-        await switchAceStepModel(keys, pick.modelId);
+        throw new Error(
+          "Moteur ACE-Step down (Gradio). Pinokio : Stop → Start (No LM), charge ton modèle, réessaie.",
+        );
       }
+      console.info(
+        `[acestep] chargement ${aceStepModelLabel(pick.modelId)} (peut prendre plusieurs minutes)…`,
+      );
+      await switchAceStepModel(keys, pick.modelId);
     } catch (e) {
-      console.warn("[acestep] switch-model ignoré:", e.message);
+      // Timeout fréquent pendant load SFT : Studio mute mais continue côté GPU.
+      // On poll Ready puis on lance quand même (ditModel dans le body).
+      console.warn("[acestep] switch-model:", e.message);
+      if (/ne répond plus|ECONNREFUSED/i.test(e.message)) throw e;
+      if (
+        /Moteur ACE-Step down/i.test(e.message) &&
+        !/délai dépassé|injoignable/i.test(e.message)
+      ) {
+        throw e;
+      }
+      const waited = await waitForAceStepModel(keys, pick.modelId);
+      if (waited.ok) {
+        console.info(`[acestep] ${aceStepModelLabel(pick.modelId)} Ready après attente`);
+      } else {
+        console.warn(
+          `[acestep] ${aceStepModelLabel(pick.modelId)} pas confirmé Ready — ` +
+            `génération quand même (ditModel). (${String(waited.message || e.message).slice(0, 140)})`,
+        );
+      }
     }
+  }
+
+  // Préflight VRAM : pas de 2e switch DiT (évite un autre timeout SFT)
+  try {
+    const vram = await ensureAceStepVram(keys, {
+      modelId: pick.modelId,
+      skipSwitch: true,
+    });
+    if (vram.message) console.warn("[acestep]", vram.message);
+  } catch (e) {
+    console.warn("[acestep] préflight VRAM ignoré:", e?.message || e);
+  }
+
+  if (duo) {
+    console.info("[acestep] duo — modèle", pick.modelId, pick.reason);
   }
 
   let refUrl = String(referenceAudioUrl || "").trim();
@@ -780,8 +1250,11 @@ export async function startAceStep(keys, {
     preview,
     referenceAudioUrl: refUrl,
     referenceAudioTitle,
+    audioCoverStrength,
     studioBase: base,
     styleLock,
+    artist,
+    featArtist: artist?.featArtist,
   });
 
   console.info(
@@ -806,6 +1279,7 @@ export async function startAceStep(keys, {
   );
   const jobId = created?.jobId || created?.job_id;
   if (!jobId) throw new Error("ACE-Step n’a pas renvoyé de jobId");
+  const gpu = await readAceStepGpu(keys).catch(() => null);
   return {
     generationId: jobId,
     provider: "acestep-studio",
@@ -813,6 +1287,7 @@ export async function startAceStep(keys, {
     model: pick.modelId,
     quality: aceStepModelLabel(pick.modelId),
     pickReason: pick.reason,
+    gpu: gpu?.freeGb != null ? gpu : null,
     usedReference: Boolean(body.referenceAudioUrl),
     referenceAudioTitle: body.referenceAudioTitle || null,
   };
@@ -884,8 +1359,13 @@ export async function pollAceStep(keys, generationId) {
   }
   if (st === "failed" || st === "cancelled" || st === "canceled" || st === "error") {
     const raw = String(status?.error || status?.message || `Génération ACE-Step ${st}`);
-    if (/out of memory|CUDA|VRAM/i.test(raw)) {
-      throw new Error(`VRAM insuffisante — ${raw}`);
+    if (isAceNanLatentsError(raw)) {
+      throw new Error(
+        `ACE_NAN_LATENTS: Génération NaN (souvent XL SFT corrompu / offload foireux / VRAM saturée). Relance en Turbo BF16. Détail: ${raw.slice(0, 220)}`,
+      );
+    }
+    if (isAceVramError(raw)) {
+      throw new Error(`VRAM insuffisante — ${raw.slice(0, 280)}`);
     }
     if (isUnusableAceReferenceError(raw)) {
       throw new Error(
@@ -895,12 +1375,16 @@ export async function pollAceStep(keys, generationId) {
     throw new Error(raw);
   }
   const eta = Number(status?.etaSeconds);
+  const gpu = await readAceStepGpu(keys).catch(() => null);
+  const stage = status?.stage || null;
+  const rawMsg = status?.stage || status?.message || "";
   return {
     done: false,
     status: st || "processing",
     progress: status?.progress,
-    message: status?.stage || status?.message || "",
-    stage: status?.stage || null,
+    message: rawMsg,
+    stage,
+    gpu: gpu?.freeGb != null ? gpu : null,
     elapsedSeconds: 0,
     estimatedSeconds: Number.isFinite(eta) ? eta : 0,
     generationId: jobId,
@@ -925,13 +1409,29 @@ export async function cancelAceStep(keys, generationId) {
 }
 
 export async function generateMusicWithAceStep(keys, opts = {}) {
-  const run = () => generateMusicWithAceStepOnce(keys, opts);
+  const run = (extra = {}) => generateMusicWithAceStepOnce(keys, { ...opts, ...extra });
   try {
     return await run();
   } catch (e) {
     if (isUnusableAceReferenceError(e) && opts.referenceAudioUrl) {
       console.warn("[acestep] réf. rejetée — retry sans cover");
-      return generateMusicWithAceStepOnce(keys, { ...opts, referenceAudioUrl: "" });
+      return run({ referenceAudioUrl: "" });
+    }
+    if (
+      (isAceNanLatentsError(e) || isAceVramError(e)) &&
+      !opts.forceModelId &&
+      opts.forceModelId !== ACE_FALLBACK_LIGHT_MODEL
+    ) {
+      console.warn("[acestep] NaN/VRAM — retry Turbo BF16:", e.message);
+      try {
+        await switchAceStepModel(keys, ACE_FALLBACK_LIGHT_MODEL);
+      } catch (sw) {
+        console.warn("[acestep] switch Turbo BF16:", sw.message);
+      }
+      return run({
+        forceModelId: ACE_FALLBACK_LIGHT_MODEL,
+        referenceAudioUrl: "",
+      });
     }
     throw e;
   }

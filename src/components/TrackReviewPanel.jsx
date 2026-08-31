@@ -18,6 +18,7 @@ export default function TrackReviewPanel({
   currentGenre = "",
   currentReferences = [],
   currentReferenceTrack = "",
+  leadArtist = null,
 }) {
   const [ratings, setRatings] = useState({});
   const [playerStats, setPlayerStats] = useState({});
@@ -281,6 +282,7 @@ export default function TrackReviewPanel({
         currentGenre={currentGenre}
         currentReferences={currentReferences}
         currentReferenceTrack={currentReferenceTrack}
+        leadArtist={leadArtist}
       />
     </div>
   );

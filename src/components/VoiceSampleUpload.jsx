@@ -103,12 +103,32 @@ export default function VoiceSampleUpload({
         normalized.fileName,
         normalized.durationSec,
       );
+      let enriched = sample;
+      try {
+        const keys = loadKeys();
+        const res = await fetch("/api/artists", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            keys,
+            action: "analyze-voice-sample",
+            name: projectId,
+            voiceSample: sample,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.voiceSample) {
+          enriched = { ...sample, ...data.voiceSample };
+        }
+      } catch {
+        /* analyse optionnelle — l’upload reste valide */
+      }
       if (localPreview && localPreview.startsWith("blob:")) {
         URL.revokeObjectURL(localPreview);
       }
       const preview = URL.createObjectURL(normalized.blob);
       setLocalPreview(preview);
-      emitSample(sample);
+      emitSample(enriched);
     } catch (e) {
       setError(e.message || "Import vocal impossible");
     } finally {
@@ -204,11 +224,11 @@ export default function VoiceSampleUpload({
       <div class="space-y-1">
         <span class="label-text mb-1 flex items-center gap-2 text-sm text-base-content/60">
           <Mic2 size={14} class="text-accent" />
-          Ta voix (optionnel)
+          Extrait vocal (optionnel)
         </span>
         <p class="text-xs text-base-content/45">
-          ~5–10 s de toi qui chantes — sert d’indice de timbre seulement. Le morceau est toujours
-          généré en mix complet (voix + instruments).
+          Pas obligatoire — l’IA fige déjà un timbre à la création. Un extrait (~5–10 s) affine
+          seulement le grain si tu veux.
         </p>
       </div>
 
@@ -216,6 +236,13 @@ export default function VoiceSampleUpload({
         <div class="flex flex-col gap-2 rounded-lg border border-base-content/10 bg-base-200/40 p-3">
           <div class="flex flex-wrap items-center gap-2 text-sm">
             <span class="text-success">Extrait prêt</span>
+            {value?.songGenTimbre || value?.analyzedTimbre ? (
+              <span class="text-xs text-primary">
+                · timbre « {value.songGenTimbre || value.analyzedTimbre} »
+              </span>
+            ) : (
+              <span class="text-xs text-base-content/45">· analyse en cours ou à relancer</span>
+            )}
             <span class="text-base-content/45">
               {value?.fileName || "voice-sample.wav"}
               {value?.durationSec ? ` · ~${Math.round(value.durationSec)}s` : ""}

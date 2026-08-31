@@ -11,6 +11,7 @@ import {
   looksLikeAudioBuffer,
   lyricsForAceStepPreview,
   pickAceStepModel,
+  aceStepVramHeadroomGb,
   resolveAceAudioUrl,
   resolveAceStepBaseUrl,
   resolveAceStepGradioUrl,
@@ -62,6 +63,27 @@ describe("ACE-Step Studio client", () => {
     assert.equal(
       pickAceStepModel({ models }, {}).modelId,
       "marcorez8/acestep-v15-xl-turbo-bf16",
+    );
+  });
+
+  it("calibre la marge VRAM selon le DiT", () => {
+    assert.equal(aceStepVramHeadroomGb("marcorez8/acestep-v15-xl-turbo-bf16"), 2.5);
+    assert.equal(aceStepVramHeadroomGb("acestep-v15-xl-sft"), 4);
+    assert.equal(aceStepVramHeadroomGb("acestep-v15-xl-turbo-bf16"), 2.5);
+  });
+
+  it("ignore Merge (fantôme UI) et liste les DiT Gradio", async () => {
+    const { isAceStepEngineDit, pickAceStepModel: pick } = await import("../src/server/aceStep.js");
+    assert.equal(isAceStepEngineDit("acestep-v15-xl-sft"), true);
+    assert.equal(isAceStepEngineDit("acestep-v15-xl-merge-sft-turbo"), false);
+    const models = [
+      { id: "acestep-v15-xl-merge-sft-turbo", isPreloaded: true, engineKnown: false },
+      { id: "acestep-v15-xl-turbo-bf16", isPreloaded: true, engineKnown: true },
+      { id: "acestep-v15-xl-sft", isPreloaded: true, engineKnown: true },
+    ];
+    assert.equal(
+      pick({ models }, { preferredId: "acestep-v15-xl-merge-sft-turbo" }).modelId,
+      "acestep-v15-xl-turbo-bf16",
     );
   });
 
@@ -244,6 +266,33 @@ describe("ACE-Step Studio client", () => {
     });
     assert.equal(python.unreachable, false);
     assert.equal(python.pipelineUp, false);
+    assert.equal(python.loading, false);
+
+    const loading = interpretAceProbe({
+      health: { healthy: false },
+      status: {
+        state: "loading",
+        model: "acestep-v15-xl-sft",
+        connected: false,
+        activeModel: "acestep-v15-xl-turbo-bf16",
+      },
+    });
+    assert.equal(loading.loading, true);
+    assert.equal(loading.unreachable, false);
+    assert.match(loading.message, /Chargement XL SFT/i);
+    assert.doesNotMatch(loading.message, /Stop puis Start/i);
+
+    const readyStale = interpretAceProbe({
+      health: { healthy: false },
+      status: {
+        state: "ready",
+        connected: false,
+        activeModel: "acestep-v15-xl-turbo-bf16",
+      },
+    });
+    assert.equal(readyStale.pipelineUp, true);
+    assert.equal(readyStale.loading, false);
+    assert.equal(readyStale.message, null);
   });
 
   it("toggle active/désactive un studio et bascule le moteur actif", () => {

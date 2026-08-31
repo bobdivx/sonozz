@@ -135,6 +135,7 @@ export async function runAlbumJob({
           artist: working.artist || project.artist,
           album: working.album,
           leadTrack: working.track || project.track,
+          featArtist: working.featArtist || project.featArtist || null,
         }),
       );
       if (abortState.aborted) return;
@@ -414,6 +415,7 @@ export async function runAlbumJob({
             artist: {
               ...project.artist,
               musicArrange: project.musicArrange,
+              featArtist: project.featArtist || null,
             },
           },
           (p) => {

@@ -5,7 +5,7 @@ function shortName(model) {
 }
 
 /**
- * Liste / hot-swap des DiT ACE-Step Studio.
+ * Liste / hot-swap des DiT Gradio ACE-Step (fantômes UI Pinokio exclus).
  */
 export default function AceStepModelsPanel({
   models = [],
@@ -17,10 +17,14 @@ export default function AceStepModelsPanel({
   error = "",
   onUse,
 }) {
-  if (!models.length) {
+  const usable = models.filter(
+    (m) => m?.engineKnown !== false && m?.switchable !== false && m?.status !== "unsupported",
+  );
+
+  if (!usable.length) {
     return (
       <p class="text-xs text-base-content/50">
-        Catalogue modèles indisponible — Retester la connexion ACE-Step.
+        Aucun DiT Gradio listé — Retester la connexion ACE-Step.
       </p>
     );
   }
@@ -43,14 +47,28 @@ export default function AceStepModelsPanel({
           )}
           {freeGb != null && totalGb != null && (
             <span class="ml-2 opacity-80">
-              · VRAM {freeGb}/{totalGb} Go
+              · VRAM {Math.round((totalGb - freeGb) * 10) / 10}/{totalGb} Go utilisés
+              <span class="opacity-70"> ({freeGb} libres)</span>
             </span>
           )}
         </p>
       </div>
 
+      {freeGb != null && totalGb != null ? (
+        <div class="h-1.5 overflow-hidden rounded-full bg-base-300" title="VRAM GPU">
+          <div
+            class={`h-full transition-[width] ${
+              freeGb < 2.5 ? "bg-warning" : "bg-primary/80"
+            }`}
+            style={{
+              width: `${Math.max(4, Math.min(100, ((totalGb - freeGb) / totalGb) * 100))}%`,
+            }}
+          />
+        </div>
+      ) : null}
+
       <ul class="divide-y divide-base-content/10 rounded border border-base-content/10">
-        {models.map((m) => {
+        {usable.map((m) => {
           const active = m.id === activeModelId || m.isActive;
           const preferred = m.id === preferredModelId;
           const ready = m.isPreloaded || m.isActive || m.status === "ready";

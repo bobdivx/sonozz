@@ -182,9 +182,15 @@ export async function resolveReferenceImage(imageUrl) {
   return null;
 }
 
-async function tryGeminiImageModel(apiKey, model, fullPrompt, modalities, referenceImage = null) {
+async function tryGeminiImageModel(apiKey, model, fullPrompt, modalities, referenceImages = null) {
   const parts = [];
-  if (referenceImage?.data) {
+  const refs = Array.isArray(referenceImages)
+    ? referenceImages
+    : referenceImages?.data
+      ? [referenceImages]
+      : [];
+  for (const referenceImage of refs) {
+    if (!referenceImage?.data) continue;
     parts.push({
       inlineData: {
         mimeType: referenceImage.mimeType || "image/png",
@@ -287,19 +293,29 @@ function imageQuotaHint(errors) {
   return "Vérifie le billing Gemini Image / Imagen sur le projet de ta clé API.";
 }
 
-export async function geminiImage(apiKey, prompt, { kind = "image", referenceImageUrl } = {}) {
-  let referenceImage = null;
-  if (referenceImageUrl) {
-    referenceImage = await resolveReferenceImage(referenceImageUrl);
-    if (!referenceImage && kind === "cover") {
-      throw new Error(
-        "Portrait artiste invalide pour la jaquette (SVG ou format non supporté). Régénère le profil avec une vraie photo (Flux/Gemini).",
-      );
-    }
+export async function geminiImage(apiKey, prompt, { kind = "image", referenceImageUrl, referenceImageUrls } = {}) {
+  const urlList = (
+    Array.isArray(referenceImageUrls) && referenceImageUrls.length
+      ? referenceImageUrls
+      : referenceImageUrl
+        ? [referenceImageUrl]
+        : []
+  ).filter(Boolean);
+
+  const referenceImages = [];
+  for (const url of urlList) {
+    const resolved = await resolveReferenceImage(url);
+    if (resolved) referenceImages.push(resolved);
+  }
+  if (!referenceImages.length && kind === "cover" && urlList.length) {
+    throw new Error(
+      "Portrait artiste invalide pour la jaquette (SVG ou format non supporté). Régénère le profil avec une vraie photo (Flux/Gemini).",
+    );
   }
 
+  const multi = referenceImages.length > 1;
   const lead =
-    kind === "portrait" && referenceImage
+    kind === "portrait" && referenceImages.length
       ? [
           "Using the provided photo as the ONLY identity reference,",
           "restyle the SAME person (keep face, age, hair, skin tone, identity).",
@@ -309,7 +325,16 @@ export async function geminiImage(apiKey, prompt, { kind = "image", referenceIma
         ].join(" ")
       : kind === "portrait"
       ? "Generate a realistic photographic portrait of a music artist (square, no text, no watermark, no logo):"
-      : kind === "cover" && referenceImage
+      : kind === "cover" && multi
+        ? [
+            "Using the provided reference portraits in order:",
+            "image 1 = LEAD artist, image 2 = FEATURED artist.",
+            "Create a square album cover (1:1) showing BOTH people clearly recognizable",
+            "(face, age, hair, skin tone, gender) as a featuring / duet artwork.",
+            "Do not merge faces or invent other people. Cinematic album artwork, not a plain crop.",
+            "No watermark, no logo, minimal or no typography:",
+          ].join(" ")
+      : kind === "cover" && referenceImages.length
         ? [
             "Using the provided artist portrait as the ONLY facial/identity reference,",
             "create a square album cover (1:1).",
@@ -331,7 +356,7 @@ export async function geminiImage(apiKey, prompt, { kind = "image", referenceIma
       ["IMAGE"],
     ]) {
       try {
-        return await tryGeminiImageModel(apiKey, model, fullPrompt, modalities, referenceImage);
+        return await tryGeminiImageModel(apiKey, model, fullPrompt, modalities, referenceImages);
       } catch (e) {
         const msg = String(e.message || e);
         if (/not found|not supported|not available/i.test(msg)) {
@@ -351,7 +376,7 @@ export async function geminiImage(apiKey, prompt, { kind = "image", referenceIma
   }
 
   // Imagen ne prend pas de référence image — skip si jaquette basée portrait
-  if (!referenceImage) {
+  if (!referenceImages.length) {
     try {
       return await tryImagen(apiKey, fullPrompt);
     } catch (e) {

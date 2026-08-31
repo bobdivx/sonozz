@@ -14,8 +14,11 @@ export function slugify(input = "") {
     .slice(0, 64) || `artiste-${Date.now().toString(36)}`;
 }
 
+let artistSchemaReady = false;
+
 async function ensureArtistSchema() {
   await ensureSchema();
+  if (artistSchemaReady) return;
   const db = getDb();
 
   await db.execute(`
@@ -46,6 +49,8 @@ async function ensureArtistSchema() {
   } catch {
     /* ok */
   }
+
+  artistSchemaReady = true;
 }
 
 function stripHeavyProfile(artist = {}) {
@@ -341,12 +346,14 @@ export async function getArtistBySlug(slug) {
   };
 }
 
-export async function listArtistReleases(slug, limit = 40) {
+export async function listArtistReleases(slug, limit = 40, opts = {}) {
   await ensureArtistSchema();
   const db = getDb();
 
-  const artist = await getArtistBySlug(slug);
-  const name = artist?.name || slug;
+  const name =
+    opts.artistName ||
+    (await getArtistBySlug(slug))?.name ||
+    slug;
 
   // Ne jamais SELECT project_json entier (peut peser des dizaines de Mo : clip base64).
   // json_extract côté Turso ne renvoie que les champs utiles.
@@ -678,10 +685,10 @@ async function enrichStatsFromOnce(stats, releases, onceToken, { keys } = {}) {
   return stats;
 }
 
-export async function computeArtistStats(slug, { onceToken, keys } = {}) {
+export async function computeArtistStats(slug, { onceToken, keys, syncOnce = true } = {}) {
   const artist = await getArtistBySlug(slug);
   const prev = artist?.stats || {};
-  const releases = await listArtistReleases(slug, 100);
+  const releases = await listArtistReleases(slug, 100, { artistName: artist?.name });
   const storedKeys = keys && typeof keys === "object" ? keys : (await getUserKeys()) || {};
   const token = String(onceToken || storedKeys.onceApiToken || "").trim();
   const stats = {
@@ -710,12 +717,14 @@ export async function computeArtistStats(slug, { onceToken, keys } = {}) {
     updatedAt: new Date().toISOString(),
   };
 
-  // Sans token : ne pas écraser le dernier sync ONCE (streams / delivery)
-  if (!token) {
+  // Sans token / syncOnce=false : ne pas écraser le dernier sync ONCE (streams / delivery)
+  if (!syncOnce || !token) {
     if (prev.streams) stats.streams = prev.streams;
     if (prev.delivery) stats.delivery = prev.delivery;
     if (prev.releaseStreams) stats.releaseStreams = prev.releaseStreams;
     if (prev.liveOnSpotify != null) stats.liveOnSpotify = prev.liveOnSpotify;
+    if (prev.career) stats.career = prev.career;
+    if (prev.unisonReady != null) stats.unisonReady = prev.unisonReady;
   } else {
     try {
       await enrichStatsFromOnce(stats, releases, token, { keys: storedKeys });
@@ -725,6 +734,7 @@ export async function computeArtistStats(slug, { onceToken, keys } = {}) {
       // garder l’ancien delivery si le sync partiel échoue tôt
       if (prev.delivery) stats.delivery = prev.delivery;
       if (prev.releaseStreams) stats.releaseStreams = prev.releaseStreams;
+      if (prev.career) stats.career = prev.career;
     }
   }
 
@@ -740,32 +750,34 @@ export async function computeArtistStats(slug, { onceToken, keys } = {}) {
 export async function getArtistHub(slug) {
   const artist = await getArtistBySlug(slug);
   if (!artist) return null;
-  const releases = await listArtistReleases(slug);
+  const releases = await listArtistReleases(slug, 40, { artistName: artist.name });
 
   const cachedAt = artist.stats?.updatedAt ? Date.parse(artist.stats.updatedAt) : 0;
   const fresh = cachedAt && Date.now() - cachedAt < 10 * 60 * 1000;
-  const storedKeys = (await getUserKeys()) || {};
-  const onceToken = String(storedKeys.onceApiToken || "").trim();
-  const missingOnce = Boolean(onceToken) && needsOnceEnrich(artist.stats, releases);
-  const stats =
-    fresh && !missingOnce
-      ? {
-          ...artist.stats,
-          tracks: releases.length,
-          withAudio: releases.filter((r) => r.hasAudio).length,
-          withCover: releases.filter((r) => r.hasCover).length,
-        }
-      : await computeArtistStats(slug, { keys: storedKeys, onceToken });
+
+  // GET hub : jamais de sync ONCE réseau (bloque 2–20 s). Stats locales / cache seulement.
+  const stats = fresh
+    ? {
+        ...artist.stats,
+        tracks: releases.length,
+        withAudio: releases.filter((r) => r.hasAudio).length,
+        withCover: releases.filter((r) => r.hasCover).length,
+      }
+    : await computeArtistStats(slug, { syncOnce: false });
 
   const { listAlbumsByArtist } = await import("./db.js");
   const albums = await listAlbumsByArtist(slug);
+  const storedKeys = (await getUserKeys()) || {};
+  const onceToken = String(storedKeys.onceApiToken || "").trim();
+  const statsNeedSync = Boolean(onceToken) && needsOnceEnrich(stats, releases);
 
   return {
     ...artist,
     stats,
     releases,
     albums,
-    career: artist.stats?.career || null,
+    career: stats?.career || artist.stats?.career || null,
+    statsNeedSync,
   };
 }
 
@@ -1002,7 +1014,7 @@ export async function hydrateProjectArtistGender(saved) {
  * Nouveau projet / morceau pour un artiste existant (garde le profil).
  * Réutilise gender, timbre (voice / voiceSample), styleLock, genres du hub + meilleurs projets.
  */
-export async function createArtistRelease(slug, { theme = "", variantOf = null, genreOverride = null, referencesOverride = null, referenceTrackOverride = null } = {}) {
+export async function createArtistRelease(slug, { theme = "", variantOf = null, genreOverride = null, referencesOverride = null, referenceTrackOverride = null, featArtist = null } = {}) {
   const artist = await getArtistBySlug(slug);
   if (!artist) throw new Error("Artiste introuvable");
 
@@ -1051,9 +1063,13 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null, 
 
   const language = profile.language || artist.profile?.language || "fr";
 
+  const { normalizeFeatArtist } = await import("../lib/featArtist.js");
+  const feat = normalizeFeatArtist(featArtist);
+
   const project = {
     trends: null,
     artist: profile,
+    featArtist: feat,
     // Préremplit l’étape paroles quand un thème vient de l’agent carrière
     lyrics: themeHint
       ? { theme: themeHint, language }

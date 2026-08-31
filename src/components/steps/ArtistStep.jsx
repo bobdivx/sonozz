@@ -689,21 +689,6 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
           <>
             <PhotoUpload photos={photos} disabled={loading} onPhotosChange={applyPhotos} max={4} />
 
-            <VoiceSampleUpload
-              value={voiceSample}
-              disabled={loading}
-              projectId={name.trim() || artist?.slug || "voice"}
-              onChange={(sample) => {
-                setVoiceSample(sample);
-                skipHydrateRef.current = true;
-                if (sample?.url || sample?.s3Key) {
-                  onPatchArtist?.({ voiceSample: sample });
-                } else {
-                  onPatchArtist?.({ voiceSample: null });
-                }
-              }}
-            />
-
             <div class="grid gap-4 sm:grid-cols-2">
               <label class="form-control w-full">
                 <span class="label-text mb-1 text-sm text-base-content/60">Âge</span>
@@ -732,6 +717,67 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
             </div>
           </>
         )}
+
+        <VoiceSampleUpload
+          value={voiceSample}
+          disabled={loading}
+          projectId={name.trim() || artist?.slug || "voice"}
+          onChange={(sample) => {
+            setVoiceSample(sample);
+            skipHydrateRef.current = true;
+            if (sample?.url || sample?.s3Key) {
+              onPatchArtist?.({ voiceSample: sample });
+            } else {
+              onPatchArtist?.({ voiceSample: null });
+            }
+          }}
+        />
+        {(voiceSample?.songGenTimbre ||
+          voiceSample?.analyzedTimbre ||
+          artist?.styleLock?.timbre) && (
+          <p class="text-xs text-success">
+            Timbre figé :{" "}
+            {voiceSample?.songGenTimbre ||
+              voiceSample?.analyzedTimbre ||
+              artist?.styleLock?.timbre}
+          </p>
+        )}
+        {artist?.slug &&
+          !(voiceSample?.songGenTimbre || voiceSample?.analyzedTimbre || artist?.styleLock?.timbre) && (
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              disabled={loading}
+              onClick={async () => {
+                try {
+                  setPickError("");
+                  const res = await api.ensureArtistTimbre(artist.slug, {
+                    force: true,
+                    profile: { ...artist, voiceSample, name, gender },
+                  });
+                  if (res?.ok && res.artist) {
+                    const vs = res.artist.voiceSample || voiceSample;
+                    setVoiceSample(vs);
+                    onPatchArtist?.({
+                      voiceSample: vs,
+                      voice: res.artist.voice,
+                      styleLock: res.artist.styleLock,
+                    });
+                  } else {
+                    setPickError(
+                      res?.reason === "no-audio"
+                        ? "Pas encore d’audio à analyser — génère un morceau ou ajoute un extrait vocal."
+                        : res?.reason || "Analyse timbre impossible",
+                    );
+                  }
+                } catch (e) {
+                  setPickError(e.message || "Analyse timbre impossible");
+                }
+              }}
+            >
+              Extraire le timbre depuis un morceau existant
+            </button>
+          )}
 
         <fieldset class="space-y-2">
           <legend class="mb-1 text-sm text-base-content/60">Sexe / présentation</legend>

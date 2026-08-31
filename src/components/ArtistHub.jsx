@@ -20,12 +20,19 @@ import {
 import AppShell from "./AppShell.jsx";
 import ArtistAlbumSection from "./ArtistAlbumSection.jsx";
 import AlbumCreationModal from "./AlbumCreationModal.jsx";
+import ConfirmModal from "./ConfirmModal.jsx";
 import TrackCreationModal from "./TrackCreationModal.jsx";
 import TrackReviewPanel from "./TrackReviewPanel.jsx";
 import { api } from "../lib/apiClient.js";
 import { loadKeys } from "../lib/keys.js";
 import { listArtistImageUrl } from "../lib/artistPhotos.js";
-import { confirmDeleteProject, languageLabel, studioHref, artistEditHref, uniqueGenreLabels } from "../lib/studio.js";
+import {
+  isOncePublished,
+  languageLabel,
+  studioHref,
+  artistEditHref,
+  uniqueGenreLabels,
+} from "../lib/studio.js";
 import { organizeArtistReleases } from "../lib/albumTracks.js";
 import { playTracks } from "../lib/playEngine.js";
 import {
@@ -286,6 +293,7 @@ export default function ArtistHub({ slug }) {
   const [refreshStatsBusy, setRefreshStatsBusy] = useState(false);
   const [createTrackBusy, setCreateTrackBusy] = useState(false);
   const [deleteReleaseBusy, setDeleteReleaseBusy] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
   const [regenerateTrackBusy, setRegenerateTrackBusy] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -342,10 +350,40 @@ export default function ArtistHub({ slug }) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Artiste introuvable");
       setData(json.artist);
+      // Sync ONCE en arrière-plan (ne bloque plus le premier rendu)
+      if (json.artist?.statsNeedSync) {
+        void softSyncOnce();
+      }
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  /** Enrichissement ONCE sans conseil carrière (léger, post-paint). */
+  async function softSyncOnce() {
+    try {
+      const keys = loadKeys();
+      const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "refresh-stats", keys, advise: false }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              stats: json.stats,
+              statsNeedSync: false,
+              career: json.career || prev.career,
+            }
+          : prev,
+      );
+    } catch {
+      /* non bloquant */
     }
   }
 
@@ -419,6 +457,7 @@ export default function ArtistHub({ slug }) {
           genreOverride: options.genre,
           referencesOverride: options.references,
           referenceTrackOverride: options.referenceTrack,
+          featArtist: options.featArtist || null,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -540,19 +579,15 @@ export default function ArtistHub({ slug }) {
     }
   }
 
+  function requestDeleteRelease(release) {
+    if (!release?.id || deleteReleaseBusy) return;
+    setPendingDelete(release);
+  }
+
   async function deleteRelease(release) {
-    const label = release?.trackTitle || release?.title || release?.id || "ce morceau";
-    if (
-      !confirmDeleteProject(label, {
-        status: release?.onceStatus,
-        onceStatus: release?.onceStatus,
-        provider: release?.distributed ? "once" : undefined,
-        releaseId: release?.releaseId,
-        distributed: Boolean(release?.distributed),
-      })
-    ) {
-      return;
-    }
+    if (!release?.id) return;
+    const label = release.trackTitle || release.title || release.id || "ce morceau";
+    setPendingDelete(null);
     setDeleteReleaseBusy(true);
     setError("");
     setMsg("");
@@ -583,6 +618,34 @@ export default function ArtistHub({ slug }) {
     }
   }
 
+  function deleteConfirmCopy(release) {
+    const label = release?.trackTitle || release?.title || release?.id || "ce morceau";
+    const onceMeta = {
+      status: release?.onceStatus,
+      onceStatus: release?.onceStatus,
+      provider: release?.distributed ? "once" : undefined,
+      releaseId: release?.releaseId,
+      distributed: Boolean(release?.distributed),
+    };
+    if (isOncePublished(onceMeta)) {
+      const releaseId = String(onceMeta.releaseId || "").trim();
+      return {
+        title: `Supprimer « ${label} » ?`,
+        message:
+          `Attention — ce morceau a déjà été publié / soumis sur ONCE` +
+          (releaseId ? ` (release ${releaseId})` : "") +
+          `.\n\n` +
+          `Supprimer ici n’annule PAS la release ONCE ni les stores (Spotify, etc.).\n` +
+          `Tu devras la gérer séparément dans le dashboard ONCE.\n\n` +
+          `Confirmer la suppression définitive du projet SONOZZ ?`,
+      };
+    }
+    return {
+      title: `Supprimer « ${label} » ?`,
+      message: `Supprimer définitivement « ${label} » ?\n\nLe projet (audio, paroles, album) sera effacé.`,
+    };
+  }
+
   async function regenerateTrack(track, options = {}) {
     setRegenerateTrackBusy(true);
     setError("");
@@ -597,6 +660,7 @@ export default function ArtistHub({ slug }) {
           genreOverride: options.genre,
           referencesOverride: options.references,
           referenceTrackOverride: options.referenceTrack,
+          featArtist: options.featArtist === undefined ? undefined : options.featArtist,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -664,6 +728,7 @@ export default function ArtistHub({ slug }) {
   const nowPlaying = currentPlayTrack(playSession);
   const nowPlayingId = nowPlaying?.id || null;
   const playing = Boolean(playSession.playing);
+  const deleteCopy = deleteConfirmCopy(pendingDelete);
   const unisonHref =
     career?.releaseFocus?.dashboardUrl ||
     career?.actions?.find((a) => a.href)?.href ||
@@ -1035,7 +1100,7 @@ export default function ArtistHub({ slug }) {
                                               streams={rStreams}
                                               phase={releasePhase(r, delivery)}
                                               busy={deleteReleaseBusy}
-                                              onDelete={deleteRelease}
+                                              onDelete={requestDeleteRelease}
                                               index={r.albumIndex || i + 1}
                                               queue={toPlayTracks(album.tracks, playMeta)}
                                               playMeta={playMeta}
@@ -1084,7 +1149,7 @@ export default function ArtistHub({ slug }) {
                                   streams={rStreams}
                                   phase={releasePhase(r, delivery)}
                                   busy={deleteReleaseBusy}
-                                  onDelete={deleteRelease}
+                                  onDelete={requestDeleteRelease}
                                   queue={toPlayTracks(singles, playMeta)}
                                   playMeta={playMeta}
                                   nowPlayingId={nowPlayingId}
@@ -1184,6 +1249,14 @@ export default function ArtistHub({ slug }) {
                   currentGenre={style.genres[0] || profile.genre || ""}
                   currentReferences={style.refs || []}
                   currentReferenceTrack={style.topTracks?.[0] || style.lock?.topTracks?.[0] || ""}
+                  leadArtist={{
+                    slug,
+                    name: profile.name || data?.name || slug,
+                    gender: profile.gender,
+                    genre: profile.genre || style.genres?.[0],
+                    voice: profile.voice,
+                    ...(profile.visualIdentity ? { visualIdentity: profile.visualIdentity } : {}),
+                  }}
                 />
               </section>
             )}
@@ -1642,6 +1715,27 @@ export default function ArtistHub({ slug }) {
         currentGenre={style.genres[0] || profile.genre || ""}
         currentReferences={style.refs || []}
         currentReferenceTrack={style.topTracks?.[0] || style.lock?.topTracks?.[0] || ""}
+        leadArtist={{
+          slug,
+          name: profile.name || data?.name || slug,
+          gender: profile.gender,
+          genre: profile.genre || style.genres?.[0],
+          voice: profile.voice,
+          ...(profile.visualIdentity ? { visualIdentity: profile.visualIdentity } : {}),
+        }}
+      />
+
+      <ConfirmModal
+        open={Boolean(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) void deleteRelease(pendingDelete);
+        }}
+        title={deleteCopy.title}
+        message={deleteCopy.message}
+        confirmText="Oui, supprimer"
+        cancelText="Annuler"
+        confirmClass="btn-error"
       />
     </AppShell>
   );

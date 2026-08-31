@@ -15,27 +15,55 @@ export async function generateVisual({
   prompt,
   kind = "image",
   referenceImageUrl,
+  referenceImageUrls,
 } = {}) {
   const geminiKey = keys?.geminiApiKey?.trim();
   const replicateToken = keys?.replicateApiToken?.trim();
   const errors = [];
 
-  let refUrl = referenceImageUrl;
-  const usesRef = Boolean(refUrl) && (kind === "cover" || kind === "portrait");
-  if (kind === "cover" && !isUsableRasterImage(refUrl)) {
+  const refList = (
+    Array.isArray(referenceImageUrls) && referenceImageUrls.length
+      ? referenceImageUrls
+      : referenceImageUrl
+        ? [referenceImageUrl]
+        : []
+  )
+    .map((u) => (typeof u === "string" ? u.trim() : ""))
+    .filter(Boolean);
+
+  let refs = [...refList];
+  const usesRef = refs.length > 0 && (kind === "cover" || kind === "portrait");
+  if (kind === "cover" && !isUsableRasterImage(refs[0])) {
     throw new Error(
       "Jaquette impossible sans portrait photo. Ouvre Modifier le profil (Gemini Image ou Replicate).",
     );
   }
-  if (usesRef && isEphemeralImageUrl(refUrl)) {
-    try {
-      refUrl = await materializeImageForStorage(refUrl);
-    } catch {
+  if (usesRef) {
+    const next = [];
+    for (const url of refs) {
+      if (!isUsableRasterImage(url)) continue;
+      if (isEphemeralImageUrl(url)) {
+        try {
+          next.push(await materializeImageForStorage(url));
+        } catch {
+          throw new Error(
+            "Portrait Replicate expiré — ouvre Modifier le profil, puis relance la jaquette.",
+          );
+        }
+      } else {
+        next.push(url);
+      }
+    }
+    refs = next;
+    if (kind === "cover" && !refs.length) {
       throw new Error(
-        "Portrait Replicate expiré — ouvre Modifier le profil, puis relance la jaquette.",
+        "Jaquette impossible sans portrait photo. Ouvre Modifier le profil (Gemini Image ou Replicate).",
       );
     }
   }
+
+  const primaryRef = refs[0];
+  const multiRef = refs.length > 1;
 
   async function finish(imageUrl, provider, extra = {}) {
     // Toujours matérialiser en data URL — les URL replicate.delivery expirent (~1 h)
@@ -49,20 +77,20 @@ export async function generateVisual({
       imageUrl: persisted,
       fallback: false,
       provider,
-      basedOnArtist: Boolean(refUrl),
+      basedOnArtist: Boolean(primaryRef),
       ...extra,
     };
   }
 
-  // Portrait : Replicate d’abord (Gemini Image souvent quota 0)
-  const tryReplicateFirst = kind === "portrait" || kind === "cover";
+  // Duo (2 refs) : Gemini d’abord (multi-image). Sinon Replicate Kontext (1 ref).
+  const tryReplicateFirst = (kind === "portrait" || kind === "cover") && !multiRef;
 
   if (tryReplicateFirst && replicateToken) {
     try {
       const url = await generateImageWithReplicate(replicateToken, {
         prompt,
         kind,
-        referenceImageUrl: usesRef ? refUrl : undefined,
+        referenceImageUrl: usesRef ? primaryRef : undefined,
       });
       return await finish(
         url,
@@ -77,11 +105,12 @@ export async function generateVisual({
     try {
       const raw = await geminiImage(geminiKey, prompt, {
         kind,
-        referenceImageUrl: usesRef ? refUrl : undefined,
+        referenceImageUrl: usesRef ? primaryRef : undefined,
+        referenceImageUrls: usesRef ? refs : undefined,
       });
       const image = normalizeGeminiImage(raw);
       if (image.imageUrl && !image.fallback && isUsableRasterImage(image.imageUrl)) {
-        return await finish(image.imageUrl, "gemini");
+        return await finish(image.imageUrl, multiRef ? "gemini-duo" : "gemini");
       }
       if (image.warning) errors.push(image.warning);
       else if (image.fallback) errors.push("Gemini Image a renvoyé un SVG (quota image à 0 ?)");
@@ -90,13 +119,13 @@ export async function generateVisual({
     }
   }
 
-  // Gemini d’abord a échoué : retenter Replicate si pas encore fait
-  if (!tryReplicateFirst && replicateToken) {
+  // Duo / Gemini d’abord a échoué : Replicate avec portrait lead seul
+  if ((!tryReplicateFirst || multiRef) && replicateToken) {
     try {
       const url = await generateImageWithReplicate(replicateToken, {
         prompt,
         kind,
-        referenceImageUrl: usesRef ? refUrl : undefined,
+        referenceImageUrl: usesRef ? primaryRef : undefined,
       });
       return await finish(url, usesRef ? "replicate-kontext" : "replicate-flux");
     } catch (e) {

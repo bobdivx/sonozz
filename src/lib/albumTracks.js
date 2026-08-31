@@ -25,11 +25,12 @@ export function pickAlbumArtwork(leadProject) {
   return leadProject?.album?.cover || leadProject?.cover || null;
 }
 
-export function buildAlbumCoverRequest({ artist, album, leadTrack } = {}) {
+export function buildAlbumCoverRequest({ artist, album, leadTrack, featArtist } = {}) {
   const title = String(album?.title || leadTrack?.title || "Album").trim() || "Album";
   const concept = String(album?.concept || "").trim();
+  const feat = featArtist ?? artist?.featArtist ?? null;
   return {
-    artist,
+    artist: feat ? { ...artist, featArtist: feat } : artist,
     album: { title, concept },
     track: {
       title,

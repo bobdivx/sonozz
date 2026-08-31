@@ -79,6 +79,16 @@ function formatElapsed(sec) {
   return m > 0 ? `${m}m${String(r).padStart(2, "0")}s` : `${r}s`;
 }
 
+function shortModelLabel(modelId) {
+  const id = String(modelId || "").trim();
+  if (!id) return "";
+  if (/xl-sft$/i.test(id) && !/merge/i.test(id)) return "XL SFT";
+  if (/turbo-bf16/i.test(id)) return "XL Turbo BF16";
+  if (/merge-sft-turbo/i.test(id)) return "XL Merge";
+  if (/xl-turbo/i.test(id)) return "XL Turbo";
+  return id.replace(/^.*\//, "");
+}
+
 /** Pourcentage affiché — SongGen reste à ~35 % pendant le long infer ; on lisse avec l’ETA. */
 function formatTrackProgress(tick = {}) {
   let percent = Number(tick.progress);
@@ -89,6 +99,8 @@ function formatTrackProgress(tick = {}) {
   const estimated = Number(tick.estimatedSeconds) || 0;
   const msg = String(tick.message || "").trim();
   const status = String(tick.status || "processing");
+  const modelLabel = shortModelLabel(tick.model || tick.quality);
+  const stage = String(tick.stage || "").trim();
 
   // Phase génération GPU : progress API souvent figé à 35 — interpoler via ETA
   if (
@@ -104,7 +116,9 @@ function formatTrackProgress(tick = {}) {
     percent = Math.min(30, 5 + Math.floor(elapsed / 4));
   }
 
+  // Message court : pas de VRAM ni modèle (affichés par StudioGpuMeter)
   let message = msg || (status === "pending" ? "En file…" : "Génération…");
+  if (stage && !msg) message = stage;
   if (elapsed > 0) {
     const eta =
       estimated > elapsed
@@ -119,10 +133,145 @@ function formatTrackProgress(tick = {}) {
     percent: Math.max(0, Math.min(99, Math.round(percent))),
     message,
     status,
+    stage: stage || null,
+    model: tick.model || null,
+    modelLabel: modelLabel || null,
+    gpu: tick.gpu || null,
+    phase: tick.phase || "generating",
     elapsedSeconds: elapsed,
     estimatedSeconds: estimated,
     musicKind: tick.musicKind || null,
   };
+}
+
+/**
+ * Avant start ACE : probe VRAM + charge le DiT voulu avec retours live
+ * (évite le silence UX pendant un switch SFT de plusieurs minutes).
+ */
+async function prepareAceStepClient(payload, onProgress, signal) {
+  const keys = loadKeys();
+  const provider = String(keys?.musicProvider || "").trim();
+  if (provider !== "acestep") return null;
+  if (!keys || String(keys.aceStepEnabled || "1") === "0") return null;
+
+  const throwIfAborted = () => {
+    if (signal?.aborted) {
+      const err = new Error("Génération audio annulée");
+      err.name = "AbortError";
+      throw err;
+    }
+  };
+
+  onProgress?.({
+    percent: 3,
+    phase: "probe",
+    message: "Connexion ACE-Step · lecture VRAM…",
+  });
+  throwIfAborted();
+
+  let probe;
+  try {
+    probe = await request("/api/track", { action: "probe-acestep" }, { signal });
+  } catch (e) {
+    if (e?.name === "AbortError") throw e;
+    onProgress?.({
+      percent: 4,
+      phase: "probe",
+      message: `ACE-Step : ${String(e.message || e).slice(0, 120)}`,
+    });
+    return null;
+  }
+
+  const targetId =
+    String(payload?.forceAceModelId || "").trim() ||
+    String(keys.aceStepPreferredModel || "").trim() ||
+    String(probe?.pickedModel || "").trim() ||
+    String(probe?.activeModel || "").trim();
+  const active = String(probe?.activeModel || "").trim();
+  const gpu = probe?.gpu || null;
+  const targetLabel = shortModelLabel(targetId) || "auto";
+
+  onProgress?.({
+    percent: 5,
+    phase: "probe",
+    model: active || targetId || null,
+    modelLabel: shortModelLabel(active || targetId) || null,
+    gpu,
+    message: "Studio joignable",
+  });
+
+  if (!targetId || (active && active === targetId)) {
+    return { probe, model: active || targetId, gpu };
+  }
+
+  onProgress?.({
+    percent: 6,
+    phase: "loading-model",
+    model: targetId,
+    modelLabel: targetLabel,
+    gpu,
+    message: "Chargement du modèle… (plusieurs minutes possibles)",
+  });
+
+  const switchPromise = request(
+    "/api/track",
+    { action: "switch-acestep-model", modelId: targetId },
+    { signal },
+  )
+    .then((r) => ({ ok: true, result: r }))
+    .catch((e) => ({ ok: false, error: e }));
+
+  const startedAt = Date.now();
+  while (true) {
+    throwIfAborted();
+    const settled = await Promise.race([
+      switchPromise.then((r) => ({ type: "switch", ...r })),
+      sleep(4000, signal).then(() => ({ type: "tick" })),
+    ]);
+
+    let latest = probe;
+    try {
+      latest = await request("/api/track", { action: "probe-acestep" }, { signal });
+    } catch {
+      /* Studio mute pendant le load */
+    }
+    const nowActive = String(latest?.activeModel || "").trim();
+    const nowGpu = latest?.gpu || gpu;
+    const secs = Math.round((Date.now() - startedAt) / 1000);
+    onProgress?.({
+      percent: Math.min(11, 6 + Math.floor(secs / 30)),
+      phase: "loading-model",
+      model: targetId,
+      modelLabel: targetLabel,
+      gpu: nowGpu,
+      message:
+        nowActive === targetId
+          ? "Modèle prêt"
+          : `Chargement en cours… ${formatElapsed(secs)}`,
+    });
+
+    if (nowActive === targetId) {
+      await switchPromise.catch(() => {});
+      return { probe: latest, model: targetId, gpu: nowGpu };
+    }
+    if (settled.type === "switch") {
+      if (!settled.ok && settled.error?.name === "AbortError") throw settled.error;
+      onProgress?.({
+        percent: 10,
+        phase: "loading-model",
+        model: targetId,
+        modelLabel: targetLabel,
+        gpu: nowGpu,
+        message: settled.ok
+          ? "Modèle chargé"
+          : "Chargement encore en cours côté Studio",
+      });
+      return { probe: latest, model: targetId, gpu: nowGpu };
+    }
+    if (secs > 360) {
+      return { probe: latest, model: targetId, gpu: nowGpu };
+    }
+  }
 }
 
 /**
@@ -145,8 +294,19 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
   const isPreview = Boolean(payload?.preview);
   onProgress?.({
     percent: 5,
+    phase: "starting",
     message: isPreview ? "Démarrage extrait audio…" : "Démarrage génération audio…",
   });
+
+  let prepared = null;
+  if (!opts.generationId) {
+    try {
+      prepared = await prepareAceStepClient(payload, onProgress, signal);
+    } catch (e) {
+      if (e?.name === "AbortError") throw e;
+      console.warn("[track] prepare ACE ignoré:", e?.message || e);
+    }
+  }
 
   let started;
   if (opts.generationId && opts.musicKind) {
@@ -157,6 +317,16 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
       draft: opts.draft,
     };
   } else {
+    onProgress?.({
+      percent: 11,
+      phase: "starting",
+      model: prepared?.model || null,
+      modelLabel: shortModelLabel(prepared?.model) || null,
+      gpu: prepared?.gpu || null,
+      message: isPreview
+        ? `Lancement extrait${prepared?.model ? ` · ${shortModelLabel(prepared.model)}` : ""}…`
+        : `Lancement génération${prepared?.model ? ` · ${shortModelLabel(prepared.model)}` : ""}…`,
+    });
     started = await request("/api/track", { ...payload, action: "start" }, { signal });
     throwIfAborted();
     opts.onStarted?.(started);
@@ -168,13 +338,21 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     return rest;
   }
 
+  const startedModel =
+    started.model || started.draft?.aceStepModel || prepared?.model || null;
+  const startedGpu = started.gpu || prepared?.gpu || null;
+
   onProgress?.({
     percent: 12,
+    phase: "generating",
+    model: startedModel,
+    modelLabel: shortModelLabel(startedModel) || started.quality || null,
+    gpu: startedGpu,
     message:
       started.musicKind === "acestep"
         ? isPreview
-          ? "Extrait ACE-Step — attente GPU…"
-          : "ACE-Step démarré — attente GPU…"
+          ? "Extrait ACE-Step — génération GPU…"
+          : "ACE-Step — génération GPU…"
         : started.musicKind === "songgen"
           ? isPreview
             ? "Extrait SongGen — attente GPU…"
@@ -220,11 +398,21 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
       if (tick?.done && tick.track) {
         onProgress?.({
           percent: 100,
+          phase: "done",
+          model: startedModel,
           message: isPreview || tick.track.isPreview ? "Extrait prêt" : "Audio prêt",
         });
         return tick.track;
       }
-      onProgress?.(formatTrackProgress({ ...tick, musicKind: started.musicKind }));
+      onProgress?.(
+        formatTrackProgress({
+          ...tick,
+          musicKind: started.musicKind,
+          model: tick?.model || startedModel,
+          gpu: tick?.gpu || startedGpu,
+          phase: "generating",
+        }),
+      );
     }
 
     throw new Error(
@@ -256,10 +444,36 @@ async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     ) {
       onProgress?.({
         percent: 8,
+        phase: "retry",
         message: "Référence audio refusée — relance sans cover…",
       });
       return trackWithPoll(
         { ...payload, skipStyleReference: true },
+        onProgress,
+        { ...opts, generationId: undefined, musicKind: undefined, draft: undefined },
+      );
+    }
+    if (
+      started?.musicKind === "acestep" &&
+      !payload?.aceLightRetry &&
+      /ACE_NAN_LATENTS|VRAM insuffisante|NaN or Inf latents|out of memory/i.test(
+        String(e?.message || ""),
+      )
+    ) {
+      onProgress?.({
+        percent: 8,
+        phase: "retry",
+        model: "marcorez8/acestep-v15-xl-turbo-bf16",
+        modelLabel: "XL Turbo BF16",
+        message: "GPU saturé / NaN — relance en Turbo BF16 (léger)…",
+      });
+      return trackWithPoll(
+        {
+          ...payload,
+          skipStyleReference: true,
+          aceLightRetry: true,
+          forceAceModelId: "marcorez8/acestep-v15-xl-turbo-bf16",
+        },
         onProgress,
         { ...opts, generationId: undefined, musicKind: undefined, draft: undefined },
       );
@@ -278,6 +492,28 @@ export const api = {
           profile,
         })
       : request("/api/artists", { action: "save-profile", profile }),
+  /** Analyse / fige le timbre (extrait vocal ou audio fourni). */
+  ensureArtistTimbre: (slug, opts = {}) =>
+    request(`/api/artists/${encodeURIComponent(slug)}`, {
+      action: "ensure-timbre",
+      force: Boolean(opts.force),
+      audioUrl: opts.audioUrl || null,
+      profile: opts.profile || null,
+    }),
+  /** Backfill timbre de tous les artistes hub (Gemini écoute voice sample ou dernier morceau). */
+  backfillArtistTimbres: (opts = {}) =>
+    request("/api/artists", {
+      action: "backfill-timbres",
+      limit: opts.limit || 80,
+    }),
+  analyzeVoiceSample: (voiceSample, opts = {}) =>
+    request("/api/artists", {
+      action: "analyze-voice-sample",
+      voiceSample,
+      name: opts.name,
+      slug: opts.slug,
+      gender: opts.gender,
+    }),
   lyrics: (payload) => request("/api/lyrics", payload),
   track: (payload, onProgress, opts) => trackWithPoll(payload, onProgress, opts),
   /** Planifie les thèmes des pistes restantes d’un album (hors lead). */

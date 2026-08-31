@@ -86,6 +86,7 @@ export async function POST({ params, request }) {
         genreOverride: body.genreOverride,
         referencesOverride: body.referencesOverride,
         referenceTrackOverride: body.referenceTrackOverride,
+        featArtist: body.featArtist || null,
       });
       return json(created);
     }
@@ -109,6 +110,43 @@ export async function POST({ params, request }) {
         { preferredSlug: slug },
       );
       return json({ ok: true, artist: saved });
+    }
+
+    if (action === "ensure-timbre") {
+      const existing = await getArtistBySlug(slug);
+      if (!existing) return error("Artiste introuvable", 404);
+      const { ensureArtistTimbre } = await import("../../../server/artistTimbre.js");
+      const keys = { ...((await getUserKeys()) || {}), ...(body.keys || {}) };
+      const profile = {
+        ...(existing.profile || {}),
+        slug,
+        name: existing.name || existing.profile?.name,
+        ...(body.profile && typeof body.profile === "object" ? body.profile : {}),
+      };
+      const res = await ensureArtistTimbre(keys, profile, {
+        slug,
+        force: Boolean(body.force),
+        audioUrl: body.audioUrl || null,
+      });
+      if (res.ok && res.artist) {
+        const saved = await upsertArtistFromProject(
+          { ...res.artist, slug, name: res.artist.name || existing.name },
+          { preferredSlug: slug },
+        );
+        return json({
+          ok: true,
+          skipped: Boolean(res.skipped),
+          reason: res.reason,
+          timbre: res.timbre,
+          artist: saved,
+        });
+      }
+      return json({
+        ok: false,
+        skipped: Boolean(res.skipped),
+        reason: res.reason || "analyse impossible",
+        timbre: null,
+      });
     }
 
     if (action === "regenerate-track") {
@@ -151,6 +189,12 @@ export async function POST({ params, request }) {
       const updatedArtist = Object.keys(profileOverrides).length > 0
         ? { ...stored.project.artist, ...profileOverrides }
         : stored.project.artist;
+
+      const { normalizeFeatArtist } = await import("../../../lib/featArtist.js");
+      const feat =
+        body.featArtist === undefined
+          ? stored.project.featArtist || null
+          : normalizeFeatArtist(body.featArtist);
       
       // Réinitialiser le track pour régénération
       const updated = await saveProject({
@@ -158,6 +202,7 @@ export async function POST({ params, request }) {
         project: {
           ...stored.project,
           artist: updatedArtist,
+          featArtist: feat,
           track: {
             ...stored.project.track,
             status: "pending",
