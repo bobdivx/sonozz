@@ -1101,7 +1101,8 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
         </div>
       </div>
 
-      <div class={`min-w-0 space-y-4 p-4 sm:p-5 ${profileTab === "preview" && artist ? "" : "hidden"}`}>
+      {artist ? (
+      <div class={`min-w-0 space-y-4 p-4 sm:p-5 ${profileTab === "preview" ? "" : "hidden"}`}>
           <div class="grid gap-6 md:grid-cols-[240px_1fr] md:items-start">
             <figure class="space-y-2">
               {(() => {
@@ -1370,6 +1371,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
             </div>
           </div>
       </div>
+      ) : null}
       </div>
 
       <div

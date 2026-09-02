@@ -123,7 +123,7 @@ export function isPublicPath(pathname) {
   if (!pathname) return false;
   const p = pathname.replace(/\/+$/, "") || "/";
 
-  if (p === "/play" || p === "/login") return true;
+  if (p === "/play" || p === "/login" || p === "/403" || p === "/500") return true;
   if (p === "/api/library" || p === "/api/audio/stream") return true;
   // Portraits du lecteur public (/play liste les artistes via /api/library).
   if (/^\/api\/artists\/[^/]+\/photo$/.test(p)) return true;

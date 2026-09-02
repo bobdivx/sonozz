@@ -1,0 +1,29 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+export const prerender = false;
+
+function safeNext(raw) {
+  if (!raw || typeof raw !== "string") return "/";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
+  if (raw.startsWith("/login") || raw.startsWith("/403")) return "/";
+  return raw;
+}
+
+const next = safeNext(Astro.url.searchParams.get("next") || "/");
+const loginHref = `/login?next=${encodeURIComponent(next)}`;
+---
+
+<Layout title="SONOZZ — Accès réservé" description="Connexion studio requise.">
+  <div class="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-12 pb-32">
+    <p class="text-xs font-semibold uppercase tracking-[0.2em] text-warning/80">Erreur 403</p>
+    <h1 class="font-display mt-3 text-3xl font-bold tracking-tight">Accès réservé à l’équipe</h1>
+    <p class="mt-3 text-sm leading-relaxed text-base-content/70">
+      Cette page du studio SONOZZ nécessite une connexion. L’écoute publique reste ouverte sans compte.
+    </p>
+    <div class="mt-8 flex flex-wrap gap-3">
+      <a class="btn btn-primary" href={loginHref}>Se connecter au studio</a>
+      <a class="btn btn-ghost border border-base-content/15" href="/play">Ouvrir le lecteur</a>
+    </div>
+  </div>
+</Layout>

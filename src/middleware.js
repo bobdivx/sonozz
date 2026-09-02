@@ -46,11 +46,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
         return withNoStore(response);
       }
       
-      // Si la page existe (200, 3xx mais pas 404), rediriger vers login
+      // Si la page existe (200, 3xx mais pas 404), page d’accès réservé
       if (response.status < 400) {
         const nextUrl = `${pathname}${search || ""}`;
         return withNoStore(
-          context.redirect(`/login?next=${encodeURIComponent(nextUrl)}`),
+          context.redirect(`/403?next=${encodeURIComponent(nextUrl)}`),
         );
       }
       

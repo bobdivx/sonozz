@@ -118,6 +118,7 @@ describe("Pocket ID SSO optionnel", () => {
     assert.equal(isPublicPath("/api/auth/callback/pocket-id"), true);
     assert.equal(isPublicPath("/api/auth/sso-status"), true);
     assert.equal(isPublicPath("/login"), true);
+    assert.equal(isPublicPath("/403"), true);
   });
 
   it("refuse le mot de passe uniquement si CE user a lié le SSO", () => {
