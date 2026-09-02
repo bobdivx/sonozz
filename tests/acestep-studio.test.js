@@ -25,7 +25,7 @@ import { isStudioEnabled, keysAfterStudioToggle } from "../src/lib/keys.js";
 
 describe("ACE-Step Studio client", () => {
   it("résout l’URL et le provider", () => {
-    assert.equal(resolveAceStepBaseUrl({}), "http://127.0.0.1:3001");
+    assert.equal(resolveAceStepBaseUrl({}), "https://ace.briseteia.me");
     assert.equal(
       resolveAceStepBaseUrl({ aceStepBaseUrl: "http://10.1.0.88:3001/" }),
       "http://10.1.0.88:3001",
@@ -224,32 +224,35 @@ describe("ACE-Step Studio client", () => {
     assert.equal(body.taskType, undefined);
   });
 
-  it("dérive l’URL Gradio :8001 et parse l’upload officiel", () => {
+  it("dérive l’URL Gradio :7865 (LAN) et parse l’upload officiel", () => {
     assert.equal(
       resolveAceStepGradioUrl({ aceStepBaseUrl: "http://10.1.0.88:3001" }),
+      "http://10.1.0.88:7865",
+    );
+    assert.equal(
+      resolveAceStepGradioUrl({ aceStepBaseUrl: "http://10.1.0.88:8001" }),
       "http://10.1.0.88:8001",
     );
     assert.deepEqual(gradioUploadBases({ aceStepBaseUrl: "https://ace.briseteia.me" }), [
       "https://ace.briseteia.me",
-      "https://ace.briseteia.me:8001",
     ]);
     assert.equal(
       resolveAceStepGradioUrl({ aceStepGradioUrl: "http://127.0.0.1:7865" }),
       "http://127.0.0.1:7865",
     );
     assert.equal(
-      gradioFileUrl("http://127.0.0.1:8001", "D:\\temp\\gradio\\a.mp3"),
-      "http://127.0.0.1:8001/gradio_api/file=D:/temp/gradio/a.mp3",
+      gradioFileUrl("http://127.0.0.1:7865", "D:\\temp\\gradio\\a.mp3"),
+      "http://127.0.0.1:7865/gradio_api/file=D:/temp/gradio/a.mp3",
     );
     assert.equal(
-      extractGradioUploadUrl("http://127.0.0.1:8001", ["/tmp/gradio/hash/style-ref.mp3"]),
-      "http://127.0.0.1:8001/gradio_api/file=/tmp/gradio/hash/style-ref.mp3",
+      extractGradioUploadUrl("http://127.0.0.1:7865", ["/tmp/gradio/hash/style-ref.mp3"]),
+      "http://127.0.0.1:7865/gradio_api/file=/tmp/gradio/hash/style-ref.mp3",
     );
     assert.equal(
-      extractGradioUploadUrl("http://127.0.0.1:8001", {
-        url: "http://127.0.0.1:8001/gradio_api/file=/tmp/gradio/x.mp3",
+      extractGradioUploadUrl("http://127.0.0.1:7865", {
+        url: "http://127.0.0.1:7865/gradio_api/file=/tmp/gradio/x.mp3",
       }),
-      "http://127.0.0.1:8001/gradio_api/file=/tmp/gradio/x.mp3",
+      "http://127.0.0.1:7865/gradio_api/file=/tmp/gradio/x.mp3",
     );
     assert.equal(
       isGradioReferenceCacheError(
@@ -303,6 +306,13 @@ describe("ACE-Step Studio client", () => {
     assert.equal(loading.unreachable, false);
     assert.match(loading.message, /Chargement XL SFT/i);
     assert.doesNotMatch(loading.message, /Stop puis Start/i);
+
+    const readyHealthyOnly = interpretAceProbe({
+      health: { healthy: true },
+      status: { connected: false, activeModel: "" },
+    });
+    assert.equal(readyHealthyOnly.pipelineUp, true);
+    assert.equal(readyHealthyOnly.message, null);
 
     const readyStale = interpretAceProbe({
       health: { healthy: false },

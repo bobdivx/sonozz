@@ -96,8 +96,8 @@ export const KEY_FIELDS = [
       {
         id: "aceStepBaseUrl",
         label: "URL ACE-Step Studio",
-        placeholder: "http://127.0.0.1:3001",
-        help: "Doit être joignable depuis le serveur Astro. Pinokio : souvent localhost:3001.",
+        placeholder: "https://ace.briseteia.me",
+        help: "Express ACE (:8001 / tunnel). Gradio Python tourne en :7865 sur Demeter. LAN : http://10.1.0.88:8001",
         required: false,
         inputType: "url",
         url: "https://github.com/timoncool/ACE-Step-Studio",
@@ -349,7 +349,7 @@ const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "llama3.2";
 const DEFAULT_SONGGEN_BASE = "http://127.0.0.1:7860";
-const DEFAULT_ACESTEP_BASE = "http://127.0.0.1:3001";
+const DEFAULT_ACESTEP_BASE = "https://ace.briseteia.me";
 const DEFAULT_WAN2GP_BASE = "http://127.0.0.1:7860";
 const MUSIC_PROVIDERS = ["acestep", "replicate", "songgen"];
 export const STUDIO_ENABLE_KEYS = {

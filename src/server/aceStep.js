@@ -15,7 +15,9 @@ import {
  * @see https://github.com/timoncool/ACE-Step-Studio
  */
 
-const DEFAULT_BASE = "http://127.0.0.1:3001";
+/** Express ACE Demeter (tunnel public). Gradio Python = :7865 sur la machine GPU. */
+const DEFAULT_BASE = "https://ace.briseteia.me";
+const DEFAULT_GPU_ARBITER = "http://10.1.0.88:8790";
 const POLL_MS = 3000;
 const MAX_POLLS = 400;
 const AUTH_USER = "sonozz";
@@ -510,6 +512,7 @@ const ACE_UNREACHABLE_RE =
 /**
  * Distingue « ACE injoignable », « moteur down », et « DiT en cours de chargement ».
  * Pendant un switch SFT, Gradio coupe souvent `connected` → ce n’est pas un crash.
+ * `/api/generate/health` healthy=true = Gradio (:7865) joignable depuis Express (:8001).
  * @param {{ health?: object, status?: object, base?: string }} input
  */
 export function interpretAceProbe({ health, status, base } = {}) {
@@ -558,7 +561,8 @@ export function interpretAceProbe({ health, status, base } = {}) {
   // Après un switch, Studio laisse parfois connected=false alors que le DiT est Ready.
   const readyWithModel =
     (/^ready$|^idle$|^ok$/i.test(state) || !state) && Boolean(activeModel);
-  const pipelineUp = (healthy && connected) || readyWithModel;
+  // healthy seul suffit : /api/generate/health sonde déjà Gradio (:7865).
+  const pipelineUp = healthy || readyWithModel || (connected && Boolean(activeModel));
   return {
     unreachable: false,
     healthy,
@@ -568,19 +572,56 @@ export function interpretAceProbe({ health, status, base } = {}) {
     loadingModel: null,
     message: pipelineUp
       ? null
-      : "UI joignable, mais le moteur Python (port 8001) est down — Stop puis Start dans Pinokio",
+      : "UI Express joignable (:8001), mais Gradio Python (:7865) est down — réveille ACE via GPU Arbiter (:8790) ou systemd ace-step-studio (évite Stop/Start Pinokio)",
   };
 }
 
-export async function testAceStep(keys) {
+/** Réveille ACE via l’arbitre GPU Demeter (POST /ensure). */
+export async function ensureAceGpuSlot(keys, { timeoutMs = 120_000 } = {}) {
+  const arbiter = String(keys?.gpuArbiterUrl || process.env.GPU_ARBITER_URL || DEFAULT_GPU_ARBITER)
+    .trim()
+    .replace(/\/+$/, "");
+  if (!arbiter) return { ok: false, skipped: true };
+  try {
+    const res = await fetch(`${arbiter}/ensure`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot: "ace", owner: "sonozz" }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok && data?.ok !== false, arbiter, data };
+  } catch (e) {
+    return { ok: false, arbiter, error: String(e?.message || e) };
+  }
+}
+
+export async function testAceStep(keys, { ensure = true } = {}) {
   const base = resolveAceStepBaseUrl(keys);
-  const [health, modelsRaw, status, sys] = await Promise.all([
-    aceFetch(base, "/api/generate/health").catch((e) => ({ healthy: false, error: e.message })),
-    aceFetch(base, "/api/generate/models").catch(() => ({ models: [] })),
-    aceFetch(base, "/api/generate/model-status").catch(() => ({})),
-    aceFetch(base, "/api/generate/system-info").catch(() => null),
-  ]);
-  const interpreted = interpretAceProbe({ health, status, base });
+  const probeOnce = async () => {
+    const [health, modelsRaw, status, sys] = await Promise.all([
+      aceFetch(base, "/api/generate/health").catch((e) => ({ healthy: false, error: e.message })),
+      aceFetch(base, "/api/generate/models").catch(() => ({ models: [] })),
+      aceFetch(base, "/api/generate/model-status").catch(() => ({})),
+      aceFetch(base, "/api/generate/system-info").catch(() => null),
+    ]);
+    return { health, modelsRaw, status, sys, interpreted: interpretAceProbe({ health, status, base }) };
+  };
+
+  let { health, modelsRaw, status, sys, interpreted } = await probeOnce();
+  if (
+    ensure &&
+    !interpreted.unreachable &&
+    !interpreted.loading &&
+    interpreted.pipelineUp === false
+  ) {
+    console.info("[acestep] pipeline down — ensure GPU slot ace…");
+    const woke = await ensureAceGpuSlot(keys);
+    if (woke.ok) {
+      await new Promise((r) => setTimeout(r, 2500));
+      ({ health, modelsRaw, status, sys, interpreted } = await probeOnce());
+    }
+  }
   if (interpreted.unreachable) {
     throw new Error(interpreted.message);
   }
@@ -645,7 +686,7 @@ export async function switchAceStepModel(keys, modelId, opts = {}) {
       // Autre modèle en cours : on retente le probe puis le switch
     } else if (info.pipelineUp === false) {
       throw new Error(
-        "Moteur ACE-Step down (Gradio :8001). Dans Pinokio : Stop, puis Start (No LM si Sonozz). Attends que l’UI soit prête avant de changer de modèle.",
+        "Moteur ACE-Step down (Gradio :7865). Réveille ACE via GPU Arbiter (:8790) ou systemd ace-step-studio, puis réessaie.",
       );
     }
   } catch (e) {
@@ -691,7 +732,7 @@ export async function switchAceStepModel(keys, modelId, opts = {}) {
     const raw = String(e.message || "");
     if (/fetch failed|ECONNREFUSED|connected.:false|healthy.:false/i.test(raw)) {
       throw new Error(
-        "Changement de modèle impossible : le moteur Python ACE-Step ne répond plus. Pinokio → Stop → Start (No LM), puis réessaie.",
+        "Changement de modèle impossible : Gradio ACE-Step (:7865) ne répond plus. GPU Arbiter → Réveiller ACE, puis réessaie.",
       );
     }
     if (/Unknown DiT model|Failed to download DiT/i.test(raw)) {
@@ -942,7 +983,7 @@ export function looksLikeAudioBuffer(buffer, mimeType = "") {
   return false;
 }
 
-/** UI Studio = :3001, moteur Python Gradio = :8001 (Pinokio ACE-Step Studio). */
+/** Express Studio = :8001 (ou tunnel), Gradio Python = :7865 (souvent loopback Demeter). */
 export function resolveAceStepGradioUrl(keys, studioBase) {
   const explicit = String(keys?.aceStepGradioUrl || "")
     .trim()
@@ -951,15 +992,19 @@ export function resolveAceStepGradioUrl(keys, studioBase) {
   const base = String(studioBase || resolveAceStepBaseUrl(keys)).replace(/\/+$/, "");
   try {
     const u = new URL(base);
-    if (u.port === "8001") return base;
-    u.port = "8001";
+    // Express Demeter (:8001) ou tunnel public : uploads via le même host (proxy Studio).
+    if (u.port === "8001" || u.port === "7865" || !isLanOrLoopbackHost(u.hostname)) {
+      return base;
+    }
+    // Ancien layout UI :3001 → Gradio LAN :7865
+    u.port = "7865";
     return String(u).replace(/\/+$/, "");
   } catch {
     return "";
   }
 }
 
-/** Tunnel public (même host) d’abord, puis :8001 local Pinokio. */
+/** Tunnel / Express d’abord, puis Gradio dérivé (:7865 LAN). */
 export function gradioUploadBases(keys, studioBase) {
   const studio = String(studioBase || resolveAceStepBaseUrl(keys)).replace(/\/+$/, "");
   const derived = resolveAceStepGradioUrl(keys, studio);

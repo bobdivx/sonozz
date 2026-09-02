@@ -178,10 +178,19 @@ describe("interpretAceProbe", () => {
     });
     assert.equal(r.unreachable, false);
     assert.equal(r.pipelineUp, false);
-    assert.match(r.message, /moteur Python/);
+    assert.match(r.message, /Gradio Python|:7865/);
   });
 
-  it("pipelineUp seulement si health + connected", () => {
+  it("pipelineUp si health Gradio OK (même sans connected)", () => {
+    const r = interpretAceProbe({
+      health: { healthy: true },
+      status: { connected: false, activeModel: "" },
+    });
+    assert.equal(r.pipelineUp, true);
+    assert.equal(r.unreachable, false);
+  });
+
+  it("pipelineUp aussi si health + connected", () => {
     const r = interpretAceProbe({
       health: { healthy: true },
       status: { connected: true, activeModel: "turbo" },

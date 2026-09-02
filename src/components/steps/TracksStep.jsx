@@ -57,7 +57,7 @@ function songGenUrlFromKeys(keys) {
 function aceStepUrlFromKeys(keys) {
   return String(keys?.aceStepBaseUrl || "")
     .trim()
-    .replace(/\/+$/, "") || "http://127.0.0.1:3001";
+    .replace(/\/+$/, "") || "https://ace.briseteia.me";
 }
 
 function normalizeMusicProvider(value) {
