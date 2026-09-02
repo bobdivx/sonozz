@@ -9,6 +9,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectsCommand,
   HeadBucketCommand,
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
@@ -293,6 +294,77 @@ export async function downloadClipBuffer(keyOrUrl) {
     mimeType: out.ContentType || "application/octet-stream",
     key: keyOrUrl,
   };
+}
+
+/**
+ * Supprime une liste de clés objet (audio/… ou clips/…).
+ * Ignore silencieusement si S3 n’est pas configuré.
+ * @returns {{ deleted: number, skipped: boolean }}
+ */
+export async function deleteS3Keys(keys = []) {
+  const clean = [
+    ...new Set(
+      (Array.isArray(keys) ? keys : [])
+        .map((k) => String(k || "").trim().replace(/^\//, ""))
+        .filter((k) => k && !k.includes("..") && /^(audio|clips)\//i.test(k)),
+    ),
+  ];
+  if (!clean.length) return { deleted: 0, skipped: false };
+  if (!isS3Configured()) return { deleted: 0, skipped: true };
+
+  const s3 = getS3Client();
+  const cfg = getS3Config();
+  let deleted = 0;
+  for (let i = 0; i < clean.length; i += 1000) {
+    const chunk = clean.slice(i, i + 1000);
+    const out = await s3.send(
+      new DeleteObjectsCommand({
+        Bucket: cfg.bucket,
+        Delete: {
+          Objects: chunk.map((Key) => ({ Key })),
+          Quiet: true,
+        },
+      }),
+    );
+    deleted += chunk.length - (out.Errors?.length || 0);
+  }
+  return { deleted, skipped: false };
+}
+
+/**
+ * Liste puis supprime tous les objets sous un préfixe (ex. `audio/proj_xxx/`).
+ * @returns {{ deleted: number, skipped: boolean }}
+ */
+export async function deleteS3Prefix(prefix = "") {
+  const clean = String(prefix || "")
+    .trim()
+    .replace(/^\//, "")
+    .replace(/\.\./g, "");
+  if (!clean || !/^(audio|clips)\//i.test(clean)) {
+    return { deleted: 0, skipped: false };
+  }
+  if (!isS3Configured()) return { deleted: 0, skipped: true };
+
+  const s3 = getS3Client();
+  const cfg = getS3Config();
+  const keys = [];
+  let token;
+  do {
+    const listed = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: cfg.bucket,
+        Prefix: clean.endsWith("/") ? clean : `${clean}/`,
+        ContinuationToken: token,
+        MaxKeys: 1000,
+      }),
+    );
+    for (const obj of listed.Contents || []) {
+      if (obj.Key) keys.push(obj.Key);
+    }
+    token = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (token);
+
+  return deleteS3Keys(keys);
 }
 
 /** Ping config (bucket accessible) + nombre d’objets. */

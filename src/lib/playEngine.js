@@ -170,7 +170,9 @@ export function togglePlay() {
   const el = getPlayAudio();
   const session = readPlaySession();
   if (!currentPlayTrack(session)) return;
-  if (session.playing && el && !el.paused) pauseCurrent();
+  // Après navigation / autoplay bloqué, session.playing peut être true alors que l’audio est en pause.
+  const audiblyPlaying = Boolean(el && !el.paused && !el.ended);
+  if (audiblyPlaying) pauseCurrent();
   else playCurrent();
 }
 

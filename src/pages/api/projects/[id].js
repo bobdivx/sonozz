@@ -1,6 +1,10 @@
 import { json, error } from "../../../server/http.js";
 import { getProject, deleteProject } from "../../../server/db.js";
-import { hydrateProjectArtistGender } from "../../../server/artists.js";
+import {
+  hydrateProjectArtistGender,
+  collectS3KeysFromProject,
+} from "../../../server/artists.js";
+import { deleteS3Keys, deleteS3Prefix } from "../../../server/s3.js";
 
 export const prerender = false;
 
@@ -17,7 +21,20 @@ export async function GET({ params }) {
 
 export async function DELETE({ params }) {
   try {
-    await deleteProject(params.id);
+    const id = params.id;
+    const stored = await getProject(id);
+    if (stored?.project) {
+      const keys = collectS3KeysFromProject(stored.project);
+      await deleteS3Keys(keys);
+      const seg = String(id || "")
+        .replace(/[^a-zA-Z0-9._-]+/g, "_")
+        .slice(0, 80);
+      if (seg) {
+        await deleteS3Prefix(`audio/${seg}`);
+        await deleteS3Prefix(`clips/${seg}`);
+      }
+    }
+    await deleteProject(id);
     return json({ ok: true });
   } catch (e) {
     return error(e.message || "Erreur suppression", 500);

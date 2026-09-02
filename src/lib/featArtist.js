@@ -3,6 +3,7 @@ import {
   ACE_COMMERCIAL_LYRICS_STRUCTURE,
   aceStepCommercialArrangementBits,
   composeAceStepStyle,
+  getLyricsFormPreset,
 } from "./musicLane.js";
 
 /**
@@ -506,27 +507,45 @@ export function duoSongGenStyleTags(lead, feat) {
   return tags.filter(Boolean).slice(0, 8);
 }
 
+function genderVocalCue(code) {
+  if (code === "female") return "female vocal";
+  if (code === "nonbinary") return "androgynous vocal";
+  return "male vocal";
+}
+
 /** Bloc LLM pour génération de paroles en duo. */
-export function duoLyricsInstruction(lead, feat) {
+export function duoLyricsInstruction(lead, feat, form = null) {
   const a = vocalLockForArtist(lead);
   const b = vocalLockForArtist(feat);
   if (!a || !b) return "";
+
+  const preset = getLyricsFormPreset(form);
+  const arc = preset?.tagsArc || ACE_COMMERCIAL_LYRICS_STRUCTURE;
+  const hookTag = preset?.hookTag || "Chorus";
+  const hasVerse = /\[Verse\]/i.test(arc);
+  const leadCue = genderVocalCue(a.genderCode);
+  const featCue = genderVocalCue(b.genderCode);
+
+  const verseRules = hasVerse
+    ? `- Alterne les couplets avec des tags ACE-Step (PAS de ligne "(${a.name})" qui serait chantée) :
+  [Verse - ${leadCue}]
+  [Verse - ${featCue}]
+- Les 2 couplets ([Verse]) doivent différer (pas le même texte copié)`
+    : `- Alterne les sections narratives entre lead et feat via tags ACE-Step (PAS de ligne "(${a.name})" chantée) :
+  [Build - ${leadCue}] ou section équivalente pour le lead
+  section équivalente pour le feat (${featCue})`;
 
   return `
 DUO OBLIGATOIRE — deux chanteurs distincts (ne fusionne JAMAIS en un seul narrateur) :
 - Lead « ${a.name} » (${a.genderLabel || "voix lead"}${a.genre ? `, style ${a.genre}` : ""}${a.writingStyle ? `, écriture: ${a.writingStyle}` : ""}${a.vocalStyle ? `, voix: ${a.vocalStyle}` : ""})
 - Feat « ${b.name} » (${b.genderLabel || "voix feat"}${b.genre ? `, style ${b.genre}` : ""}${b.writingStyle ? `, écriture: ${b.writingStyle}` : ""}${b.vocalStyle ? `, voix: ${b.vocalStyle}` : ""})
-Règles structure dans "text" (titre COMMERCIAL, pas linéaire) :
-- Arc obligatoire proche de: ${ACE_COMMERCIAL_LYRICS_STRUCTURE}
-- Inclure [Intro] (ambiance / peu de paroles), [Pre-Chorus] (montée), [Bridge] (contraste), [Outro]
-- Les 2 couplets ([Verse]) doivent différer (pas le même texte copié)
-- Alterne les couplets avec des tags ACE-Step (PAS de ligne "(${a.name})" qui serait chantée) :
-  [Verse - ${a.genderCode === "female" ? "female vocal" : a.genderCode === "nonbinary" ? "androgynous vocal" : "male vocal"}]
-  [Verse - ${b.genderCode === "female" ? "female vocal" : b.genderCode === "nonbinary" ? "androgynous vocal" : "male vocal"}]
-  [Chorus - duet ${a.genderCode || "lead"} and ${b.genderCode || "featured"} vocals]
-- Au moins un [Chorus - duet …] chanté par les deux ; le dernier chorus peut être plus long / ad-libs.
+Règles structure dans "text" (titre COMMERCIAL, forme « ${preset.id} », pas linéaire) :
+- Arc obligatoire: ${arc}
+- Inclure Intro (ambiance), section contraste si présente dans l'arc (Bridge / Breakdown / Break), Outro
+${verseRules}
+- Au moins un [${hookTag} - duet ${a.genderCode || "lead"} and ${b.genderCode || "featured"} vocals] chanté par les deux ; le dernier ${hookTag} peut être plus long / ad-libs.
 - Chaque artiste garde SA personnalité d'écriture et son registre — pas de pastiche croisé.
-- Tags structure MiniMax/ACE: [Intro], [Verse], [Pre-Chorus], [Chorus], [Bridge], [Outro] — le genre vocal va DANS le tag avec un tiret, jamais entre parenthèses sur une ligne seule.
+- Tags structure MiniMax/ACE selon l'arc ci-dessus — le genre vocal va DANS le tag avec un tiret, jamais entre parenthèses sur une ligne seule.
 - N'écris PAS les noms d'artistes comme paroles à chanter (sauf si c'est un hook volontaire très court).
 `.trim();
 }

@@ -3,6 +3,7 @@ import { runCareerAgent } from "./careerAgent.js";
 import { resolveArtistGender, withResolvedArtistGender } from "../lib/artistGender.js";
 import { applyArtistPhotoPatch, listArtistImageUrl, normalizeArtistPhotos } from "../lib/artistPhotos.js";
 import { generateVisual } from "./images.js";
+import { tryParseS3ObjectKey, deleteS3Keys, deleteS3Prefix } from "./s3.js";
 
 export function slugify(input = "") {
   return String(input)
@@ -343,6 +344,166 @@ export async function getArtistBySlug(slug) {
     stats: row.stats_json ? JSON.parse(row.stats_json) : {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function safeS3Segment(value = "") {
+  return String(value || "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .slice(0, 80);
+}
+
+/** Collecte les clés S3 référencées dans un project_json / profil. */
+export function collectS3KeysFromProject(project = {}) {
+  const keys = new Set();
+  const add = (value) => {
+    if (!value || typeof value !== "string") return;
+    const parsed = tryParseS3ObjectKey(value);
+    if (parsed) keys.add(parsed);
+  };
+
+  const walkTrack = (t) => {
+    if (!t || typeof t !== "object") return;
+    add(t.audioS3Key);
+    add(t.audioUrl);
+  };
+  walkTrack(project.track);
+  for (const v of project.trackVersions || []) walkTrack(v);
+
+  const walkClip = (c) => {
+    if (!c || typeof c !== "object") return;
+    add(c.s3Key);
+    add(c.videoUrl);
+  };
+  walkClip(project.clip);
+  for (const c of project.clips || []) walkClip(c);
+
+  const walkVoice = (sample) => {
+    if (!sample || typeof sample !== "object") return;
+    add(sample.s3Key);
+    add(sample.url);
+  };
+  walkVoice(project.artist?.voiceSample);
+  walkVoice(project.featArtist?.voiceSample);
+  walkVoice(project.voiceSample);
+
+  add(project.cover?.s3Key);
+  add(project.cover?.imageUrl);
+  add(project.album?.cover?.s3Key);
+  add(project.album?.cover?.imageUrl);
+
+  return [...keys];
+}
+
+/**
+ * Supprime un artiste + projets liés + albums + objets S3 (audio/clips).
+ * Ne retire pas les releases ONCE / stores.
+ */
+export async function deleteArtist(slug) {
+  await ensureArtistSchema();
+  const cleanSlug = String(slug || "").trim();
+  if (!cleanSlug) throw new Error("Slug artiste manquant");
+
+  const artist = await getArtistBySlug(cleanSlug);
+  if (!artist) throw new Error("Artiste introuvable");
+
+  const db = getDb();
+  const name = artist.name || cleanSlug;
+
+  const projectsRes = await db.execute({
+    sql: `
+      SELECT id, project_json
+      FROM projects
+      WHERE artist_slug = ? OR artist_name = ?
+    `,
+    args: [cleanSlug, name],
+  });
+
+  const projectIds = projectsRes.rows.map((r) => r.id);
+  const keySet = new Set();
+
+  for (const row of projectsRes.rows) {
+    let project = {};
+    try {
+      project = row.project_json ? JSON.parse(row.project_json) : {};
+    } catch {
+      project = {};
+    }
+    for (const k of collectS3KeysFromProject(project)) keySet.add(k);
+  }
+
+  for (const k of collectS3KeysFromProject({
+    artist: artist.profile,
+    voiceSample: artist.profile?.voiceSample,
+  })) {
+    keySet.add(k);
+  }
+
+  let s3Deleted = 0;
+  const s3KeysResult = await deleteS3Keys([...keySet]);
+  s3Deleted += s3KeysResult.deleted || 0;
+
+  for (const id of projectIds) {
+    const seg = safeS3Segment(id);
+    if (!seg) continue;
+    for (const prefix of [`audio/${seg}`, `clips/${seg}`]) {
+      const r = await deleteS3Prefix(prefix);
+      s3Deleted += r.deleted || 0;
+    }
+  }
+  const voiceSeg = safeS3Segment(cleanSlug);
+  if (voiceSeg) {
+    const r = await deleteS3Prefix(`audio/voice/${voiceSeg}`);
+    s3Deleted += r.deleted || 0;
+  }
+
+  if (projectIds.length) {
+    const placeholders = projectIds.map(() => "?").join(",");
+    await db.execute({
+      sql: `DELETE FROM album_tracks WHERE project_id IN (${placeholders})`,
+      args: projectIds,
+    });
+  }
+
+  const albumsRes = await db.execute({
+    sql: `SELECT id FROM albums WHERE artist_slug = ?`,
+    args: [cleanSlug],
+  });
+  for (const row of albumsRes.rows) {
+    await db.execute({
+      sql: `DELETE FROM album_tracks WHERE album_id = ?`,
+      args: [row.id],
+    });
+    await db.execute({
+      sql: `DELETE FROM albums WHERE id = ?`,
+      args: [row.id],
+    });
+  }
+
+  for (const id of projectIds) {
+    await db.execute({
+      sql: `DELETE FROM project_events WHERE project_id = ?`,
+      args: [id],
+    });
+    await db.execute({
+      sql: `DELETE FROM projects WHERE id = ?`,
+      args: [id],
+    });
+  }
+
+  await db.execute({
+    sql: `DELETE FROM artists WHERE slug = ?`,
+    args: [cleanSlug],
+  });
+
+  return {
+    ok: true,
+    slug: cleanSlug,
+    name,
+    projectsDeleted: projectIds.length,
+    albumsDeleted: albumsRes.rows.length,
+    s3ObjectsDeleted: s3Deleted,
+    s3Skipped: Boolean(s3KeysResult.skipped),
   };
 }
 

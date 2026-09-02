@@ -30,7 +30,19 @@ import {
   isAceStepMusicProvider,
 } from "./aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
-import { ACE_COMMERCIAL_LYRICS_STRUCTURE, artefactGuardsFromLock, coalesceGenres, defaultBpmForGenre, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "../lib/musicLane.js";
+import {
+  artefactGuardsFromLock,
+  buildLyricsCraftBrief,
+  coalesceGenres,
+  defaultBpmForGenre,
+  detectLyricsForm,
+  isMetalLane,
+  metalFlavorTags,
+  metalVoiceHint,
+  styleLockGenreBlob,
+  withKnownArtistLane,
+} from "../lib/musicLane.js";
+import { normalizeAndValidateLyrics } from "../lib/lyricsStructure.js";
 import { normalizeArtistPhotos } from "../lib/artistPhotos.js";
 import { isStudioEnabled } from "../lib/keys.js";
 import { isUsableRasterImage, materializeImageForStorage } from "./imagePersist.js";
@@ -568,7 +580,7 @@ export async function runArtist({
       throw new Error("Indique ton nom de scène.");
     }
     if (!forcedGender) {
-      throw new Error("Indique ton sexe / présentation (homme, femme ou non-binaire).");
+      throw new Error("Indique ton sexe / présentation (homme ou femme).");
     }
     if (selfAge == null) {
       throw new Error("Indique un âge valide (13–99).");
@@ -982,16 +994,8 @@ JSON strict: { "names": [string, string, string, string], "name": string, "aka":
   return profile;
 }
 
-export async function runLyrics({ keys, theme, artist, trends, language }) {
-  requireTextLlm(keys);
-  const lang = resolveLanguage(language, artist);
-  const langName = languagePromptName(lang);
-  const lock = artist?.styleLock;
-  const feat = normalizeFeatArtist(artist?.featArtist);
-  const duoBlock = feat ? duoLyricsInstruction(artist, feat) : "";
-  const data = await llmJson(
-    keys,
-    `Écris des paroles de chanson originales en ${langName} pour cet artiste.
+function buildLyricsPrompt({ lang, langName, theme, artist, trends, lock, feat, form, duoBlock, repairNote = "" }) {
+  return `Écris des paroles de chanson originales en ${langName} pour cet artiste.
 Artiste LEAD: ${promptJson({
   name: artist?.name,
   mode: artist?.mode,
@@ -1042,10 +1046,11 @@ ${
         : ""
 }
 ${duoBlock}
+${buildLyricsCraftBrief(form)}
 Langue obligatoire des paroles: ${langName} (code ${lang}) — aucune autre langue dans le chant.
 Thème/titre: ${theme || "inspire-toi des tendances"}
 Tendances: ${promptJson(lock ? {} : trends || {})}
-
+${repairNote ? `\nCORRECTION OBLIGATOIRE (précédente version invalide): ${repairNote}\n` : ""}
 JSON strict RFC 8259:
 {
   "title": string,
@@ -1054,12 +1059,33 @@ JSON strict RFC 8259:
   "structure": string[],
   "text": string
 }
-Le champ text doit contenir les tags MiniMax en anglais pour un TITRE COMMERCIAL (arc dynamique, pas linéaire): ${ACE_COMMERCIAL_LYRICS_STRUCTURE} avec de vraies paroles en ${langName} sous chaque tag.
-Varie l'intensité entre sections (intro légère, chorus plus large, bridge contrasté). Les deux [Verse] doivent différer.
+Le champ text doit contenir les tags MiniMax/ACE en anglais selon l'arc « ${form.id} »: ${form.tagsArc} avec de vraies paroles en ${langName} sous chaque tag.
+"structure" doit lister dans l'ordre les tags réellement présents dans "text".
 Dans "text", apostrophes brutes (don't) — jamais \\'. Sauts de ligne = \\n uniquement.
-"language" doit être exactement "${lang}".`,
-  );
-  return { ...data, language: lang };
+"language" doit être exactement "${lang}".`;
+}
+
+export async function runLyrics({ keys, theme, artist, trends, language }) {
+  requireTextLlm(keys);
+  const lang = resolveLanguage(language, artist);
+  const langName = languagePromptName(lang);
+  const lock = artist?.styleLock;
+  const form = detectLyricsForm(lock, artist);
+  const feat = normalizeFeatArtist(artist?.featArtist);
+  const duoBlock = feat ? duoLyricsInstruction(artist, feat, form) : "";
+
+  const promptArgs = { lang, langName, theme, artist, trends, lock, feat, form, duoBlock };
+  let data = await llmJson(keys, buildLyricsPrompt(promptArgs));
+  let normalized = normalizeAndValidateLyrics(data, form);
+
+  if (!normalized._validation?.ok) {
+    const repairNote = (normalized._validation?.errors || []).join("; ") || "structure invalide";
+    data = await llmJson(keys, buildLyricsPrompt({ ...promptArgs, repairNote }));
+    normalized = normalizeAndValidateLyrics(data, form);
+  }
+
+  const { _validation, ...lyrics } = normalized;
+  return { ...lyrics, language: lang, lyricsForm: form.id };
 }
 
 function buildTrackMusicPrompt({ lyrics, artist }) {

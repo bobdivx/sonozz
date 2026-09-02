@@ -8,7 +8,6 @@ export const ARTIST_GENDER_LABELS = {
 export const ARTIST_GENDER_OPTIONS = [
   { value: "male", label: ARTIST_GENDER_LABELS.male },
   { value: "female", label: ARTIST_GENDER_LABELS.female },
-  { value: "nonbinary", label: ARTIST_GENDER_LABELS.nonbinary },
 ];
 
 /**

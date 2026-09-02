@@ -7,6 +7,7 @@ import {
   computeArtistStats,
   adviseArtistCareer,
   upsertArtistFromProject,
+  deleteArtist,
 } from "../../../server/artists.js";
 import { previewCareerSchedule, runCareerSchedule } from "../../../server/careerSchedule.js";
 import { getUserKeys } from "../../../server/db.js";
@@ -21,6 +22,19 @@ export async function GET({ params }) {
     return json({ artist: hub });
   } catch (e) {
     return error(e.message || "Erreur artiste", 500);
+  }
+}
+
+export async function DELETE({ params }) {
+  try {
+    const slug = params.slug;
+    if (!slug) return error("Slug manquant", 400);
+    const result = await deleteArtist(slug);
+    return json(result);
+  } catch (e) {
+    const msg = e.message || "Suppression impossible";
+    const status = /introuvable/i.test(msg) ? 404 : 500;
+    return error(msg, status);
   }
 }
 

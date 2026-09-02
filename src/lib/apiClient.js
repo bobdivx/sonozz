@@ -492,6 +492,15 @@ export const api = {
           profile,
         })
       : request("/api/artists", { action: "save-profile", profile }),
+  /** Supprime l’artiste, ses projets / albums Turso et les objets S3 liés. */
+  deleteArtist: async (slug) => {
+    const res = await fetch(`/api/artists/${encodeURIComponent(slug)}`, {
+      method: "DELETE",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Suppression artiste impossible");
+    return data;
+  },
   /** Analyse / fige le timbre (extrait vocal ou audio fourni). */
   ensureArtistTimbre: (slug, opts = {}) =>
     request(`/api/artists/${encodeURIComponent(slug)}`, {

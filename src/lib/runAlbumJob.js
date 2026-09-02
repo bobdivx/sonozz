@@ -365,7 +365,10 @@ export async function runAlbumJob({
         try {
           lyricsI = await api.lyrics({
             theme: `${slot.workingTitle} — ${slot.theme}`,
-            artist: project.artist,
+            artist: {
+              ...project.artist,
+              featArtist: project.featArtist || project.artist?.featArtist || null,
+            },
             trends: project.trends,
             language: lang,
           });
