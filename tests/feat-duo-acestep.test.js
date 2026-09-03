@@ -5,6 +5,9 @@ import {
   normalizeFeatArtist,
   ensureAceStepDuoSingerTags,
   buildAceStepDuoStyle,
+  soloizeFeatVocalForDuo,
+  vocalLockForArtist,
+  duoLyricsInstruction,
 } from "../src/lib/featArtist.js";
 import { buildSunoPrompt } from "../src/lib/sunoPrompt.js";
 import {
@@ -13,6 +16,7 @@ import {
   pickAceStepModel,
   isAceNanLatentsError,
   isAceVramError,
+  stripAceStageDirections,
 } from "../src/server/aceStep.js";
 
 describe("prepareAceStepLyrics (duo)", () => {
@@ -44,6 +48,37 @@ Concrete echoes, in the heart of the town,`;
     assert.match(out, /Yo, concrete cracks/);
     assert.match(out, /Concrete echoes/);
   });
+
+  it("ne prend pas une didascalie avec virgule pour un duo", () => {
+    const raw = `[Intro]
+(Sound of grinding metal, distant sirens)
+Yeah.
+
+[Verse - male vocal]
+Yo, pavement`;
+    const out = prepareAceStepLyrics(
+      raw,
+      { name: "Jeser Mathieu", gender: "male" },
+      { name: "Veridian Echoes", gender: "male" },
+    );
+    assert.doesNotMatch(out, /Sound of grinding/i);
+    const introBlock = out.split("[Verse")[0];
+    assert.doesNotMatch(introBlock, /\[singer 2:/i);
+    assert.match(out, /Yeah/);
+  });
+});
+
+describe("duoLyricsInstruction", () => {
+  it("même sexe → singer 1/2, pas deux [Verse - male vocal]", () => {
+    const text = duoLyricsInstruction(
+      { name: "Jeser Mathieu", gender: "male", genre: "Hip Hop" },
+      { name: "Veridian Echoes", gender: "male", genre: "Gospel" },
+    );
+    assert.match(text, /\[singer 1: male\]/);
+    assert.match(text, /\[singer 2: male\]/);
+    assert.doesNotMatch(text, /\[Verse - male vocal\][\s\S]*\[Verse - male vocal\]/);
+    assert.match(text, /didascalies/i);
+  });
 });
 
 describe("ensureAceStepDuoSingerTags", () => {
@@ -61,8 +96,8 @@ describe("ensureAceStepDuoSingerTags", () => {
 describe("buildAceStepDuoStyle", () => {
   it("priorise un vrai titre (prod) puis le casting vocal", () => {
     const style = buildAceStepDuoStyle(
-      { name: "Ava", gender: "female", voice: "soft alto" },
-      { name: "Leo", gender: "male", voice: "baritone rap" },
+      { name: "Ava", gender: "female", voice: "soft alto", genre: "R&B" },
+      { name: "Leo", gender: "male", voice: "baritone rap", genre: "Hip Hop" },
       {
         genreSummary: "pop rnb",
         styleLock: {
@@ -72,12 +107,39 @@ describe("buildAceStepDuoStyle", () => {
         },
       },
     );
-    assert.match(style, /streaming-ready commercial|multi-instrument|layered/i);
-    assert.match(style, /dynamic arrangement|NOT one flat|never drums-only/i);
-    assert.match(style, /drums|bass|piano/i);
-    assert.match(style, /singer 1 \(Ava\): female/i);
-    assert.match(style, /singer 2 \(Leo\): male/i);
-    assert.doesNotMatch(style, /male rap lead AND singer 2 female/i);
+    assert.match(style, /ONE song only|single production lane/i);
+    assert.match(style, /singer 1 Ava/i);
+    assert.match(style, /singer 2 Leo/i);
+    assert.ok(style.length <= 700);
+  });
+
+  it("fusionne rap × gospel sans coller un chœur anonyme en singer 2", () => {
+    const feat = {
+      name: "Veridian Echoes",
+      gender: "male",
+      genre: "Gospel",
+      voice: "Gospel choir, call and response, lead vocalist with powerful ad-libs",
+      styleLock: {
+        vocalStyle: "Gospel choir, call and response",
+        timbre: "Powerful, resonant, full-bodied choir, clear lead vocals",
+        genreSummary: "Contemporary Gospel",
+      },
+    };
+    const solo = soloizeFeatVocalForDuo(vocalLockForArtist(feat));
+    assert.match(solo.vocalStyle, /solo gospel/i);
+    assert.match(solo.vocalStyle, /NOT a full choir/i);
+    assert.match(solo.timbreHint, /solo/i);
+
+    const style = buildAceStepDuoStyle(
+      { name: "Jeser Mathieu", gender: "male", genre: "Hip Hop" },
+      feat,
+      { styleBase: "hardcore hip hop", mood: "defiant" },
+    );
+    assert.match(style, /ONE song only/i);
+    assert.match(style, /Gospel/i);
+    assert.match(style, /solo gospel|solo man gospel/i);
+    assert.doesNotMatch(style, /Billboard|Lose Yourself|Brooklyn Tabernacle/i);
+    assert.ok(style.length <= 700);
   });
 });
 
@@ -139,8 +201,9 @@ Hello her`,
       featArtist: { name: "ZAHRA", gender: "female", voice: "female oriental vocals" },
     });
     assert.equal(body.bpm, ACE_DUO_BPM_CAP);
-    assert.match(body.style, /singer 1 \(Jeser Mathieu\): male/i);
-    assert.match(body.style, /singer 2 \(ZAHRA\): female/i);
+    assert.match(body.style, /singer 1 Jeser Mathieu \(male\)/i);
+    assert.match(body.style, /singer 2 ZAHRA \(female\)/i);
+    assert.match(body.style, /ONE song only|single production lane/i);
     assert.doesNotMatch(body.style, /singer 1 male rap lead AND singer 2 female melodic/i);
     assert.doesNotMatch(body.style, /Eminem/i);
     assert.doesNotMatch(body.lyrics, /^\(Jeser Mathieu\)$/m);
@@ -167,9 +230,9 @@ Hey`,
         instruments: ["drums", "bass", "synths"],
       },
     });
-    assert.match(body.style, /streaming-ready commercial|multi-instrument|layered/i);
-    assert.match(body.style, /singer 1 \(Ava\): female/i);
-    assert.match(body.style, /singer 2 \(Leo\): male/i);
+    assert.match(body.style, /ONE song only|single production lane/i);
+    assert.match(body.style, /singer 1 Ava \(female\)/i);
+    assert.match(body.style, /singer 2 Leo \(male\)/i);
     assert.match(body.lyrics, /\[singer 1: female\]/i);
     assert.match(body.lyrics, /\[singer 2: male\]/i);
   });
@@ -203,6 +266,21 @@ hook line`,
     });
     assert.equal(body.taskType, "cover");
     assert.ok(body.audioCoverStrength < 0.4);
+  });
+});
+
+describe("stripAceStageDirections", () => {
+  it("retire les didascalies Sound of static sans casser les tags", () => {
+    const raw = `[Intro]
+(Sound of static, then a distorted, heavy synth chord fades in)
+Yeah.
+
+[Verse - male vocal]
+Concrete cracks`;
+    const out = stripAceStageDirections(raw);
+    assert.doesNotMatch(out, /Sound of static/i);
+    assert.match(out, /Yeah/);
+    assert.match(out, /Concrete cracks/);
   });
 });
 

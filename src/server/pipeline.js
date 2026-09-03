@@ -28,6 +28,7 @@ import {
   pollAceStep,
   cancelAceStep,
   isAceStepMusicProvider,
+  ACE_DUO_STYLE_TRANSFER_STRENGTH,
 } from "./aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
 import {
@@ -1351,21 +1352,22 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
     const feat = normalizeFeatArtist(artist?.featArtist);
     const leadVocal = vocalLockForArtist(artist);
     const featVocal = feat ? vocalLockForArtist(feat) : null;
-    const mixedDuo =
+    // Duo mixte H/F : cover d’un titre solo (Lose Yourself) écrase souvent la 2e voix.
+    // Duo même sexe (rap×gospel) : on GARDE le cover pour le groove — le duo vient des tags singer, pas du cover.
+    const mixedGenderDuo =
       Boolean(featVocal?.genderCode) &&
       Boolean(leadVocal?.genderCode) &&
       featVocal.genderCode !== leadVocal.genderCode;
 
     let styleRef = { previewUrl: "", title: null, artistName: null, via: "none" };
-    // Duo mixte : pas de cover d’un titre solo (ex. Lose Yourself) — ça écrase la 2e voix.
-    if (!mixedDuo) {
+    if (!mixedGenderDuo) {
       try {
         styleRef = await resolveStyleLockPreview(keys, styleLock || artist?.styleLock);
       } catch (e) {
         console.warn("[acestep] preview style:", e.message);
       }
     } else {
-      console.info("[acestep] duo mixte — cover style lock désactivé pour préserver les deux voix");
+      console.info("[acestep] duo mixte H/F — cover désactivé pour préserver les deux voix");
     }
     const refTitle = [styleRef.title, styleRef.artistName].filter(Boolean).join(" — ");
     let bpmForAce = bpmGuess;
@@ -1378,8 +1380,10 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
       language: lang,
       bpm: bpmForAce,
       preview: isPreview,
-      referenceAudioUrl: skipStyleReference || mixedDuo ? "" : styleRef.previewUrl,
-      referenceAudioTitle: skipStyleReference || mixedDuo ? "" : refTitle,
+      referenceAudioUrl: skipStyleReference || mixedGenderDuo ? "" : styleRef.previewUrl,
+      referenceAudioTitle: skipStyleReference || mixedGenderDuo ? "" : refTitle,
+      // Duo même sexe / fusion de genres : cover léger (groove only), pas clone mono-voix.
+      audioCoverStrength: feat ? ACE_DUO_STYLE_TRANSFER_STRENGTH : undefined,
       styleLock,
       artist,
       forceModelId: String(forceAceModelId || "").trim() || null,

@@ -1,8 +1,6 @@
 import { resolveArtistGender, ARTIST_GENDER_LABELS } from "./artistGender.js";
 import {
   ACE_COMMERCIAL_LYRICS_STRUCTURE,
-  aceStepCommercialArrangementBits,
-  composeAceStepStyle,
   getLyricsFormPreset,
 } from "./musicLane.js";
 
@@ -145,6 +143,26 @@ export function vocalLockForArtist(artist) {
   };
 }
 
+/**
+ * En duo ACE, un feat « gospel choir / ensemble » ne doit pas devenir un 3e chœur
+ * anonyme : on le soloïse (lead gospel) pour garder un vrai duo 1+1.
+ * Les pads / chœurs d’ambiance restent possibles côté arrangement, pas comme singer 2.
+ */
+export function soloizeFeatVocalForDuo(lock) {
+  if (!lock || typeof lock !== "object") return lock;
+  const blob = `${lock.vocalStyle || ""} ${lock.timbreHint || ""} ${lock.genre || ""}`;
+  if (!/\bchoir\b|\bensembl\b|\bchorale\b|\bgospel choir\b/i.test(blob)) return lock;
+
+  const gender = lock.genderCode === "female" ? "woman" : lock.genderCode === "male" ? "man" : "solo";
+  return {
+    ...lock,
+    vocalStyle:
+      "powerful solo gospel lead vocalist, soulful belting, melismatic ad-libs — NOT a full choir as the featured singer",
+    timbreHint: `resonant solo ${gender} gospel lead, clear and powerful, choir only as soft background pads if needed`,
+    voiceHint: lock.voiceHint || "male vocals, man singer",
+  };
+}
+
 /** Phrase timbre prioritaire pour ACE / prompts (texte seul — pas de clone audio). */
 export function vocalTimbreLine(lock) {
   if (!lock) return "";
@@ -161,14 +179,15 @@ export function vocalTimbreLine(lock) {
  */
 export function duoVocalPromptBits(lead, feat) {
   const a = vocalLockForArtist(lead);
-  const b = vocalLockForArtist(feat);
+  let b = vocalLockForArtist(feat);
   if (!a || !b) return [];
+  b = soloizeFeatVocalForDuo(b);
 
   const leadDesc = [a.voiceHint, vocalTimbreLine(a)].filter(Boolean).join(", ");
   const featDesc = [b.voiceHint, vocalTimbreLine(b)].filter(Boolean).join(", ");
 
   const bits = [
-    `duet featuring two distinct lead singers — never a single singer or anonymous choir`,
+    `duet featuring two distinct lead singers — never collapse the featured part into an anonymous choir`,
     `lead vocalist ${a.name}: ${leadDesc}`,
     `featured vocalist ${b.name}: ${featDesc}`,
     a.timbreHint
@@ -179,6 +198,7 @@ export function duoVocalPromptBits(lead, feat) {
       : null,
     `call-and-response and traded verses between ${a.name} and ${b.name}`,
     `keep both vocal identities and timbres clearly separate throughout the mix`,
+    `genre fusion is OK (e.g. rap verses + gospel featured hooks) — keep arrangement coherent, not two songs at once`,
     `never collapse into one male-only or one female-only performance`,
   ].filter(Boolean);
 
@@ -235,7 +255,12 @@ export function prepareAceStepLyrics(text, lead, feat) {
     if (both) return "duet";
     if (leadNames.some((ln) => n === ln || n.includes(ln))) return "lead";
     if (featNames.some((fn) => n === fn || n.includes(fn))) return "feat";
-    if (/&|\/|,|\band\b/i.test(inner[1])) return "duet";
+    // « A & B » / « A and B » seulement — une virgule de didascalie n’est PAS un duo.
+    if (/\band\b|&|\//i.test(inner[1]) && leadNames.length && featNames.length) {
+      const hasLead = leadNames.some((ln) => n.includes(ln));
+      const hasFeat = featNames.some((fn) => n.includes(fn));
+      if (hasLead && hasFeat) return "duet";
+    }
     return "drop";
   };
 
@@ -373,66 +398,52 @@ export function ensureAceStepDuoSingerTags(text, lead, feat) {
 }
 
 /**
- * Style ACE-Step duo : d’abord un VRAI titre (prod / instruments),
- * puis le casting vocal. Un prompt 90 % « vocal duet » pousse ACE vers l’a cappella.
- * On n’injecte pas le vocalStyle / matchedName du lock (DNA mono-voix type Eminem).
+ * Style ACE-Step duo : UNE seule lane de prod (lead) + 2 voix.
+ * Prompt court — trop de bits commerciaux / fusion / DNA → ACE colle 2 morceaux.
  */
 export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock, styleBase } = {}) {
   const a = vocalLockForArtist(lead);
-  const b = vocalLockForArtist(feat);
+  let b = vocalLockForArtist(feat);
   if (!a || !b) return "";
+  b = soloizeFeatVocalForDuo(b);
 
   const leadTimbre = vocalTimbreLine(a) || a.voiceHint;
   const featTimbre = vocalTimbreLine(b) || b.voiceHint;
-  const mixed = a.genderCode && b.genderCode && a.genderCode !== b.genderCode;
   const lock = styleLock && typeof styleLock === "object" ? styleLock : null;
 
-  // Prod sans DNA mono-artiste (matchedName / « X style rap ») ni vocalStyle solo.
-  let scrubbedBase = String(styleBase || "").trim();
-  const bannedName = String(lock?.matchedName || "").trim();
-  if (bannedName) {
-    scrubbedBase = scrubbedBase.split(bannedName).join("").replace(/\s{2,}/g, " ").trim();
-  }
-  scrubbedBase = scrubbedBase
-    .replace(/\b[\w'.-]+\s+style\b[^.,;]*/gi, "")
-    .replace(/\bmale vocals?\b/gi, "")
-    .replace(/\bfemale vocals?\b/gi, "")
-    .replace(/[,\s]+$/g, "")
-    .replace(/^[,\s]+/g, "")
-    .trim();
+  const leadGenre = String(
+    a.genre || lock?.genreSummary || genreSummary || styleBase || "hip hop",
+  )
+    .trim()
+    .slice(0, 80);
+  const featGenre = String(b.genre || "").trim().slice(0, 60);
+  const moodBit = String(mood || lock?.mood || a.mood || "").trim().slice(0, 60);
 
-  const duoLock = lock
-    ? {
-        genreSummary: lock.genreSummary || null,
-        sonicKeywords: Array.isArray(lock.sonicKeywords) ? lock.sonicKeywords.slice(0, 6) : undefined,
-        production: lock.production || null,
-        rhythmFeel: lock.rhythmFeel || null,
-        instruments: Array.isArray(lock.instruments) ? lock.instruments.slice(0, 6) : undefined,
-        doNot: Array.isArray(lock.doNot) ? lock.doNot : undefined,
-        // pas de vocalStyle / matchedName → évite « male rap only »
-      }
-    : null;
+  // Bed instruments = lane LEAD only (jamais les organs/choir du feat).
+  const genreNorm = leadGenre.toLowerCase();
+  let bed = "808 bass, boom-bap drums, hi-hats, sparse piano, synth pads";
+  if (/trap|drill/.test(genreNorm)) bed = "808 bass, trap drums, hi-hats, dark pads, melodic hook";
+  else if (/r&?b|soul/.test(genreNorm)) bed = "drum kit, bass, electric piano, pads";
+  else if (/gospel/.test(genreNorm)) bed = "live drums, bass, piano, organ pads";
+  else if (/rock|metal/.test(genreNorm)) bed = "drums, bass, guitars, pads";
 
-  const genreBlob =
-    String(lock?.genreSummary || genreSummary || a.genre || scrubbedBase || "pop, radio-ready").trim();
-  const production = composeAceStepStyle(scrubbedBase || genreBlob, duoLock);
-  const commercial = aceStepCommercialArrangementBits(lock || { genreSummary: genreBlob }, { duo: true });
+  const fusion =
+    featGenre && !genreNorm.includes(featGenre.toLowerCase().slice(0, 6))
+      ? `ONE song only: ${leadGenre} production throughout; ${b.name} brings ${featGenre} vocal color on hooks — never switch to a second genre mid-track`
+      : `ONE song only: coherent ${leadGenre} arrangement from intro to outro`;
 
   return [
-    ...commercial,
-    production,
-    mood || lock?.mood || a.mood || b.mood || null,
-    mixed ? "mixed-gender vocal duet over the full band" : "two-singer vocal duet over the full band",
-    `singer 1 (${a.name}): ${a.genderCode || "lead"} — ${leadTimbre}`,
-    `singer 2 (${b.name}): ${b.genderCode || "featured"} — ${featTimbre}`,
-    a.timbreHint ? `LOCK singer 1 timbre = ${a.timbreHint}` : null,
-    b.timbreHint ? `LOCK singer 2 timbre = ${b.timbreHint}` : null,
-    `obey [singer 1: ${a.genderCode || "vocal"}] / [singer 2: ${b.genderCode || "vocal"}] tags; keep both voices distinct`,
-    `production lane stays with lead ${a.name}${a.genre ? ` (${a.genre})` : ""}`,
+    `${leadGenre} duet hit — single production lane, full band, not two songs glued together`,
+    `instruments: ${bed}`,
+    fusion,
+    moodBit || null,
+    `singer 1 ${a.name} (${a.genderCode || "lead"}): ${leadTimbre}`.slice(0, 180),
+    `singer 2 ${b.name} (${b.genderCode || "feat"}): ${featTimbre}`.slice(0, 180),
+    `obey [singer 1]/[singer 2] tags; both voices clear; no anonymous choir as singer 2`,
   ]
     .filter(Boolean)
     .join(". ")
-    .slice(0, 1200);
+    .slice(0, 700);
 }
 
 /**
@@ -525,15 +536,23 @@ export function duoLyricsInstruction(lead, feat, form = null) {
   const hasVerse = /\[Verse\]/i.test(arc);
   const leadCue = genderVocalCue(a.genderCode);
   const featCue = genderVocalCue(b.genderCode);
+  const sameGender = a.genderCode && b.genderCode && a.genderCode === b.genderCode;
+  const verseLeadTag = sameGender
+    ? `[Verse]\n[singer 1: ${a.genderCode}]`
+    : `[Verse - ${leadCue}]`;
+  const verseFeatTag = sameGender
+    ? `[Verse]\n[singer 2: ${b.genderCode}]`
+    : `[Verse - ${featCue}]`;
 
   const verseRules = hasVerse
     ? `- Alterne les couplets avec des tags ACE-Step (PAS de ligne "(${a.name})" qui serait chantée) :
-  [Verse - ${leadCue}]
-  [Verse - ${featCue}]
+  ${verseLeadTag}
+  ${verseFeatTag}
+- En duo même sexe, n’utilise JAMAIS deux fois « [Verse - ${leadCue}] » : ACE fusionne les voix.
 - Les 2 couplets ([Verse]) doivent différer (pas le même texte copié)`
     : `- Alterne les sections narratives entre lead et feat via tags ACE-Step (PAS de ligne "(${a.name})" chantée) :
-  [Build - ${leadCue}] ou section équivalente pour le lead
-  section équivalente pour le feat (${featCue})`;
+  [Build]\n[singer 1: ${a.genderCode || "vocal"}]
+  [singer 2: ${b.genderCode || "vocal"}]`;
 
   return `
 DUO OBLIGATOIRE — deux chanteurs distincts (ne fusionne JAMAIS en un seul narrateur) :
@@ -543,9 +562,9 @@ Règles structure dans "text" (titre COMMERCIAL, forme « ${preset.id} », pas l
 - Arc obligatoire: ${arc}
 - Inclure Intro (ambiance), section contraste si présente dans l'arc (Bridge / Breakdown / Break), Outro
 ${verseRules}
-- Au moins un [${hookTag} - duet ${a.genderCode || "lead"} and ${b.genderCode || "featured"} vocals] chanté par les deux ; le dernier ${hookTag} peut être plus long / ad-libs.
+- Au moins un [${hookTag}] suivi de [singer 1: ${a.genderCode || "vocal"}] et [singer 2: ${b.genderCode || "vocal"}] (les deux chantent le hook).
 - Chaque artiste garde SA personnalité d'écriture et son registre — pas de pastiche croisé.
-- Tags structure MiniMax/ACE selon l'arc ci-dessus — le genre vocal va DANS le tag avec un tiret, jamais entre parenthèses sur une ligne seule.
 - N'écris PAS les noms d'artistes comme paroles à chanter (sauf si c'est un hook volontaire très court).
+- N'écris PAS de didascalies entre parenthèses (pas de « (Sound of…) » — ACE les chante / les mélange).
 `.trim();
 }

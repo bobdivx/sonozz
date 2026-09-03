@@ -341,6 +341,7 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
   };
 
   if (duo) {
+    // Auto duo : Turbo BF16 d’abord (rapide) ; SFT reste dispo via préférence user.
     const id = pickReady(turboBf16Short, turboBf16, turbo, sft) || readyIds[0];
     if (id) return { modelId: id, reason: `duo · ${aceStepModelLabel(id)} (auto)` };
   }
@@ -362,12 +363,24 @@ export function lyricsForAceStepPreview(text) {
 }
 
 /**
- * Force du source audio en mode cover (0 = texte seul, 1 = clone).
+ * ACE chante les didascalies (« (Sound of static…) ») → bruit / intro inaudible.
+ * On retire les parenthèses de mise en scène, on garde (ad-libs) courts.
+ */
+export function stripAceStageDirections(text) {
+  return String(text || "")
+    .replace(/^\s*\((?:sound of|sfx|fx|music|instrumental|distorted|fade|static)[^)]{0,160}\)\s*$/gim, "")
+    .replace(/\((?:sound of|sfx|fx)[^)]{0,160}\)/gi, "")
+    .replace(/^\s*\([^)]{20,160}\)\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Force du source audio en mode cover (0 = texte seul, 1 = clone).
  * 0.5 = groove / structure du titre phare, paroles originales.
- * Duo mixte : plus bas pour ne pas cloner une seule voix (ex. Lose Yourself).
+ * Duo : plus bas pour garder le groove SANS coller un 2e morceau mono-voix.
  */
 export const ACE_STYLE_TRANSFER_STRENGTH = 0.5;
-export const ACE_DUO_STYLE_TRANSFER_STRENGTH = 0.22;
+export const ACE_DUO_STYLE_TRANSFER_STRENGTH = 0.18;
 
 /** BPM max conseillé quand un feat doit rester audible (évite 172 Lose Yourself). */
 export const ACE_DUO_BPM_CAP = 118;
@@ -418,7 +431,9 @@ export function buildAceStepBody({
   const lead = artist && typeof artist === "object" ? artist : null;
   const feat = normalizeFeatArtist(featArtist || lead?.featArtist);
   const isDuo = Boolean(feat?.name);
-  const lyricsRaw = String(preview ? lyricsForAceStepPreview(lyrics) : lyrics || "");
+  const lyricsRaw = stripAceStageDirections(
+    String(preview ? lyricsForAceStepPreview(lyrics) : lyrics || ""),
+  );
   let lyricsClean = isDuo
     ? prepareAceStepLyrics(lyricsRaw, lead || { name: "Lead" }, feat)
     : lyricsRaw;
@@ -494,10 +509,11 @@ export function buildAceStepBody({
     const refTitle = String(referenceAudioTitle || "").trim();
     if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
     body.audioCoverStrength = strength;
-    body.coverNoiseStrength = isDuo ? 0.5 : 0.35;
+    // Noise bas en duo : trop haut → ACE remix « 2 titres en même temps ».
+    body.coverNoiseStrength = isDuo ? 0.28 : 0.35;
     body.taskType = "cover";
     body.instruction = isDuo
-      ? "Generate a STREAMING-READY commercial hit: multi-instrument arrangement with dynamic section changes (intro/verse/pre-chorus/chorus/bridge/final chorus) AND a two-singer duet; obey [singer 1]/[singer 2] tags; never drums-only, never flat linear loop, never a cappella; keep groove from reference but do not clone a single voice:"
+      ? "ONE coherent duet song: keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags with two distinct voices; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
       : "Generate a STREAMING-READY commercial hit with multi-instrument arrangement and dynamic section changes (not a flat loop); vocals sit in a full band mix:";
     if (!isTurbo && (body.guidanceScale == null || body.guidanceScale < 7)) {
       body.guidanceScale = 7;
