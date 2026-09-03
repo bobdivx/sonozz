@@ -612,6 +612,32 @@ export async function ensureAceGpuSlot(keys, { timeoutMs = 120_000 } = {}) {
   }
 }
 
+/** Ensure + attend que Gradio réponde (boot ACE = souvent 15–60s). */
+export async function wakeAceStepPipeline(keys, { budgetMs = 90_000 } = {}) {
+  const woke = await ensureAceGpuSlot(keys);
+  if (!woke.ok && !woke.skipped) {
+    console.warn("[acestep] ensure GPU échoué:", woke.error || woke.arbiter);
+  } else {
+    console.info("[acestep] ensure GPU ace…", woke.data?.message || woke.arbiter || "ok");
+  }
+  const base = resolveAceStepBaseUrl(keys);
+  const start = Date.now();
+  let last = null;
+  while (Date.now() - start < budgetMs) {
+    const health = await aceFetch(base, "/api/generate/health").catch((e) => ({
+      healthy: false,
+      error: e.message,
+    }));
+    const status = await aceFetch(base, "/api/generate/model-status").catch(() => ({}));
+    last = interpretAceProbe({ health, status, base });
+    if (last.pipelineUp || last.loading) {
+      return { ok: true, woke, probe: last };
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  return { ok: false, woke, probe: last };
+}
+
 export async function testAceStep(keys, { ensure = true } = {}) {
   const base = resolveAceStepBaseUrl(keys);
   const probeOnce = async () => {
@@ -625,17 +651,17 @@ export async function testAceStep(keys, { ensure = true } = {}) {
   };
 
   let { health, modelsRaw, status, sys, interpreted } = await probeOnce();
+  // Studio down OU Gradio down → réveil auto (pas seulement pipelineUp false).
   if (
     ensure &&
-    !interpreted.unreachable &&
     !interpreted.loading &&
-    interpreted.pipelineUp === false
+    (interpreted.unreachable || interpreted.pipelineUp === false)
   ) {
-    console.info("[acestep] pipeline down — ensure GPU slot ace…");
-    const woke = await ensureAceGpuSlot(keys);
-    if (woke.ok) {
-      await new Promise((r) => setTimeout(r, 2500));
-      ({ health, modelsRaw, status, sys, interpreted } = await probeOnce());
+    console.info("[acestep] ACE down — wake via GPU Arbiter…");
+    const wake = await wakeAceStepPipeline(keys);
+    ({ health, modelsRaw, status, sys, interpreted } = await probeOnce());
+    if (!interpreted.pipelineUp && !interpreted.loading && wake.probe) {
+      interpreted = wake.probe;
     }
   }
   if (interpreted.unreachable) {
@@ -687,7 +713,7 @@ export async function switchAceStepModel(keys, modelId, opts = {}) {
 
   let catalogModels = [];
   try {
-    const info = await testAceStep(keys);
+    let info = await testAceStep(keys);
     catalogModels = info.models || [];
     if (info.loading) {
       const target = info.loadingModel || id;
@@ -701,9 +727,16 @@ export async function switchAceStepModel(keys, modelId, opts = {}) {
       }
       // Autre modèle en cours : on retente le probe puis le switch
     } else if (info.pipelineUp === false) {
-      throw new Error(
-        "Moteur ACE-Step down (Gradio :7865). Réveille ACE via GPU Arbiter (:8790) ou systemd ace-step-studio, puis réessaie.",
-      );
+      console.info("[acestep] switch : pipeline encore down — 2e wake…");
+      await wakeAceStepPipeline(keys);
+      info = await testAceStep(keys, { ensure: false });
+      catalogModels = info.models || [];
+      if (info.pipelineUp === false && !info.loading) {
+        throw new Error(
+          info.message ||
+            "Moteur ACE-Step down (Gradio :7865) après réveil auto. Vérifie GPU Arbiter (:8790) / systemd ace-step-studio.",
+        );
+      }
     }
   } catch (e) {
     if (/Moteur ACE-Step down|Chargement DiT/i.test(e.message)) throw e;
@@ -734,8 +767,9 @@ export async function switchAceStepModel(keys, modelId, opts = {}) {
     body.lm_model_path = String(opts.lmModel);
   }
   const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : ACE_SWITCH_TIMEOUT_MS;
-  try {
-    const result = await withAuth(base, (token) =>
+
+  const doSwitch = () =>
+    withAuth(base, (token) =>
       aceFetch(base, "/api/generate/switch-model", {
         method: "POST",
         token,
@@ -743,13 +777,23 @@ export async function switchAceStepModel(keys, modelId, opts = {}) {
         timeoutMs,
       }),
     );
+
+  try {
+    const result = await doSwitch();
     return { ok: true, model: id, result };
   } catch (e) {
     const raw = String(e.message || "");
-    if (/fetch failed|ECONNREFUSED|connected.:false|healthy.:false/i.test(raw)) {
-      throw new Error(
-        "Changement de modèle impossible : Gradio ACE-Step (:7865) ne répond plus. GPU Arbiter → Réveiller ACE, puis réessaie.",
-      );
+    if (/fetch failed|ECONNREFUSED|connected.:false|healthy.:false|délai dépassé|injoignable/i.test(raw)) {
+      console.warn("[acestep] switch-model coupé — wake + retry…");
+      await wakeAceStepPipeline(keys);
+      try {
+        const result = await doSwitch();
+        return { ok: true, model: id, result, retried: true };
+      } catch (e2) {
+        throw new Error(
+          "Changement de modèle impossible : Gradio ACE-Step (:7865) ne répond plus après réveil auto. Vérifie GPU Arbiter (:8790).",
+        );
+      }
     }
     if (/Unknown DiT model|Failed to download DiT/i.test(raw)) {
       throw new Error(
