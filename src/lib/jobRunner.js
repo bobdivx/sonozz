@@ -899,7 +899,7 @@ async function runTrackBackgroundJob(job) {
   if (!saved?.id) throw new Error("Projet introuvable pour le morceau");
   if (abortState.aborted) return;
 
-  const project = { ...emptyProject(), ...(saved.project || {}) };
+  let project = { ...emptyProject(), ...(saved.project || {}) };
   const seed = saved.seed || {};
   const preview = Boolean(job.preview);
   const live = getJob(id) || job;
