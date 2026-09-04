@@ -155,6 +155,16 @@ export async function POST({ request }) {
           audioCoverStrength: body?.audioCoverStrength,
           forceModelId: String(body?.modelId || "").trim() || null,
           labMode: true,
+          labOverrides: {
+            inferenceSteps: body?.inferenceSteps,
+            guidanceScale: body?.guidanceScale,
+            coverNoiseStrength: body?.coverNoiseStrength,
+            audioCoverStrength: body?.audioCoverStrength,
+            seed: body?.seed,
+            randomSeed: body?.randomSeed,
+            taskType: body?.taskType,
+            audioFormat: body?.audioFormat,
+          },
         });
         return json({
           ok: true,

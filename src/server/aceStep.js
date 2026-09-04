@@ -121,6 +121,39 @@ export function aceStepModelLabel(modelId) {
   return aceStepModelMeta(modelId)?.label || String(modelId || "").replace(/^.*\//, "") || "auto";
 }
 
+/** Basename DiT (`acestep-v15-xl-sft` ↔ `org/acestep-v15-xl-sft`). */
+export function aceStepDitBasename(modelId) {
+  return String(modelId || "")
+    .trim()
+    .replace(/^.*\//, "")
+    .toLowerCase();
+}
+
+export function aceStepDitSame(a, b) {
+  const x = aceStepDitBasename(a);
+  const y = aceStepDitBasename(b);
+  return Boolean(x && y && x === y);
+}
+
+/** Steps / guidance du DiT réellement chargé (évite 50 steps + CFG 7 sur Turbo). */
+export function aceStepInferenceForModel(modelId) {
+  const meta = aceStepModelMeta(modelId);
+  const id = aceStepDitBasename(modelId);
+  const isTurbo = /turbo/i.test(id) && !/merge/i.test(id);
+  if (meta) {
+    return {
+      inferenceSteps: meta.steps,
+      guidanceScale: meta.guidance,
+      isTurbo: Boolean(meta.steps <= 8) || isTurbo,
+    };
+  }
+  return {
+    inferenceSteps: isTurbo ? 8 : 50,
+    guidanceScale: isTurbo ? 0 : 7,
+    isTurbo,
+  };
+}
+
 /** IDs Gradio réellement utilisables, issus du catalogue Studio live. */
 export function listAceStepSwitchableModels(catalogModels = []) {
   return (Array.isArray(catalogModels) ? catalogModels : []).filter(
@@ -381,9 +414,16 @@ export function stripAceStageDirections(text) {
  */
 export const ACE_STYLE_TRANSFER_STRENGTH = 0.5;
 export const ACE_DUO_STYLE_TRANSFER_STRENGTH = 0.18;
+/** Première version duo (f9f0bf6, 31 août) — avant baisse à 0.18. */
+export const ACE_DUO_STYLE_TRANSFER_STRENGTH_INTRO = 0.22;
 
 /** BPM max conseillé quand un feat doit rester audible (évite 172 Lose Yourself). */
 export const ACE_DUO_BPM_CAP = 118;
+
+/** Noise cover : solo stable ; duo intro (0.5) puis actuel (0.28). */
+export const ACE_COVER_NOISE_SOLO = 0.35;
+export const ACE_COVER_NOISE_DUO_INTRO = 0.5;
+export const ACE_COVER_NOISE_DUO = 0.28;
 
 /** Plage durée titres complets (secondes) — hits radio typiques. */
 export const ACE_FULL_DURATION_MIN = 140; // ~2:20
@@ -405,6 +445,90 @@ export function pickAceStepDurationSec({ preview = false, durationSec } = {}) {
   return Math.round(ACE_FULL_DURATION_MIN + Math.random() * span);
 }
 
+function labOverrideNumber(raw, { min, max, integer = false } = {}) {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  let v = integer ? Math.round(n) : n;
+  if (Number.isFinite(min)) v = Math.max(min, v);
+  if (Number.isFinite(max)) v = Math.min(max, v);
+  return v;
+}
+
+/**
+ * Body lab : style/paroles bruts + overrides manuels (steps/CFG/cover).
+ * Sans override → defaults du DiT (`aceStepInferenceForModel`).
+ */
+export function buildLabAceStepBody({
+  title,
+  style,
+  lyrics,
+  language = "en",
+  bpm,
+  preview = false,
+  durationSec,
+  referenceAudioUrl,
+  referenceAudioTitle,
+  audioCoverStrength,
+  modelId,
+  overrides = null,
+} = {}) {
+  const o = overrides && typeof overrides === "object" ? overrides : {};
+  const infer = aceStepInferenceForModel(modelId);
+  const styleFinal = String(style || "").trim().slice(0, 2000) || "pop music";
+  const lyricsClean = String(lyrics || "").trim().slice(0, 8000);
+  const steps =
+    labOverrideNumber(o.inferenceSteps, { min: 1, max: 200, integer: true }) ??
+    infer.inferenceSteps;
+  const guidance =
+    labOverrideNumber(o.guidanceScale, { min: 0, max: 20 }) ?? infer.guidanceScale;
+  const coverDefault =
+    labOverrideNumber(o.audioCoverStrength, { min: 0.05, max: 1 }) ??
+    labOverrideNumber(audioCoverStrength, { min: 0.05, max: 1 }) ??
+    ACE_STYLE_TRANSFER_STRENGTH;
+  const noiseDefault =
+    labOverrideNumber(o.coverNoiseStrength, { min: 0, max: 1 }) ?? ACE_COVER_NOISE_SOLO;
+
+  const body = {
+    customMode: true,
+    title: String(preview ? `${title || "LAB"} · extrait` : title || "ACE Lab").slice(0, 120),
+    style: styleFinal,
+    lyrics: lyricsClean,
+    prompt: lyricsClean,
+    instrumental: !lyricsClean,
+    vocalLanguage: String(language || "en").slice(0, 8),
+    duration: pickAceStepDurationSec({
+      preview,
+      durationSec: preview ? 30 : durationSec,
+    }),
+    bpm: Number.isFinite(Number(bpm))
+      ? Math.min(200, Math.max(60, Math.round(Number(bpm))))
+      : undefined,
+    inferenceSteps: steps,
+    guidanceScale: guidance,
+    ditModel: modelId || undefined,
+    audioFormat: String(o.audioFormat || "mp3").slice(0, 8),
+    randomSeed: o.randomSeed === false ? false : true,
+    pollinations: { enabled: false },
+  };
+  const seed = labOverrideNumber(o.seed, { integer: true });
+  if (seed != null && body.randomSeed === false) {
+    body.seed = seed;
+  }
+
+  const refUrl = String(referenceAudioUrl || "").trim();
+  if (/^https?:\/\//i.test(refUrl)) {
+    body.referenceAudioUrl = refUrl;
+    body.sourceAudioUrl = refUrl;
+    const refTitle = String(referenceAudioTitle || "").trim();
+    if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
+    body.audioCoverStrength = coverDefault;
+    body.coverNoiseStrength = noiseDefault;
+    body.taskType = String(o.taskType || "cover").slice(0, 32);
+  }
+  return body;
+}
+
 export function buildAceStepBody({
   title,
   style,
@@ -422,8 +546,7 @@ export function buildAceStepBody({
   artist = null,
   featArtist = null,
 }) {
-  const meta = aceStepModelMeta(modelId);
-  const isTurbo = Boolean(meta && meta.steps <= 8);
+  const infer = aceStepInferenceForModel(modelId);
   const duration = pickAceStepDurationSec({ preview, durationSec });
   let refUrl = String(referenceAudioUrl || "").trim();
   if (isAceHostedAudioUrl(studioBase, refUrl)) refUrl = "";
@@ -497,8 +620,8 @@ export function buildAceStepBody({
     vocalLanguage: String(language || "fr").slice(0, 8),
     duration,
     bpm: bpmOut,
-    inferenceSteps: meta?.steps || (isTurbo ? 8 : 50),
-    guidanceScale: meta ? meta.guidance : 0,
+    inferenceSteps: infer.inferenceSteps,
+    guidanceScale: infer.guidanceScale,
     ditModel: modelId || undefined,
     audioFormat: "mp3",
     randomSeed: true,
@@ -511,12 +634,12 @@ export function buildAceStepBody({
     if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
     body.audioCoverStrength = strength;
     // Noise bas en duo : trop haut → ACE remix « 2 titres en même temps ».
-    body.coverNoiseStrength = isDuo ? 0.28 : 0.35;
+    body.coverNoiseStrength = isDuo ? ACE_COVER_NOISE_DUO : ACE_COVER_NOISE_SOLO;
     body.taskType = "cover";
     body.instruction = isDuo
       ? "ONE coherent duet song: keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags with two distinct voices; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
       : "Generate a STREAMING-READY commercial hit with multi-instrument arrangement and dynamic section changes (not a flat loop); vocals sit in a full band mix:";
-    if (!isTurbo && (body.guidanceScale == null || body.guidanceScale < 7)) {
+    if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < 7)) {
       body.guidanceScale = 7;
     }
   }
@@ -593,13 +716,44 @@ export function interpretAceProbe({ health, status, base } = {}) {
   };
 }
 
-/** Réveille ACE via l’arbitre GPU Demeter (POST /ensure). */
+/** Réveille ACE via l’arbitre GPU Demeter — soft si déjà up (évite systemd restart / 502). */
 export async function ensureAceGpuSlot(keys, { timeoutMs = 120_000 } = {}) {
   const arbiter = String(keys?.gpuArbiterUrl || process.env.GPU_ARBITER_URL || DEFAULT_GPU_ARBITER)
     .trim()
     .replace(/\/+$/, "");
   if (!arbiter) return { ok: false, skipped: true };
   try {
+    const stRes = await fetch(`${arbiter}/status`, { signal: AbortSignal.timeout(5000) });
+    const st = await stRes.json().catch(() => ({}));
+    if (st?.procs?.ace && !st?.switching) {
+      if (st.slot === "ace") {
+        await fetch(`${arbiter}/touch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ owner: "sonozz" }),
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => null);
+        return { ok: true, arbiter, data: { ok: true, message: "already", slot: "ace" } };
+      }
+      const soft = await fetch(`${arbiter}/acquire`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slot: "ace",
+          owner: "sonozz",
+          timeout_s: Math.min(120, Math.round(timeoutMs / 1000)),
+          start: false,
+        }),
+        signal: AbortSignal.timeout(Math.min(timeoutMs, 130_000)),
+      });
+      const data = await soft.json().catch(() => ({}));
+      if (soft.ok && data?.ok !== false) {
+        return { ok: true, arbiter, data: { ...data, message: data.message || "acquired-soft" } };
+      }
+      // Process vivant : ne pas hard-ensure (restart).
+      console.warn("[acestep] soft acquire failed, ACE process alive — skip hard ensure");
+      return { ok: true, arbiter, data: { ok: true, message: "process-alive-bypass" } };
+    }
     const res = await fetch(`${arbiter}/ensure`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -832,7 +986,7 @@ export async function waitForAceStepModel(keys, modelId, { budgetMs = ACE_MODEL_
       );
       const active = String(status?.activeModel || status?.model || "").trim();
       const state = String(status?.state || status?.status || status?.phase || "").toLowerCase();
-      if (active === id && !/unload|loading|error|failed/.test(state)) {
+      if (aceStepDitSame(active, id) && !/unload|loading|error|failed/.test(state)) {
         return { ok: true, activeModel: active, state: state || "ready" };
       }
       if (/error|failed/.test(state)) {
@@ -1347,6 +1501,8 @@ export async function startAceStep(keys, {
   /** Lab : style/lyrics bruts, sans compose duo / DNA artiste. */
   labMode = false,
   durationSec = undefined,
+  /** Lab : overrides optionnels (steps, CFG, noise…). null/undefined = auto DiT. */
+  labOverrides = null,
 } = {}) {
   const base = resolveAceStepBaseUrl(keys);
   let info = await testAceStep(keys);
@@ -1367,12 +1523,15 @@ export async function startAceStep(keys, {
   const catalog = { models: info.models, activeModel: info.activeModel };
   const duo = labMode ? false : Boolean(normalizeFeatArtist(artist?.featArtist)?.name);
   const pick = pickAceStepModel(catalog, {
-    preferredId: String(keys?.aceStepPreferredModel || "").trim() || null,
+    // Lab : ne pas imposer la préférence settings (souvent SFT) si Turbo est chargé.
+    preferredId: labMode
+      ? null
+      : String(keys?.aceStepPreferredModel || "").trim() || null,
     duo,
     forceModelId,
   });
-  const active = String(catalog.activeModel || "").trim();
-  const needSwitch = Boolean(pick.modelId && active && pick.modelId !== active);
+  let active = String(catalog.activeModel || "").trim();
+  const needSwitch = Boolean(pick.modelId && active && !aceStepDitSame(pick.modelId, active));
   if (needSwitch) {
     try {
       const probe = await testAceStep(keys);
@@ -1384,10 +1543,9 @@ export async function startAceStep(keys, {
       console.info(
         `[acestep] chargement ${aceStepModelLabel(pick.modelId)} (peut prendre plusieurs minutes)…`,
       );
-      await switchAceStepModel(keys, pick.modelId);
+      await switchAceStepModel(keys, pick.modelId, { offloadToCpu: false });
     } catch (e) {
       // Timeout fréquent pendant load SFT : Studio mute mais continue côté GPU.
-      // On poll Ready puis on lance quand même (ditModel dans le body).
       console.warn("[acestep] switch-model:", e.message);
       if (/ne répond plus|ECONNREFUSED/i.test(e.message)) throw e;
       if (
@@ -1399,19 +1557,39 @@ export async function startAceStep(keys, {
       const waited = await waitForAceStepModel(keys, pick.modelId);
       if (waited.ok) {
         console.info(`[acestep] ${aceStepModelLabel(pick.modelId)} Ready après attente`);
+        active = waited.activeModel || pick.modelId;
       } else {
-        console.warn(
-          `[acestep] ${aceStepModelLabel(pick.modelId)} pas confirmé Ready — ` +
-            `génération quand même (ditModel). (${String(waited.message || e.message).slice(0, 140)})`,
+        throw new Error(
+          `Modèle demandé « ${aceStepModelLabel(pick.modelId)} » pas chargé ` +
+            `(actif : ${aceStepModelLabel(active) || "?"}). ` +
+            `Gradio ignore ditModel à la génération — lancer avec un autre DiT produit de l’audio inaudible. ` +
+            `Bascule le modèle dans le lab (ou ACE Studio) puis réessaie. ` +
+            `(${String(waited.message || e.message).slice(0, 120)})`,
         );
       }
     }
   }
 
+  // Re-probe : les steps / CFG doivent suivre le DiT ACTIF, pas la préférence seule.
+  try {
+    const after = await testAceStep(keys, { ensure: false });
+    active = String(after?.activeModel || active || "").trim();
+  } catch {
+    /* keep active */
+  }
+  if (pick.modelId && active && !aceStepDitSame(pick.modelId, active)) {
+    throw new Error(
+      `DiT demandé « ${aceStepModelLabel(pick.modelId)} » mais ACE a « ${aceStepModelLabel(active)} ». ` +
+        `Refuse de générer (évite 50 steps SFT sur poids Turbo → bouillie). ` +
+        `Clique « Charger ce modèle » dans /lab/ace et attends Ready.`,
+    );
+  }
+  const effectiveModelId = active || pick.modelId;
+
   // Préflight VRAM : pas de 2e switch DiT (évite un autre timeout SFT)
   try {
     const vram = await ensureAceStepVram(keys, {
-      modelId: pick.modelId,
+      modelId: effectiveModelId,
       skipSwitch: true,
     });
     if (vram.ghost) {
@@ -1424,7 +1602,7 @@ export async function startAceStep(keys, {
   }
 
   if (duo) {
-    console.info("[acestep] duo — modèle", pick.modelId, pick.reason);
+    console.info("[acestep] duo — modèle", effectiveModelId, pick.reason);
   }
 
   let refUrl = String(referenceAudioUrl || "").trim();
@@ -1441,46 +1619,22 @@ export async function startAceStep(keys, {
   }
   if (isAceHostedAudioUrl(base, refUrl)) refUrl = "";
 
-  const meta = aceStepModelMeta(pick.modelId);
-  const isTurbo = Boolean(meta && meta.steps <= 8);
   let body;
   if (labMode) {
-    const styleFinal = String(prompt || "").trim().slice(0, 2000) || "pop music";
-    const lyricsClean = String(lyrics || "").trim().slice(0, 8000);
-    const strengthNum = Number(audioCoverStrength);
-    body = {
-      customMode: true,
-      title: String(preview ? `${title || "LAB"} · extrait` : title || "ACE Lab").slice(0, 120),
-      style: styleFinal,
-      lyrics: lyricsClean,
-      prompt: lyricsClean,
-      instrumental: !lyricsClean,
-      vocalLanguage: String(language || "en").slice(0, 8),
-      duration: pickAceStepDurationSec({
-        preview,
-        durationSec: preview ? 30 : durationSec,
-      }),
-      bpm: Number.isFinite(Number(bpm))
-        ? Math.min(200, Math.max(60, Math.round(Number(bpm))))
-        : undefined,
-      inferenceSteps: meta?.steps || (isTurbo ? 8 : 50),
-      guidanceScale: meta ? meta.guidance : 0,
-      ditModel: pick.modelId || undefined,
-      audioFormat: "mp3",
-      randomSeed: true,
-      pollinations: { enabled: false },
-    };
-    if (/^https?:\/\//i.test(refUrl)) {
-      body.referenceAudioUrl = refUrl;
-      body.sourceAudioUrl = refUrl;
-      const refTitle = String(referenceAudioTitle || "").trim();
-      if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
-      body.audioCoverStrength = Number.isFinite(strengthNum)
-        ? Math.min(1, Math.max(0.05, strengthNum))
-        : 0.35;
-      body.coverNoiseStrength = 0.35;
-      body.taskType = "cover";
-    }
+    body = buildLabAceStepBody({
+      title,
+      style: prompt,
+      lyrics,
+      language,
+      bpm,
+      preview,
+      durationSec,
+      referenceAudioUrl: refUrl,
+      referenceAudioTitle,
+      audioCoverStrength,
+      modelId: effectiveModelId,
+      overrides: labOverrides,
+    });
   } else {
     body = buildAceStepBody({
       title,
@@ -1489,7 +1643,7 @@ export async function startAceStep(keys, {
       language,
       bpm,
       durationSec: preview ? 30 : undefined,
-      modelId: pick.modelId,
+      modelId: effectiveModelId,
       preview,
       referenceAudioUrl: refUrl,
       referenceAudioTitle,
@@ -1507,9 +1661,11 @@ export async function startAceStep(keys, {
     body.title,
     preview ? "PREVIEW" : "FULL",
     labMode ? "LAB" : "pipeline",
-    `model=${pick.modelId}`,
+    `model=${effectiveModelId}`,
     `pick=${pick.reason}`,
+    `active=${active || "?"}`,
     `steps=${body.inferenceSteps}`,
+    `cfg=${body.guidanceScale}`,
     `lang=${body.vocalLanguage}`,
     `dur=${body.duration}s`,
     `bpm=${body.bpm || "?"}`,
@@ -1519,9 +1675,28 @@ export async function startAceStep(keys, {
     refUrl ? `ref=${String(referenceAudioTitle || "").slice(0, 40) || "audio"}` : "ref=OFF",
   );
 
-  const created = await withAuth(base, (token) =>
-    aceFetch(base, "/api/generate", { method: "POST", token, body }),
-  );
+  let created;
+  try {
+    created = await withAuth(base, (token) =>
+      aceFetch(base, "/api/generate", { method: "POST", token, body, timeoutMs: 90_000 }),
+    );
+  } catch (e) {
+    const msg = String(e?.message || e);
+    const code = Number(e?.status) || 0;
+    // Arbiter /ensure pouvait restart ACE mid-POST → 502/503. Un retry après Ready.
+    if (code === 502 || code === 503 || /HTTP 502|HTTP 503|Bad Gateway/i.test(msg)) {
+      console.warn("[acestep] generate", code || "5xx", "— attente ACE + retry…");
+      await wakeAceStepPipeline(keys, { budgetMs: 90_000 }).catch(() => null);
+      await new Promise((r) => setTimeout(r, 4000));
+      const again = await testAceStep(keys, { ensure: false }).catch(() => null);
+      if (again?.pipelineUp === false) throw e;
+      created = await withAuth(base, (token) =>
+        aceFetch(base, "/api/generate", { method: "POST", token, body, timeoutMs: 90_000 }),
+      );
+    } else {
+      throw e;
+    }
+  }
   const jobId = created?.jobId || created?.job_id;
   if (!jobId) throw new Error("ACE-Step n’a pas renvoyé de jobId");
   const gpu = await readAceStepGpu(keys).catch(() => null);
@@ -1529,8 +1704,8 @@ export async function startAceStep(keys, {
     generationId: jobId,
     provider: "acestep-studio",
     base,
-    model: pick.modelId,
-    quality: aceStepModelLabel(pick.modelId),
+    model: effectiveModelId,
+    quality: aceStepModelLabel(effectiveModelId),
     pickReason: pick.reason,
     gpu: gpu?.freeGb != null ? gpu : null,
     usedReference: Boolean(body.referenceAudioUrl),

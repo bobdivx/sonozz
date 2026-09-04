@@ -5,6 +5,7 @@ import {
   Play,
   RefreshCw,
   Square,
+  SlidersHorizontal,
 } from "lucide-preact";
 import { ensureKeysHydrated } from "../lib/keys.js";
 import { api } from "../lib/apiClient.js";
@@ -68,9 +69,76 @@ Through the storm we rise taking back control`,
   },
 ];
 
+/**
+ * Profils de réglages issus de l’historique Sonozz (avant / pendant duo).
+ * Champs null = auto (selon DiT actif).
+ */
+const SETTING_PROFILES = [
+  {
+    id: "auto",
+    label: "Auto DiT",
+    hint: "steps/CFG du modèle actif",
+    inferenceSteps: "",
+    guidanceScale: "",
+    coverStrength: 0.5,
+    coverNoise: 0.35,
+  },
+  {
+    id: "pre-duo-solo",
+    label: "Solo pré-duo",
+    hint: "~16 août · cover 0.5 / noise 0.35",
+    inferenceSteps: "",
+    guidanceScale: "",
+    coverStrength: 0.5,
+    coverNoise: 0.35,
+  },
+  {
+    id: "duo-intro",
+    label: "Duo intro (31/08)",
+    hint: "f9f0bf6 · cover 0.22 / noise 0.5",
+    inferenceSteps: "",
+    guidanceScale: "",
+    coverStrength: 0.22,
+    coverNoise: 0.5,
+  },
+  {
+    id: "duo-actuel",
+    label: "Duo actuel",
+    hint: "5f29f5b · cover 0.18 / noise 0.28",
+    inferenceSteps: "",
+    guidanceScale: "",
+    coverStrength: 0.18,
+    coverNoise: 0.28,
+  },
+  {
+    id: "turbo-strict",
+    label: "Turbo 8/0",
+    hint: "force 8 steps · CFG 0",
+    inferenceSteps: 8,
+    guidanceScale: 0,
+    coverStrength: 0.5,
+    coverNoise: 0.35,
+  },
+  {
+    id: "sft-classic",
+    label: "SFT 50/7",
+    hint: "force 50 steps · CFG 7 (DiT SFT requis)",
+    inferenceSteps: 50,
+    guidanceScale: 7,
+    coverStrength: 0.5,
+    coverNoise: 0.35,
+  },
+];
+
 function appendLog(setLogs, line) {
   const ts = new Date().toLocaleTimeString("fr-FR");
   setLogs((prev) => [`[${ts}] ${line}`, ...prev].slice(0, 80));
+}
+
+function emptyToUndef(v) {
+  if (v === "" || v === null || v === undefined) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 export default function AceLabPage() {
@@ -87,7 +155,13 @@ export default function AceLabPage() {
   const [preview, setPreview] = useState(true);
   const [durationSec, setDurationSec] = useState(90);
   const [refUrl, setRefUrl] = useState("");
-  const [coverStrength, setCoverStrength] = useState(0.35);
+  const [coverStrength, setCoverStrength] = useState(0.5);
+  const [coverNoise, setCoverNoise] = useState(0.35);
+  const [inferenceSteps, setInferenceSteps] = useState("");
+  const [guidanceScale, setGuidanceScale] = useState("");
+  const [randomSeed, setRandomSeed] = useState(true);
+  const [seed, setSeed] = useState("");
+  const [settingsProfile, setSettingsProfile] = useState("auto");
   const [busy, setBusy] = useState(false);
   const [audioUrl, setAudioUrl] = useState("");
   const [jobMeta, setJobMeta] = useState(null);
@@ -95,6 +169,8 @@ export default function AceLabPage() {
   const [error, setError] = useState("");
   const pollRef = useRef(null);
   const abortRef = useRef(null);
+  /** L’utilisateur a choisi un DiT à la main (ne pas écraser à chaque probe). */
+  const userPickedModelRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,7 +178,7 @@ export default function AceLabPage() {
       const k = await ensureKeysHydrated();
       if (cancelled) return;
       setKeys(k);
-      setModelId(String(k?.aceStepPreferredModel || "").trim());
+      // Lab : on aligne sur le DiT réellement chargé (probe), pas la préférence SFT settings.
     })();
     return () => {
       cancelled = true;
@@ -111,14 +187,37 @@ export default function AceLabPage() {
     };
   }, []);
 
+  function ditBase(id) {
+    return String(id || "")
+      .replace(/^.*\//, "")
+      .toLowerCase();
+  }
+
+  function resolveCatalogModelId(models, activeId) {
+    const active = String(activeId || "").trim();
+    if (!active) return "";
+    const list = Array.isArray(models) ? models : [];
+    const hit = list.find((m) => ditBase(m?.id) === ditBase(active));
+    return hit?.id || active;
+  }
+
   async function runProbe() {
     setProbing(true);
     setError("");
     try {
       const res = await api.probeAceStep();
       setProbe(res);
-      if (!modelId && res?.activeModel) setModelId(res.activeModel);
-      if (!modelId && res?.preferredModel) setModelId(res.preferredModel);
+      const active = String(res?.activeModel || "").trim();
+      if (active && !userPickedModelRef.current) {
+        const aligned = resolveCatalogModelId(res?.models, active);
+        setModelId(aligned);
+        appendLog(setLogs, `sélection = actif ${aligned}`);
+      } else if (active && modelId && ditBase(modelId) !== ditBase(active)) {
+        appendLog(
+          setLogs,
+          `mismatch sélection=${modelId} actif=${active} — utilise « Utiliser l’actif » ou « Charger ce modèle »`,
+        );
+      }
       appendLog(
         setLogs,
         `probe ok=${res?.ok} model=${res?.activeModel || "?"} offload=${res?.offloadToCpu} vram=${res?.gpu?.usedGb ?? "?"}/${res?.gpu?.totalGb ?? "?"} · ${res?.message || ""}`,
@@ -135,6 +234,16 @@ export default function AceLabPage() {
     if (keys) void runProbe();
   }, [keys]);
 
+  function useActiveModel() {
+    const active = String(probe?.activeModel || "").trim();
+    if (!active) return;
+    const aligned = resolveCatalogModelId(probe?.models, active);
+    userPickedModelRef.current = false;
+    setModelId(aligned);
+    setError("");
+    appendLog(setLogs, `utilisé l’actif → ${aligned}`);
+  }
+
   function applyPreset(p) {
     setTitle(p.title);
     setStyle(p.style);
@@ -143,14 +252,37 @@ export default function AceLabPage() {
     appendLog(setLogs, `preset « ${p.label} »`);
   }
 
+  function applySettingsProfile(p) {
+    setSettingsProfile(p.id);
+    setInferenceSteps(p.inferenceSteps === "" || p.inferenceSteps == null ? "" : p.inferenceSteps);
+    setGuidanceScale(p.guidanceScale === "" || p.guidanceScale == null ? "" : p.guidanceScale);
+    setCoverStrength(p.coverStrength);
+    setCoverNoise(p.coverNoise);
+    // SFT classic suppose le DiT SFT — on ne force pas le switch, on prévient.
+    if (p.id === "sft-classic") {
+      appendLog(
+        setLogs,
+        `réglages « ${p.label} » · ${p.hint} — charge d’abord XL SFT si ce n’est pas l’actif`,
+      );
+    } else {
+      appendLog(setLogs, `réglages « ${p.label} » · ${p.hint}`);
+    }
+  }
+
   async function switchModel() {
     const id = String(modelId || "").trim();
     if (!id) return;
     setSwitching(true);
     setError("");
+    userPickedModelRef.current = true;
     try {
       const res = await api.switchAceStepModel(id);
       if (res?.probe) setProbe(res.probe);
+      const active = String(res?.probe?.activeModel || "").trim();
+      if (active && ditBase(active) === ditBase(id)) {
+        userPickedModelRef.current = false;
+        setModelId(resolveCatalogModelId(res?.probe?.models || usable, active));
+      }
       appendLog(
         setLogs,
         `switch ${id} → ok=${res?.ok !== false} active=${res?.probe?.activeModel || "?"} offload=${res?.probe?.offloadToCpu}`,
@@ -193,13 +325,32 @@ export default function AceLabPage() {
     setAudioUrl("");
     setJobMeta(null);
     stopPoll();
+    let effectiveModel = String(modelId || "").trim();
+    if (!effectiveModel && probe?.activeModel) {
+      effectiveModel = resolveCatalogModelId(probe.models, probe.activeModel);
+    }
+    if (modelMismatch && probe?.activeModel) {
+      const prev = effectiveModel;
+      effectiveModel = resolveCatalogModelId(probe.models, probe.activeModel);
+      setModelId(effectiveModel);
+      userPickedModelRef.current = false;
+      appendLog(
+        setLogs,
+        `génération alignée sur l’actif ${effectiveModel} (sélection ${prev} non chargée)`,
+      );
+    }
     setBusy(true);
     const ac = new AbortController();
     abortRef.current = ac;
+    const steps = emptyToUndef(inferenceSteps);
+    const cfg = emptyToUndef(guidanceScale);
+    const seedN = emptyToUndef(seed);
     try {
       appendLog(
         setLogs,
-        `lab start model=${modelId || "(préférence)"} preview=${preview} bpm=${bpm} cover=${refUrl ? coverStrength : "off"}`,
+        `lab start model=${effectiveModel || "(préférence)"} profile=${settingsProfile} ` +
+          `steps=${steps ?? "auto"} cfg=${cfg ?? "auto"} cover=${refUrl ? coverStrength : "off"} ` +
+          `noise=${refUrl ? coverNoise : "-"} preview=${preview}`,
       );
       const started = await api.labAceStep(
         {
@@ -212,7 +363,12 @@ export default function AceLabPage() {
           durationSec: preview ? undefined : durationSec,
           referenceAudioUrl: refUrl,
           audioCoverStrength: refUrl ? coverStrength : undefined,
-          modelId: modelId || undefined,
+          coverNoiseStrength: refUrl ? coverNoise : undefined,
+          inferenceSteps: steps,
+          guidanceScale: cfg,
+          randomSeed,
+          seed: randomSeed ? undefined : seedN,
+          modelId: effectiveModel || undefined,
         },
         { signal: ac.signal },
       );
@@ -278,6 +434,16 @@ export default function AceLabPage() {
       probe?.gpu?.totalGb >= 16 &&
       probe.gpu.usedGb < 3.5 &&
       probe?.activeModel);
+  const selectedBase = String(modelId || "")
+    .replace(/^.*\//, "")
+    .toLowerCase();
+  const activeBase = String(probe?.activeModel || "")
+    .replace(/^.*\//, "")
+    .toLowerCase();
+  const modelMismatch = Boolean(selectedBase && activeBase && selectedBase !== activeBase);
+  const activeIsTurbo = /turbo/i.test(activeBase) && !/merge/i.test(activeBase);
+  const autoStepsHint = activeIsTurbo ? 8 : activeBase ? 50 : "?";
+  const autoCfgHint = activeIsTurbo ? 0 : activeBase ? 7 : "?";
 
   return (
     <div class="mx-auto max-w-5xl space-y-6 px-4 py-8">
@@ -289,8 +455,8 @@ export default function AceLabPage() {
             Lab ACE-Step
           </h1>
           <p class="mt-1 max-w-2xl text-sm text-base-content/65">
-            Test brut : style + paroles + modèle, sans artiste / wizard / DNA. Utilise les clés
-            SONOZZ et le modèle que tu choisis ici.
+            Test brut : style + paroles + modèle + réglages variables (steps, CFG, cover). Sans
+            artiste / wizard / DNA.
           </p>
         </div>
         <a href="/parametres?section=studios" class="btn btn-ghost btn-sm gap-1">
@@ -349,6 +515,17 @@ export default function AceLabPage() {
             ACE avec ACESTEP_OFFLOAD_TO_CPU=0.
           </p>
         ) : null}
+        {modelMismatch ? (
+          <div class="space-y-2">
+            <p class="text-sm text-warning">
+              Sélection « {modelId} » ≠ actif « {probe.activeModel} ». La génération utilisera
+              l’actif (Turbo). Pour forcer SFT : « Charger ce modèle » (plusieurs minutes).
+            </p>
+            <button type="button" class="btn btn-warning btn-xs" onClick={() => useActiveModel()}>
+              Utiliser l’actif ({probe.activeModel?.replace(/^.*\//, "")})
+            </button>
+          </div>
+        ) : null}
         <p class="text-xs text-base-content/55">{probe?.message || "Pas encore sondé"}</p>
       </section>
 
@@ -358,13 +535,16 @@ export default function AceLabPage() {
           <select
             class="select select-bordered select-sm min-w-[16rem]"
             value={modelId}
-            onChange={(e) => setModelId(e.currentTarget.value)}
+            onChange={(e) => {
+              userPickedModelRef.current = true;
+              setModelId(e.currentTarget.value);
+            }}
           >
-            <option value="">Préférence settings / actif</option>
+            <option value="">DiT actif (recommandé lab)</option>
             {usable.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name || m.id}
-                {m.id === probe?.activeModel ? " · actif" : ""}
+                {ditBase(m.id) === activeBase ? " · actif" : ""}
               </option>
             ))}
           </select>
@@ -376,14 +556,144 @@ export default function AceLabPage() {
           >
             {switching ? "Switch…" : "Charger ce modèle"}
           </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost"
+            disabled={!probe?.activeModel}
+            onClick={() => useActiveModel()}
+          >
+            Utiliser l’actif
+          </button>
         </div>
         <p class="text-xs text-base-content/50">
-          Aucune restriction : le modèle sélectionné ici est celui utilisé pour le test.
+          Le modèle sélectionné doit être celui réellement chargé (actif). Sinon la génération
+          est refusée — Gradio ne switch pas via le champ ditModel du job.
         </p>
       </section>
 
       <section class="rounded-box border border-base-content/10 bg-base-200/40 p-4 space-y-3">
-        <p class="text-xs font-medium uppercase tracking-wide text-base-content/55">Presets</p>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-base-content/55">
+            <SlidersHorizontal size={14} />
+            Réglages ACE
+          </p>
+          <p class="text-xs text-base-content/45">
+            Auto DiT ≈ steps {autoStepsHint} · CFG {autoCfgHint}
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          {SETTING_PROFILES.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              class={`btn btn-xs ${settingsProfile === p.id ? "btn-primary" : "btn-ghost"}`}
+              title={p.hint}
+              onClick={() => applySettingsProfile(p)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <p class="text-xs text-base-content/50">
+          {SETTING_PROFILES.find((p) => p.id === settingsProfile)?.hint ||
+            "Profils basés sur les commits avant / pendant le duo."}
+        </p>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label class="form-control gap-1">
+            <span class="label-text text-xs">Inference steps (vide = auto)</span>
+            <input
+              type="number"
+              min="1"
+              max="200"
+              class="input input-bordered input-sm"
+              placeholder={`auto ${autoStepsHint}`}
+              value={inferenceSteps}
+              onInput={(e) => {
+                setSettingsProfile("custom");
+                setInferenceSteps(e.currentTarget.value);
+              }}
+            />
+          </label>
+          <label class="form-control gap-1">
+            <span class="label-text text-xs">Guidance / CFG (vide = auto)</span>
+            <input
+              type="number"
+              min="0"
+              max="20"
+              step="0.5"
+              class="input input-bordered input-sm"
+              placeholder={`auto ${autoCfgHint}`}
+              value={guidanceScale}
+              onInput={(e) => {
+                setSettingsProfile("custom");
+                setGuidanceScale(e.currentTarget.value);
+              }}
+            />
+          </label>
+          <label class="form-control gap-1">
+            <span class="label-text text-xs">Cover strength</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0.05"
+              max="1"
+              class="input input-bordered input-sm"
+              value={coverStrength}
+              onInput={(e) => {
+                setSettingsProfile("custom");
+                setCoverStrength(Number(e.currentTarget.value) || 0.35);
+              }}
+            />
+          </label>
+          <label class="form-control gap-1">
+            <span class="label-text text-xs">Cover noise</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              class="input input-bordered input-sm"
+              value={coverNoise}
+              onInput={(e) => {
+                setSettingsProfile("custom");
+                setCoverNoise(Number(e.currentTarget.value) || 0);
+              }}
+            />
+          </label>
+        </div>
+        <div class="flex flex-wrap items-end gap-3">
+          <label class="label cursor-pointer justify-start gap-2 py-0">
+            <input
+              type="checkbox"
+              class="checkbox checkbox-sm"
+              checked={randomSeed}
+              onChange={(e) => {
+                setSettingsProfile("custom");
+                setRandomSeed(e.currentTarget.checked);
+              }}
+            />
+            <span class="label-text text-sm">Seed aléatoire</span>
+          </label>
+          <label class="form-control gap-1 w-36">
+            <span class="label-text text-xs">Seed fixe</span>
+            <input
+              type="number"
+              class="input input-bordered input-sm"
+              disabled={randomSeed}
+              value={seed}
+              onInput={(e) => {
+                setSettingsProfile("custom");
+                setSeed(e.currentTarget.value);
+              }}
+            />
+          </label>
+        </div>
+      </section>
+
+      <section class="rounded-box border border-base-content/10 bg-base-200/40 p-4 space-y-3">
+        <p class="text-xs font-medium uppercase tracking-wide text-base-content/55">
+          Presets paroles / style
+        </p>
         <div class="flex flex-wrap gap-2">
           {PRESETS.map((p) => (
             <button
@@ -459,26 +769,14 @@ export default function AceLabPage() {
         </label>
       </section>
 
-      <section class="grid gap-3 sm:grid-cols-[1fr_8rem_auto] items-end">
+      <section class="grid gap-3 sm:grid-cols-[1fr_auto] items-end">
         <label class="form-control gap-1">
           <span class="label-text text-xs">Cover / référence (URL optionnelle)</span>
           <input
             class="input input-bordered input-sm"
-            placeholder="https://…"
+            placeholder="https://… (active cover strength + noise)"
             value={refUrl}
             onInput={(e) => setRefUrl(e.currentTarget.value)}
-          />
-        </label>
-        <label class="form-control gap-1">
-          <span class="label-text text-xs">Cover strength</span>
-          <input
-            type="number"
-            step="0.05"
-            min="0.05"
-            max="1"
-            class="input input-bordered input-sm"
-            value={coverStrength}
-            onInput={(e) => setCoverStrength(Number(e.currentTarget.value) || 0.35)}
           />
         </label>
         <label class="label cursor-pointer justify-start gap-2 py-0">

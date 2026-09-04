@@ -17,6 +17,11 @@ import {
   aceStepVramHeadroomGb,
   aceStepMinResidentVramGb,
   isAceStepGhostLoad,
+  aceStepDitSame,
+  aceStepInferenceForModel,
+  buildLabAceStepBody,
+  ACE_COVER_NOISE_SOLO,
+  ACE_DUO_STYLE_TRANSFER_STRENGTH_INTRO,
   resolveAceAudioUrl,
   resolveAceStepBaseUrl,
   resolveAceStepGradioUrl,
@@ -26,6 +31,61 @@ import {
 import { isStudioEnabled, keysAfterStudioToggle } from "../src/lib/keys.js";
 
 describe("ACE-Step Studio client", () => {
+  it("aligne steps/CFG sur le DiT chargé (pas SFT sur Turbo)", () => {
+    assert.equal(aceStepDitSame("acestep-v15-xl-sft", "org/acestep-v15-xl-sft"), true);
+    assert.equal(aceStepDitSame("acestep-v15-xl-sft", "acestep-v15-xl-turbo-bf16"), false);
+    const turbo = aceStepInferenceForModel("acestep-v15-xl-turbo-bf16");
+    assert.equal(turbo.inferenceSteps, 8);
+    assert.equal(turbo.guidanceScale, 0);
+    assert.equal(turbo.isTurbo, true);
+    const sft = aceStepInferenceForModel("acestep-v15-xl-sft");
+    assert.equal(sft.inferenceSteps, 50);
+    assert.equal(sft.guidanceScale, 7);
+    assert.equal(sft.isTurbo, false);
+    const body = buildAceStepBody({
+      title: "t",
+      style: "pop",
+      lyrics: "hello",
+      modelId: "acestep-v15-xl-turbo-bf16",
+    });
+    assert.equal(body.inferenceSteps, 8);
+    assert.equal(body.guidanceScale, 0);
+  });
+
+  it("lab body : overrides manuels + défauts historiques", () => {
+    const auto = buildLabAceStepBody({
+      title: "lab",
+      style: "pop",
+      lyrics: "hi",
+      modelId: "acestep-v15-xl-turbo-bf16",
+      preview: true,
+    });
+    assert.equal(auto.inferenceSteps, 8);
+    assert.equal(auto.guidanceScale, 0);
+    assert.equal(auto.taskType, undefined);
+
+    const forced = buildLabAceStepBody({
+      title: "lab",
+      style: "pop",
+      lyrics: "hi",
+      modelId: "acestep-v15-xl-turbo-bf16",
+      preview: true,
+      referenceAudioUrl: "https://cdn.example/a.mp3",
+      overrides: {
+        inferenceSteps: 12,
+        guidanceScale: 1.5,
+        audioCoverStrength: ACE_DUO_STYLE_TRANSFER_STRENGTH_INTRO,
+        coverNoiseStrength: 0.5,
+      },
+    });
+    assert.equal(forced.inferenceSteps, 12);
+    assert.equal(forced.guidanceScale, 1.5);
+    assert.equal(forced.audioCoverStrength, 0.22);
+    assert.equal(forced.coverNoiseStrength, 0.5);
+    assert.equal(forced.taskType, "cover");
+    assert.equal(ACE_COVER_NOISE_SOLO, 0.35);
+  });
+
   it("résout l’URL et le provider", () => {
     assert.equal(resolveAceStepBaseUrl({}), "https://ace.briseteia.me");
     assert.equal(
