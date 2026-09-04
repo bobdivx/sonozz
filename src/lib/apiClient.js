@@ -532,6 +532,9 @@ export const api = {
   /** Lab : génération ACE brute (style + paroles), sans wizard. */
   labAceStep: (payload, opts) =>
     request("/api/track", { action: "lab-acestep", ...payload }, opts),
+  /** QA Gemini : écoute le take et diagnostique bouillie / mash / etc. */
+  analyzeTrackAudio: (payload) =>
+    request("/api/track", { action: "analyze-audio", ...payload }),
   /** Poll un job track / ACE / SongGen. */
   pollTrack: (generationId, opts = {}) =>
     request(

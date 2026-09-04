@@ -1,5 +1,9 @@
 import { isStudioEnabled } from "../lib/keys.js";
-import { aceStepCommercialArrangementBits, composeAceStepStyle } from "../lib/musicLane.js";
+import {
+  aceStepCommercialArrangementBits,
+  composeAceStepStyle,
+  aceStepProductionQualityFloor,
+} from "../lib/musicLane.js";
 import {
   normalizeFeatArtist,
   prepareAceStepLyrics,
@@ -8,6 +12,44 @@ import {
   vocalLockForArtist,
   vocalTimbreLine,
 } from "../lib/featArtist.js";
+import { languagePrompt } from "../lib/studio.js";
+import { normalizeMusicArrange } from "../lib/musicArrange.js";
+
+/**
+ * Code langue ACE (`vocalLanguage`) + consigne style explicite.
+ * Si les paroles sont clairement FR mais le champ dit "en", on force fr.
+ */
+export function resolveAceVocalLanguage(language, lyricsText = "") {
+  const raw = String(language || "")
+    .trim()
+    .toLowerCase();
+  let code = raw.slice(0, 2);
+  if (raw === "french" || raw === "français" || raw === "francais") code = "fr";
+  if (raw === "english") code = "en";
+  if (raw === "spanish" || raw === "español" || raw === "espanol") code = "es";
+
+  const text = String(lyricsText || "");
+  const hasAccents = /[àâäéèêëïîôùûüçœ]/i.test(text);
+  const frHits = (
+    text.match(
+      /\b(le|la|les|des|une|un|dans|pour|avec|je|tu|nous|vous|mon|ma|mes|qui|que|est|sont|pas|plus|tout|cette|comme|aussi|temps|entre|hier|demain|cœur|même|être|sablier|sable|nuit|ville|amour|vie)\b/gi,
+    ) || []
+  ).length;
+  const looksFr = (hasAccents && frHits >= 1) || frHits >= 3;
+  if (looksFr && (!code || code === "en")) code = "fr";
+
+  if (!/^[a-z]{2}$/.test(code)) code = looksFr ? "fr" : "en";
+  return code;
+}
+
+export function aceVocalLanguageStyleBit(languageCode) {
+  const code = resolveAceVocalLanguage(languageCode);
+  const name = languagePrompt(code);
+  if (code === "fr") {
+    return `sung in French (français)`;
+  }
+  return `sung in ${name} (${code})`;
+}
 
 /**
  * Client ACE-Step Studio (Pinokio).
@@ -338,6 +380,8 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
   const readySet = new Set(readyIds);
   const allSwitchableIds = new Set(switchable.map((m) => m.id));
   const duo = Boolean(opts?.duo);
+  const sameSexDuo = Boolean(opts?.sameSexDuo);
+  const preferTurbo = Boolean(opts?.preferTurbo || opts?.preview);
   const forceId = String(opts?.forceModelId || "").trim();
 
   const turboBf16Short = "acestep-v15-xl-turbo-bf16";
@@ -355,6 +399,21 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
     }
     return null;
   };
+
+  // Duo same-sex OU preview : Turbo avant SFT (SFT → vocoder / mash fréquent).
+  if (sameSexDuo || preferTurbo) {
+    const id =
+      pickReady(turboBf16Short, turboBf16, turbo) ||
+      pickReady(sft) ||
+      readyIds[0] ||
+      turboBf16Short;
+    return {
+      modelId: id,
+      reason: sameSexDuo
+        ? `duo same-sex · ${aceStepModelLabel(id)} (Turbo privilégié)`
+        : `preview · ${aceStepModelLabel(id)} (Turbo privilégié)`,
+    };
+  }
 
   // Préférence utilisateur = priorité, seulement si DiT Gradio.
   if (preferredId && isAceStepEngineDit(preferredId)) {
@@ -374,7 +433,7 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
   }
 
   if (duo) {
-    // Auto duo : Turbo BF16 d’abord (rapide) ; SFT reste dispo via préférence user.
+    // Auto duo mixte : Turbo BF16 d’abord ; SFT via préférence user.
     const id = pickReady(turboBf16Short, turboBf16, turbo, sft) || readyIds[0];
     if (id) return { modelId: id, reason: `duo · ${aceStepModelLabel(id)} (auto)` };
   }
@@ -445,6 +504,43 @@ export function pickAceStepDurationSec({ preview = false, durationSec } = {}) {
   return Math.round(ACE_FULL_DURATION_MIN + Math.random() * span);
 }
 
+/**
+ * Snapshot compact des params envoyés à ACE (persisté sur la version pour QA Gemini).
+ */
+export function snapshotAceGenParams(body, extras = {}) {
+  const b = body && typeof body === "object" ? body : {};
+  const gpu = extras.gpu && typeof extras.gpu === "object" ? extras.gpu : null;
+  return {
+    at: new Date().toISOString(),
+    lab: Boolean(extras.lab),
+    duo: Boolean(extras.duo),
+    model: String(extras.modelId || b.ditModel || "").trim() || null,
+    pickReason: extras.pickReason || null,
+    taskType: String(b.taskType || "text2music").slice(0, 32),
+    inferenceSteps: b.inferenceSteps ?? null,
+    guidanceScale: b.guidanceScale ?? null,
+    durationSec: b.duration ?? null,
+    bpm: b.bpm ?? null,
+    vocalLanguage: b.vocalLanguage || null,
+    audioFormat: b.audioFormat || null,
+    usedReference: Boolean(b.referenceAudioUrl || b.sourceAudioUrl),
+    referenceAudioTitle: b.referenceAudioTitle || null,
+    audioCoverStrength: b.audioCoverStrength ?? null,
+    coverNoiseStrength: b.coverNoiseStrength ?? null,
+    style: String(b.style || "").slice(0, 900) || null,
+    lyrics: String(b.lyrics || b.prompt || "").slice(0, 2500) || null,
+    instruction: b.instruction ? String(b.instruction).slice(0, 400) : null,
+    gpu: gpu
+      ? {
+          name: gpu.name || null,
+          usedGb: gpu.usedGb ?? null,
+          freeGb: gpu.freeGb ?? null,
+          totalGb: gpu.totalGb ?? null,
+        }
+      : null,
+  };
+}
+
 function labOverrideNumber(raw, { min, max, integer = false } = {}) {
   if (raw === null || raw === undefined || raw === "") return null;
   const n = Number(raw);
@@ -477,6 +573,11 @@ export function buildLabAceStepBody({
   const infer = aceStepInferenceForModel(modelId);
   const styleFinal = String(style || "").trim().slice(0, 2000) || "pop music";
   const lyricsClean = String(lyrics || "").trim().slice(0, 8000);
+  const langCode = resolveAceVocalLanguage(language, lyricsClean);
+  const styleWithLang = [aceVocalLanguageStyleBit(langCode), styleFinal]
+    .filter(Boolean)
+    .join(". ")
+    .slice(0, 2000);
   const steps =
     labOverrideNumber(o.inferenceSteps, { min: 1, max: 200, integer: true }) ??
     infer.inferenceSteps;
@@ -492,11 +593,11 @@ export function buildLabAceStepBody({
   const body = {
     customMode: true,
     title: String(preview ? `${title || "LAB"} · extrait` : title || "ACE Lab").slice(0, 120),
-    style: styleFinal,
+    style: styleWithLang,
     lyrics: lyricsClean,
     prompt: lyricsClean,
     instrumental: !lyricsClean,
-    vocalLanguage: String(language || "en").slice(0, 8),
+    vocalLanguage: langCode,
     duration: pickAceStepDurationSec({
       preview,
       durationSec: preview ? 30 : durationSec,
@@ -554,6 +655,12 @@ export function buildAceStepBody({
   const lead = artist && typeof artist === "object" ? artist : null;
   const feat = normalizeFeatArtist(featArtist || lead?.featArtist);
   const isDuo = Boolean(feat?.name);
+  const sameSexDuo = Boolean(
+    isDuo &&
+      vocalLockForArtist(lead)?.genderCode &&
+      vocalLockForArtist(feat)?.genderCode &&
+      vocalLockForArtist(lead).genderCode === vocalLockForArtist(feat).genderCode,
+  );
   const lyricsRaw = stripAceStageDirections(
     String(preview ? lyricsForAceStepPreview(lyrics) : lyrics || ""),
   );
@@ -580,33 +687,81 @@ export function buildAceStepBody({
   const styleBase = String(style || "");
   // Duo : style dédié depuis les genres réels — jamais « male rap + female » hardcodé,
   // et on évite le DNA mono-voix du styleLock (Eminem, etc.).
+  // Qualité de prod = plancher commun (genre/sexe changent le DNA, pas le polish).
+  // Style proche du Lab : court, positif, genre + voix + langue.
+  // Les litanie « no vocoder / no autotune » embrouillent ACE sans corriger la cause.
+  const qualityFloor = aceStepProductionQualityFloor({ duo: isDuo });
+  const langCode = resolveAceVocalLanguage(language, lyricsClean);
+  const langBit = aceVocalLanguageStyleBit(langCode);
+  const leadLock = vocalLockForArtist(lead);
+  const STYLE_CAP = 700;
   let styleFinal;
   if (isDuo) {
-    styleFinal = buildAceStepDuoStyle(lead || { name: "Lead" }, feat, {
+    const duoStyle = buildAceStepDuoStyle(lead || { name: "Lead" }, feat, {
       genreSummary: styleLock?.genreSummary || lead?.genre,
       mood: styleLock?.mood || lead?.mood,
       styleLock,
       styleBase,
     });
-    if (!styleFinal) {
-      styleFinal = composeAceStepStyle(styleBase, styleLock).slice(0, 1000);
-    }
+    styleFinal = [langBit, duoStyle || composeAceStepStyle(styleBase, styleLock), qualityFloor]
+      .filter(Boolean)
+      .join(". ")
+      .slice(0, STYLE_CAP);
   } else {
-    const lock = vocalLockForArtist(lead);
-    const timbre = vocalTimbreLine(lock);
-    const commercial = aceStepCommercialArrangementBits(styleLock, { duo: false }).join(". ");
-    const sig = lock
-      ? [
-          `signature ${lock.genderCode || "lead"} vocals for ${lock.name}`,
-          timbre || lock.voiceHint,
-          lock.timbreHint ? `LOCK timbre = ${lock.timbreHint}` : null,
-          `keep the same vocal identity and timbre as prior songs by ${lock.name}`,
-        ]
+    const gender =
+      leadLock?.genderCode === "female"
+        ? "female lead vocal"
+        : leadLock?.genderCode === "male"
+          ? "male lead vocal"
+          : "lead vocal";
+    const genre =
+      String(styleLock?.genreSummary || lead?.genre || styleBase || "pop")
+        .trim()
+        .slice(0, 120) || "pop";
+    const mood =
+      String(styleLock?.mood || lead?.mood || "").trim().slice(0, 60);
+    const arrange = normalizeMusicArrange(lead?.musicArrange);
+    const instruFromLock = Array.isArray(styleLock?.instruments)
+      ? styleLock.instruments
+          .map((x) => String(x || "").trim())
           .filter(Boolean)
-          .join(": ")
+          .slice(0, 5)
+      : [];
+    if (arrange.leadInstrument && !instruFromLock.includes(arrange.leadInstrument)) {
+      instruFromLock.unshift(arrange.leadInstrument);
+    }
+    const instru = instruFromLock.slice(0, 5).join(", ");
+    const timbre = vocalTimbreLine(leadLock);
+    const densityBit =
+      arrange.density === "dense"
+        ? "dense layered arrangement"
+        : arrange.density === "sparse"
+          ? "intimate spaced arrangement"
+          : null;
+    const featureBit = Array.isArray(arrange.features)
+      ? arrange.features.filter(Boolean).slice(0, 3).join(", ")
       : "";
-    const composed = composeAceStepStyle(styleBase, styleLock);
-    styleFinal = [commercial, sig, composed].filter(Boolean).join(". ").slice(0, 1200);
+    styleFinal = [
+      `${genre}, ${gender}`,
+      langBit,
+      mood || null,
+      densityBit,
+      instru ? `instruments: ${instru}` : null,
+      featureBit || null,
+      timbre ? `voice: ${timbre}`.slice(0, 120) : null,
+      qualityFloor,
+    ]
+      .filter(Boolean)
+      .join(". ")
+      .slice(0, STYLE_CAP);
+  }
+
+  let steps = infer.inferenceSteps;
+  let guidance = infer.guidanceScale;
+  // Duo same-sex sur SFT : un peu plus de steps ; CFG plafonné (CFG trop haut → voix saturée).
+  if (sameSexDuo && !infer.isTurbo) {
+    steps = Math.max(Number(steps) || 50, 60);
+    guidance = Math.min(8, Math.max(Number(guidance) || 7, 7));
   }
 
   const body = {
@@ -617,11 +772,11 @@ export function buildAceStepBody({
     // ACE Studio captions = `style` ; `prompt` est un alias UI des paroles — on aligne sur lyrics.
     prompt: lyricsClean.slice(0, 8000),
     instrumental: false,
-    vocalLanguage: String(language || "fr").slice(0, 8),
+    vocalLanguage: langCode,
     duration,
     bpm: bpmOut,
-    inferenceSteps: infer.inferenceSteps,
-    guidanceScale: infer.guidanceScale,
+    inferenceSteps: steps,
+    guidanceScale: guidance,
     ditModel: modelId || undefined,
     audioFormat: "mp3",
     randomSeed: true,
@@ -637,8 +792,8 @@ export function buildAceStepBody({
     body.coverNoiseStrength = isDuo ? ACE_COVER_NOISE_DUO : ACE_COVER_NOISE_SOLO;
     body.taskType = "cover";
     body.instruction = isDuo
-      ? "ONE coherent duet song: keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags with two distinct voices; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
-      : "Generate a STREAMING-READY commercial hit with multi-instrument arrangement and dynamic section changes (not a flat loop); vocals sit in a full band mix:";
+      ? "ONE coherent duet song: balanced commercial mix with headroom; clean distinct vocals; keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
+      : "Generate a STREAMING-READY commercial hit with multi-instrument arrangement and dynamic section changes (not a flat loop); balanced mix with headroom; clean clear lead vocal sitting in a full band mix:";
     if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < 7)) {
       body.guidanceScale = 7;
     }
@@ -1521,13 +1676,24 @@ export async function startAceStep(keys, {
     );
   }
   const catalog = { models: info.models, activeModel: info.activeModel };
-  const duo = labMode ? false : Boolean(normalizeFeatArtist(artist?.featArtist)?.name);
+  const featNorm = labMode ? null : normalizeFeatArtist(artist?.featArtist);
+  const duo = Boolean(featNorm?.name);
+  const leadLock = duo ? vocalLockForArtist(artist) : null;
+  const featLock = duo ? vocalLockForArtist(featNorm) : null;
+  const sameSexDuo = Boolean(
+    leadLock?.genderCode &&
+      featLock?.genderCode &&
+      leadLock.genderCode === featLock.genderCode,
+  );
   const pick = pickAceStepModel(catalog, {
     // Lab : ne pas imposer la préférence settings (souvent SFT) si Turbo est chargé.
     preferredId: labMode
       ? null
       : String(keys?.aceStepPreferredModel || "").trim() || null,
     duo,
+    sameSexDuo,
+    preferTurbo: Boolean(preview) && !labMode,
+    preview: Boolean(preview) && !labMode,
     forceModelId,
   });
   let active = String(catalog.activeModel || "").trim();
@@ -1700,6 +1866,13 @@ export async function startAceStep(keys, {
   const jobId = created?.jobId || created?.job_id;
   if (!jobId) throw new Error("ACE-Step n’a pas renvoyé de jobId");
   const gpu = await readAceStepGpu(keys).catch(() => null);
+  const aceGen = snapshotAceGenParams(body, {
+    modelId: effectiveModelId,
+    pickReason: pick.reason,
+    gpu,
+    lab: labMode,
+    duo,
+  });
   return {
     generationId: jobId,
     provider: "acestep-studio",
@@ -1710,6 +1883,7 @@ export async function startAceStep(keys, {
     gpu: gpu?.freeGb != null ? gpu : null,
     usedReference: Boolean(body.referenceAudioUrl),
     referenceAudioTitle: body.referenceAudioTitle || null,
+    aceGen,
   };
 }
 
@@ -1869,6 +2043,8 @@ async function generateMusicWithAceStepOnce(keys, opts = {}) {
         durationLabel: tick.durationLabel || "~2–4 min",
         hasVocals: Boolean(tick.hasVocals),
         generationId: started.generationId,
+        aceGen: started.aceGen || null,
+        model: started.model || null,
       };
     }
     if (i % 10 === 0) {

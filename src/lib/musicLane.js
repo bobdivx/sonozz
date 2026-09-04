@@ -245,10 +245,23 @@ function blobLooksIndustrial(blob = "") {
   return /industrial|\bebm\b|vocoder/.test(norm(blob));
 }
 
-/** Gardes ACE / LeVo dérivées du DNA (voix growl → pas de vocoder), pas d’artistes en dur. */
+/** Gardes ACE / LeVo dérivées du DNA (growl harsh seulement) — pas de liste « no vocoder » globale. */
 export function artefactGuardsFromLock(lock) {
   if (!isLock(lock)) return [];
   return artefactGuardsFromBlob(styleLockGenreBlob(lock), lock);
+}
+
+/**
+ * Plancher de qualité prod ACE — court, positif.
+ * Priorité headroom / voix propres (évite le mix « trop chaud » / saturé).
+ */
+export function aceStepProductionQualityFloor({ duo = false } = {}) {
+  return [
+    "balanced studio mix with headroom, clean clear lead vocal, controlled low-end",
+    duo
+      ? "arrangement supports the active tagged singer"
+      : "full band under the lead without crowding the vocal",
+  ].join(". ");
 }
 
 function artefactGuardsFromBlob(blob = "", lock = null) {
@@ -257,7 +270,8 @@ function artefactGuardsFromBlob(blob = "", lock = null) {
   const harsh = /growl|guttural|scream|harsh/.test(voice || g);
   if (!harsh) return [];
   if (blobLooksIndustrial(g) || blobLooksIndustrial(voice)) return [];
-  return ["no vocoder", "no robotic vocals"];
+  // Uniquement si growl metal : éviter le glitch vocal industriel non voulu
+  return ["clean recorded vocals"];
 }
 
 /**
@@ -277,9 +291,9 @@ export function composeAceStepStyle(style = "", lock = null) {
           ...(Array.isArray(lock.doNot) ? lock.doNot.map((d) => `not ${d}`) : []),
           ...artefactGuardsFromLock(lock).map((d) => d.replace(/^no /, "not ")),
         ],
-        8,
+        6,
       )
-    : artefactGuardsFromBlob(raw).map((d) => d.replace(/^no /, "not "));
+    : [];
   const combined = [...head, raw, ...bans].filter(Boolean).join(". ");
   return (combined || raw).slice(0, 1000);
 }
@@ -287,6 +301,7 @@ export function composeAceStepStyle(style = "", lock = null) {
 /**
  * Arrangement « hit commercial » pour ACE-Step (solo ou duo).
  * Priorité : multi-instruments + arcs dynamiques (pas de boucle linéaire drums-only).
+ * Le genre choisit les instruments ; le polish reste le même pour tous.
  */
 export function aceStepCommercialArrangementBits(lock = null, { duo = false } = {}) {
   const genre = norm(
@@ -300,8 +315,8 @@ export function aceStepCommercialArrangementBits(lock = null, { duo = false } = 
   if (band.length < 3) {
     if (/trap|hip[\s-]?hop|drill|\brap\b|boom\s*bap|grime/.test(genre)) {
       band = ["808 bass", "trap drums", "hi-hats", "synth pads", "piano chords", "melodic hook"];
-    } else if (/r&?b|soul|gospel|neo[\s-]?soul/.test(genre)) {
-      band = ["drum kit", "bass", "electric piano", "synths", "soft guitar", "pads"];
+    } else if (/r&?b|soul|gospel|neo[\s-]?soul|sister act|church/.test(genre)) {
+      band = ["drum kit", "bass", "Hammond organ", "piano", "handclaps", "gospel choir pads"];
     } else if (/electro|edm|\bdance\b|house|techno|hyperpop|synth/.test(genre)) {
       band = ["kick", "bass", "synth pads", "arpeggios", "risers", "lead synth"];
     } else if (/metal|hardcore|punk/.test(genre)) {
@@ -310,6 +325,8 @@ export function aceStepCommercialArrangementBits(lock = null, { duo = false } = 
       band = ["drum kit", "bass guitar", "rhythm guitars", "lead guitar", "cymbals"];
     } else if (/afro|dancehall|reggae|amapiano/.test(genre)) {
       band = ["drums", "bass", "guitar skank", "keys", "percussion", "pads"];
+    } else if (/pop|radio|ballad/.test(genre)) {
+      band = ["drums", "bass", "keys", "guitars", "pads", "catchy melodic hook"];
     } else {
       band = ["drums", "bass", "keys or guitars", "pads", "percussion", "catchy melodic hook"];
     }
@@ -319,14 +336,18 @@ export function aceStepCommercialArrangementBits(lock = null, { duo = false } = 
   const rhythm = String(lock?.rhythmFeel || "").trim();
 
   return [
-    "streaming-ready commercial hit — Billboard / playlist quality",
+    "streaming-ready commercial hit — Billboard / playlist quality (same bar for every genre)",
     `layered multi-instrument bed: ${band.join(", ")}`,
     "never drums-only, never sparse bed, never thin loop under vocals",
     "dynamic arrangement arc: sparse intro → verse groove → pre-chorus lift → big chorus → contrasting bridge → biggest final chorus → outro",
     "change layers between sections (fills, drops, add guitars/keys/pads) — NOT one flat linear loop",
     rhythm ? `groove: ${rhythm}` : null,
-    prod ? `production: ${prod}` : "wide stereo, punchy low-end, clear mid hooks, polished mastering",
-    duo ? "duet vocals sit inside a full commercial band mix" : null,
+    prod
+      ? `production: ${prod}`
+      : "wide stereo, controlled low-end, clean vocal midrange, polished mastering with headroom",
+    duo
+      ? "duet vocals sit cleanly inside a full commercial band mix"
+      : "lead vocal sits cleanly on top of a full commercial band mix",
   ].filter(Boolean);
 }
 

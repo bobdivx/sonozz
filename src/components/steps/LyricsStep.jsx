@@ -163,6 +163,7 @@ export default function LyricsStep({
               activeId={activeId}
               onSelect={onSelectVersion}
               onDelete={onDeleteVersion}
+              canDelete={() => versions.length > 1}
               labelFor={(v, i) =>
                 v.title || `Paroles ${i + 1}${v.language ? ` · ${languageLabel(v.language)}` : ""}`
               }

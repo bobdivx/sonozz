@@ -164,17 +164,28 @@ export function selectVersion(project = {}, kind, id) {
 
 /**
  * Supprime une version. Si c’était l’active, bascule sur la plus récente restante.
+ * Dernière version : on laisse une coquille (sans média) pour ne pas vider le projet / le wizard.
  * Retourne { project, removed } — removed utile pour cleanup S3.
  */
 export function deleteVersion(project = {}, kind, id) {
   const cfg = configFor(kind);
   const base = normalizeKind(project, kind);
   const removed = base[cfg.versionsKey].find((v) => v.id === id) || null;
-  const versions = base[cfg.versionsKey].filter((v) => v.id !== id);
+  let versions = base[cfg.versionsKey].filter((v) => v.id !== id);
 
   let activeId = base[cfg.activeKey];
   if (activeId === id) {
     activeId = versions.length ? versions[versions.length - 1].id : null;
+  }
+
+  // Ne jamais laisser lyrics/track/cover à null si c’était la dernière version :
+  // le projet (stats, paroles, duo…) doit rester intact — seule la version média part.
+  if (!versions.length && removed) {
+    const shell = shellAfterLastVersionDelete(kind, removed, cfg.idPrefix);
+    if (shell) {
+      versions = [shell];
+      activeId = shell.id;
+    }
   }
 
   const next = normalizeKind(
@@ -182,13 +193,71 @@ export function deleteVersion(project = {}, kind, id) {
       ...base,
       [cfg.versionsKey]: versions,
       [cfg.activeKey]: activeId,
-      // null explicite empêche la résurrection legacy si le tableau est vide
       [cfg.mirrorKey]: versions.find((v) => v.id === activeId) || null,
     },
     kind,
   );
 
   return { project: next, removed };
+}
+
+/** Coquille après suppression de la dernière version d’un kind. */
+function shellAfterLastVersionDelete(kind, removed, idPrefix) {
+  if (!removed || typeof removed !== "object") return null;
+
+  if (kind === "track") {
+    return ensureEntryId(
+      {
+        title: removed.title,
+        artist: removed.artist,
+        style: removed.style,
+        key: removed.key,
+        bpm: removed.bpm,
+        duration: removed.duration,
+        language: removed.language,
+        voiceGender: removed.voiceGender,
+        sunoPrompt: removed.sunoPrompt,
+        provider: "brief",
+        status: "prompt-ready",
+        isPreview: false,
+        note: "Version audio supprimée — régénère ou importe.",
+        audioUrl: null,
+        waveform: [],
+      },
+      idPrefix,
+    );
+  }
+
+  if (kind === "lyrics") {
+    return ensureEntryId(
+      {
+        title: removed.title,
+        theme: removed.theme,
+        language: removed.language,
+        text: removed.text,
+        structure: removed.structure,
+        note: "Dernière version conservée en brouillon — régénère pour remplacer.",
+      },
+      idPrefix,
+    );
+  }
+
+  if (kind === "cover") {
+    return ensureEntryId(
+      {
+        title: removed.title,
+        prompt: removed.prompt,
+        style: removed.style,
+        provider: "brief",
+        status: "prompt-ready",
+        note: "Jaquette retirée — régénère.",
+        imageUrl: null,
+      },
+      idPrefix,
+    );
+  }
+
+  return null;
 }
 
 /** Met à jour le payload d’une version existante (ex. après persist S3). */

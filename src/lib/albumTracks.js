@@ -104,7 +104,8 @@ export function buildAlbumMemberProject({ leadProject, entry, leadProjectId }) {
     artist: leadProject?.artist || null,
     lyrics: entry?.lyrics || null,
     track: entry?.track || null,
-    musicArrange: leadProject?.musicArrange || null,
+    musicArrange: entry?.musicArrange || leadProject?.musicArrange || null,
+    sonicRole: entry?.sonicRole || entry?.trackRole || null,
     albumMeta: {
       albumId: leadProject?.album?.id || null,
       albumTitle: leadProject?.album?.title || "",
@@ -112,6 +113,7 @@ export function buildAlbumMemberProject({ leadProject, entry, leadProjectId }) {
       trackId: entry?.id || null,
       index: entry?.index || null,
       theme: entry?.theme || "",
+      trackRole: entry?.sonicRole || entry?.trackRole || null,
     },
   };
   const artwork = pickAlbumArtwork(leadProject);

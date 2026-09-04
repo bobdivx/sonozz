@@ -26,7 +26,7 @@ export const CHOIR_OPTIONS = [
   {
     id: "gospel",
     label: "Chœur gospel",
-    en: "large gospel choir backing vocals with SATB harmonies, call-and-response with the lead singer on every chorus, church organ and piano bed, never drums-only",
+    en: "Sister Act style gospel: joyful church choir SATB with clear lead singer, call-and-response, Hammond organ, piano, handclaps — never drums-only",
   },
   {
     id: "stacked",

@@ -1576,7 +1576,10 @@ export default function Dashboard() {
       )}
 
       {!showHomePipeline && (
-      <nav class="mb-6 flex gap-2 overflow-x-auto pb-1" aria-label="Étapes de création">
+      <nav
+        class="mb-3 grid grid-cols-7 gap-1 sm:gap-2"
+        aria-label="Étapes de création"
+      >
         {STEPS.map((s) => {
           const Icon = ICONS[s.key];
           const active = step === s.id;
@@ -1585,6 +1588,7 @@ export default function Dashboard() {
             <button
               key={s.id}
               type="button"
+              title={s.label}
               onClick={() => {
                 if (
                   s.id > stepIdOf("tracks") &&
@@ -1597,25 +1601,83 @@ export default function Dashboard() {
                 }
                 setStep(s.id);
               }}
-              class={`group flex min-w-[7rem] flex-col gap-1 rounded-xl px-3 py-3 text-left transition-all duration-300 ${
+              class={`group flex min-w-0 flex-col gap-0.5 rounded-lg px-1 py-2 text-left transition-all duration-300 sm:gap-1 sm:rounded-xl sm:px-2 sm:py-3 md:px-3 ${
                 active
                   ? "bg-primary/15 ring-1 ring-primary/40"
                   : "bg-base-300/40 hover:bg-base-300/70"
               }`}
             >
-              <span class="flex items-center justify-between gap-2">
-                <Icon size={16} class={active ? "text-primary" : done ? "text-secondary" : "text-base-content/45"} />
-                <span class={`text-[10px] ${done ? "text-secondary" : "text-base-content/35"}`}>
+              <span class="flex items-center justify-between gap-0.5 sm:gap-1">
+                <Icon
+                  size={14}
+                  class={`shrink-0 sm:h-4 sm:w-4 ${
+                    active ? "text-primary" : done ? "text-secondary" : "text-base-content/45"
+                  }`}
+                />
+                <span
+                  class={`text-[9px] sm:text-[10px] ${
+                    done ? "text-secondary" : "text-base-content/35"
+                  }`}
+                >
                   {done ? "ok" : `0${s.id}`}
                 </span>
               </span>
-              <span class={`font-display text-sm font-semibold ${active ? "text-base-content" : "text-base-content/70"}`}>
+              <span
+                class={`truncate font-display text-[10px] font-semibold leading-tight sm:text-xs md:text-sm ${
+                  active ? "text-base-content" : "text-base-content/70"
+                }`}
+              >
                 {s.label}
               </span>
             </button>
           );
         })}
       </nav>
+      )}
+
+      {!showHomePipeline && (
+        <div class="mb-6 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            disabled={step <= 1}
+            onClick={() => setStep((s) => Math.max(1, s - 1))}
+          >
+            Précédent
+          </button>
+          <div class="ml-auto flex flex-wrap items-center gap-2">
+            <a
+              class="btn btn-ghost btn-sm"
+              href={
+                artistSlug
+                  ? `/artiste/${encodeURIComponent(artistSlug)}`
+                  : "/"
+              }
+            >
+              Annuler
+            </a>
+            <button
+              type="button"
+              class="btn btn-primary btn-sm gap-1"
+              disabled={step >= STEPS.length}
+              onClick={() => {
+                if (
+                  stepKey === "tracks" &&
+                  (project.track?.status === "preview-ready" ||
+                    project.track?.status === "pending-review")
+                ) {
+                  setError(
+                    "Génère d’abord le morceau complet (l’extrait ne suffit pas) avant de continuer.",
+                  );
+                  return;
+                }
+                setStep((s) => Math.min(STEPS.length, s + 1));
+              }}
+            >
+              Suivant <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
       )}
 
       {!showHomePipeline && (
@@ -2227,30 +2289,6 @@ export default function Dashboard() {
           />
         )}
 
-        <footer class="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-base-content/10 pt-5">
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            disabled={step <= 1}
-            onClick={() => setStep((s) => Math.max(1, s - 1))}
-          >
-            Précédent
-          </button>
-          <button
-            type="button"
-            class="btn btn-primary btn-sm gap-1"
-            disabled={step >= STEPS.length}
-            onClick={() => {
-              if (stepKey === "tracks" && (project.track?.status === "preview-ready" || project.track?.status === "pending-review")) {
-                setError("Génère d’abord le morceau complet (l’extrait ne suffit pas) avant de continuer.");
-                return;
-              }
-              setStep((s) => Math.min(STEPS.length, s + 1));
-            }}
-          >
-            Étape suivante <ChevronRight size={16} />
-          </button>
-        </footer>
       </div>
       )}
 

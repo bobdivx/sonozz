@@ -174,6 +174,10 @@ export default function TracksStep({
   const [onceHint, setOnceHint] = useState("");
   const [importTitle, setImportTitle] = useState("");
   const [draftTitle, setDraftTitle] = useState(track?.title || "");
+  const [qaBusyId, setQaBusyId] = useState(null);
+  const [qaError, setQaError] = useState("");
+  const [qaAnalysis, setQaAnalysis] = useState(null);
+  const [qaVersionLabel, setQaVersionLabel] = useState("");
   const [styleTrackPick, setStyleTrackPick] = useState(() => {
     const st = artist?.styleLock?.seedTrack;
     if (st?.source && st?.sourceId) {
@@ -226,6 +230,11 @@ export default function TracksStep({
     setDraftTitle(track?.title || "");
   }, [track?.id, track?.title]);
 
+  useEffect(() => {
+    setQaAnalysis(null);
+    setQaError("");
+  }, [track?.id, track?.audioUrl, track?.audioS3Key]);
+
   function commitDraftTitle() {
     const next = String(draftTitle || "").trim();
     if (!next) {
@@ -234,6 +243,57 @@ export default function TracksStep({
     }
     if (next === String(track?.title || "").trim()) return;
     onRenameTrack?.(next);
+  }
+
+  async function runAudioQa(version) {
+    const target = version || track;
+    if (!target?.audioUrl && !target?.audioS3Key) {
+      setQaError("Pas d’audio à analyser");
+      return;
+    }
+    const id = target.id || "active";
+    setQaBusyId(id);
+    setQaError("");
+    setQaAnalysis(null);
+    setQaVersionLabel(target.title || track?.title || "version");
+    try {
+      await ensureKeysHydrated();
+      const keys = loadKeys();
+      if (!String(keys.geminiApiKey || "").trim()) {
+        throw new Error("Configure Gemini dans Paramètres → IA");
+      }
+      const res = await api.analyzeTrackAudio({
+        keys,
+        audioUrl: target.audioUrl,
+        audioS3Key: target.audioS3Key,
+        track: {
+          title: target.title || track?.title,
+          style: target.style || track?.style,
+          bpm: target.bpm || track?.bpm,
+          provider: target.provider || track?.provider,
+          aceStepModel: target.aceStepModel || track?.aceStepModel,
+          aceStepQuality: target.aceStepQuality || track?.aceStepQuality,
+          quality: target.quality || track?.quality,
+          aceGen: target.aceGen || track?.aceGen || null,
+          pickReason: target.pickReason || track?.pickReason || null,
+          usedReference:
+            target.usedReference ?? track?.usedReference ?? null,
+          isPreview: target.isPreview || track?.isPreview || false,
+          language: target.language || lyrics?.language || null,
+        },
+        generation: target.aceGen || track?.aceGen || null,
+        lyrics: lyrics
+          ? { text: lyrics.text, language: lyrics.language, title: lyrics.title }
+          : null,
+        artist,
+        featArtist: featArtist || artist?.featArtist || null,
+      });
+      setQaAnalysis(res.analysis || null);
+    } catch (e) {
+      setQaError(e.message || "Analyse impossible");
+    } finally {
+      setQaBusyId(null);
+    }
   }
 
   const hasAceStep = musicProvider === "acestep" && isStudioEnabled(loadKeys(), "acestep");
@@ -807,6 +867,11 @@ export default function TracksStep({
             activeId={activeId}
             onSelect={onSelectVersion}
             onDelete={onDeleteVersion}
+            onAnalyze={(v) => void runAudioQa(v)}
+            analyzeBusyId={qaBusyId}
+            canDelete={(v) =>
+              versions.length > 1 || Boolean(v.audioUrl || v.audioS3Key)
+            }
             labelFor={(v, i) => {
               const kind =
                 v.isPreview || v.status === "preview-ready"
@@ -818,6 +883,67 @@ export default function TracksStep({
               return `${title} · ${kind}${v.provider ? ` · ${v.provider}` : ""}`;
             }}
           />
+          {qaError ? <p class="text-sm text-error">{qaError}</p> : null}
+          {qaAnalysis ? (
+            <div
+              class={`space-y-2 rounded-xl border p-4 text-sm ${
+                qaAnalysis.verdict === "ok"
+                  ? "border-success/30 bg-success/5"
+                  : qaAnalysis.verdict === "unusable"
+                    ? "border-error/30 bg-error/5"
+                    : "border-warning/30 bg-warning/5"
+              }`}
+            >
+              <p class="font-medium">
+                {qaVersionLabel ? (
+                  <span class="text-base-content/60">{qaVersionLabel} — </span>
+                ) : null}
+                Verdict :{" "}
+                <span class="uppercase tracking-wide">
+                  {qaAnalysis.verdict === "ok"
+                    ? "OK"
+                    : qaAnalysis.verdict === "unusable"
+                      ? "inutilisable"
+                      : "dégradé"}
+                </span>
+              </p>
+              {qaAnalysis.summary ? (
+                <p class="text-base-content/80">{qaAnalysis.summary}</p>
+              ) : null}
+              {Array.isArray(qaAnalysis.symptoms) && qaAnalysis.symptoms.length > 0 ? (
+                <ul class="list-disc space-y-0.5 pl-5 text-base-content/70">
+                  {qaAnalysis.symptoms.slice(0, 6).map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {Array.isArray(qaAnalysis.paramIssues) && qaAnalysis.paramIssues.length > 0 ? (
+                <div class="space-y-1">
+                  <p class="text-xs font-medium uppercase tracking-wide text-base-content/45">
+                    Params
+                  </p>
+                  <ul class="list-disc space-y-0.5 pl-5 text-base-content/70">
+                    {qaAnalysis.paramIssues.slice(0, 5).map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {Array.isArray(qaAnalysis.recommendations) &&
+              qaAnalysis.recommendations.length > 0 ? (
+                <div class="space-y-1">
+                  <p class="text-xs font-medium uppercase tracking-wide text-base-content/45">
+                    Pistes
+                  </p>
+                  <ul class="list-disc space-y-0.5 pl-5 text-base-content/70">
+                    {qaAnalysis.recommendations.slice(0, 5).map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
 

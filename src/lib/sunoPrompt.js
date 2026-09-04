@@ -12,6 +12,7 @@ import {
   displayArtistCredit,
 } from "./featArtist.js";
 import { defaultBpmForGenre, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "./musicLane.js";
+import { languageLabel, languagePrompt } from "./studio.js";
 
 function voiceHintFromArtist(artist) {
   const g = resolveArtistGender(artist)?.code;
@@ -120,11 +121,18 @@ export function buildSunoPrompt({
         ? metalVoiceHint(resolveArtistGender(artist)?.code, genreBlob, lock)
         : voiceHintFromArtist(artist));
 
+  const langCode = String(lyrics?.language || artist?.language || "fr")
+    .toLowerCase()
+    .slice(0, 2);
+  const langName = languagePrompt(langCode);
+  const langUi = languageLabel(langCode);
+
   return `Style: ${lock.genreSummary || artist?.genre || (metal ? "metal" : "indie pop")}${
     lock.matchedName || seed?.artistName
       ? ` (lane of ${lock.matchedName || seed.artistName})`
       : ""
   }. ${voice}. Mood: ${artist?.mood || lock.mood || (metal ? "aggressive" : "emotional")}.
+Language: ${langUi} (${langCode}) — vocals and lyrics sung entirely in ${langName}
 Artist: ${displayArtistCredit(artist, feat)}
 Production: ${production}
 Keywords: ${keywords}

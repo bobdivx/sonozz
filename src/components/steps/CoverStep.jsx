@@ -221,6 +221,7 @@ export default function CoverStep({
             activeId={activeId}
             onSelect={onSelectVersion}
             onDelete={onDeleteVersion}
+            canDelete={(v) => versions.length > 1 || Boolean(v.imageUrl)}
             thumbFor={(v) => v.imageUrl || null}
           />
         </div>

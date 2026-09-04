@@ -1,14 +1,20 @@
-import { Check, Trash2 } from "lucide-preact";
+import { Check, Stethoscope, Trash2 } from "lucide-preact";
 
 /**
  * Liste de versions créatives (paroles / audio / jaquettes).
  * @param {"list"|"grid"} layout
+ * @param {(version) => void} [onAnalyze] — QA audio (liste uniquement, si la version a un audio)
+ * @param {string|null} [analyzeBusyId] — id de la version en cours d’analyse
+ * @param {(version) => boolean} [canDelete] — si false, pas de poubelle (ex. dernière coquille sans média)
  */
 export default function VersionPicker({
   versions = [],
   activeId = null,
   onSelect,
   onDelete,
+  onAnalyze,
+  analyzeBusyId = null,
+  canDelete,
   layout = "list",
   labelFor,
   thumbFor,
@@ -24,6 +30,8 @@ export default function VersionPicker({
         {versions.map((v, i) => {
           const active = v.id === activeId;
           const thumb = thumbFor?.(v, i);
+          const allowDelete =
+            Boolean(onDelete) && (typeof canDelete === "function" ? canDelete(v) : true);
           return (
             <li key={v.id} class="relative">
               <button
@@ -49,7 +57,7 @@ export default function VersionPicker({
                   </span>
                 )}
               </button>
-              {onDelete && (
+              {allowDelete ? (
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs absolute right-1 top-1 bg-base-100/80"
@@ -61,7 +69,7 @@ export default function VersionPicker({
                 >
                   <Trash2 size={12} />
                 </button>
-              )}
+              ) : null}
             </li>
           );
         })}
@@ -74,6 +82,8 @@ export default function VersionPicker({
       {versions.map((v, i) => {
         const active = v.id === activeId;
         const label = labelFor?.(v, i) || `Version ${i + 1}`;
+        const allowDelete =
+          Boolean(onDelete) && (typeof canDelete === "function" ? canDelete(v) : true);
         return (
           <li
             key={v.id}
@@ -97,7 +107,26 @@ export default function VersionPicker({
                 </span>
               )}
             </button>
-            {onDelete && (
+            {onAnalyze && (v.audioUrl || v.audioS3Key) ? (
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs shrink-0"
+                aria-label="Analyser ce take"
+                title="Analyser ce take (Gemini)"
+                disabled={Boolean(analyzeBusyId)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAnalyze(v);
+                }}
+              >
+                {analyzeBusyId === v.id ? (
+                  <span class="loading loading-spinner loading-xs" />
+                ) : (
+                  <Stethoscope size={14} />
+                )}
+              </button>
+            ) : null}
+            {allowDelete ? (
               <button
                 type="button"
                 class="btn btn-ghost btn-xs shrink-0 text-error"
@@ -108,7 +137,7 @@ export default function VersionPicker({
               >
                 <Trash2 size={14} />
               </button>
-            )}
+            ) : null}
           </li>
         );
       })}

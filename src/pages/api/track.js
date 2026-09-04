@@ -177,6 +177,36 @@ export async function POST({ request }) {
       }
     }
 
+    if (action === "analyze-audio") {
+      const keys = body?.keys || {};
+      const geminiKey = String(keys.geminiApiKey || "").trim();
+      if (!geminiKey) {
+        return error("Clé Gemini requise (Paramètres → IA) pour analyser l’audio", 400);
+      }
+      const audioUrl = String(body?.audioUrl || body?.track?.audioUrl || "").trim();
+      const audioS3Key = String(body?.audioS3Key || body?.track?.audioS3Key || "").trim();
+      if (!audioUrl && !audioS3Key) {
+        return error("Audio manquant (audioUrl / audioS3Key)", 400);
+      }
+      try {
+        const { analyzeTrackQuality } = await import("../../server/musicListen.js");
+        const analysis = await analyzeTrackQuality(geminiKey, {
+          audioUrl,
+          audioS3Key,
+          track: body?.track || null,
+          artist: body?.artist || null,
+          featArtist: body?.featArtist || body?.artist?.featArtist || null,
+          lyrics: body?.lyrics || null,
+          generation: body?.generation || body?.track?.aceGen || null,
+          model: keys.geminiModel,
+        });
+        return json({ ok: true, analysis });
+      } catch (e) {
+        console.error("[track] analyze-audio", e?.message || e);
+        return error(e.message || "Analyse audio impossible", 500);
+      }
+    }
+
     if (action === "probe-replicate") {
       const token = String(body?.keys?.replicateApiToken || "").trim();
       if (!token) {

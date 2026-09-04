@@ -38,6 +38,10 @@ import { runAlbumJob } from "./runAlbumJob.js";
 import { appendVersion, normalizeProjectVersions } from "./versionsModel.js";
 import { cancelledAlbumState } from "./albumTracks.js";
 import {
+  applySonicVariation,
+  artistWithSonicVariation,
+} from "./sonicVariation.js";
+import {
   canonicalAlbumJobId,
   dedupeStoredAlbumJobs,
   markAlbumMirrorDismissed,
@@ -911,15 +915,36 @@ async function runTrackBackgroundJob(job) {
   });
 
   try {
+    const variation = applySonicVariation({
+      musicArrange: project.musicArrange,
+      styleLock: project.artist?.styleLock,
+      role:
+        project.sonicRole ||
+        project.albumMeta?.trackRole ||
+        (project.albumMeta?.index === 1 ? "single" : undefined),
+      title: project.lyrics?.title || project.track?.title || "",
+      artistKey: project.artist?.slug || project.artist?.name || "",
+      trackIndex: project.albumMeta?.index ?? null,
+      trackTotal: null,
+    });
+    // Fige l’arrangement / rôle sur le projet pour les régénérations cohérentes.
+    project = {
+      ...project,
+      musicArrange: variation.musicArrange,
+      sonicRole: variation.sonicRole,
+    };
+
     let result = await api.track(
       {
         preview,
         lyrics: project.lyrics,
-        artist: {
-          ...project.artist,
-          musicArrange: project.musicArrange,
-          featArtist: project.featArtist || null,
-        },
+        artist: artistWithSonicVariation(
+          {
+            ...project.artist,
+            featArtist: project.featArtist || null,
+          },
+          variation,
+        ),
       },
       (p) => {
         if (!p || abortState.aborted || !getJob(id)) return;

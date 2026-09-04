@@ -701,23 +701,20 @@ function buildSongGenStyleTags(
       push("aggressive metal vocals", 24);
     }
     push("no clean singing", 18);
-    push("no vocoder", 14);
-    push("no autotune", 14);
     push("no synth pads", 16);
     push("no pop polish", 16);
   } else {
-    // Mix d’abord — trop de tags « vocals » → vocoder sans bande audible
+    // Mix d’abord — trop de tags « vocals » → bande étroite / voix artefactée
     push("full band mix", 20);
-    push("punchy drums", 16);
+    push("balanced drums", 16);
     push("audible bass", 16);
     if (genderCode === "female") {
       push("natural female vocals", 24);
     } else {
       push("natural male vocals", 24);
     }
-    push("dry vocals", 14);
-    push("no vocoder", 14);
-    push("no autotune", 14);
+    push("clear lead vocal", 14);
+    push("clean mix", 12);
   }
   const lang = String(language || "").toLowerCase();
   if (lang.startsWith("fr")) push("french lyrics", 16);

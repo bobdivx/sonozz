@@ -6,7 +6,6 @@ import {
   resolveStyleReference,
   resolveStyleReferences,
   resolveStyleTrackReference,
-  resolveStyleLockPreview,
 } from "./styleReference.js";
 import { submitOnceRelease } from "./once.js";
 import {
@@ -28,7 +27,7 @@ import {
   pollAceStep,
   cancelAceStep,
   isAceStepMusicProvider,
-  ACE_DUO_STYLE_TRANSFER_STRENGTH,
+  resolveAceVocalLanguage,
 } from "./aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../lib/studio.js";
 import {
@@ -1314,7 +1313,10 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
     console.warn("[timbre] pre-track:", e.message);
   }
 
-  const lang = lyrics?.language || artist?.language || "fr";
+  const lang = resolveAceVocalLanguage(
+    lyrics?.language || artist?.language || "fr",
+    lyrics?.text || "",
+  );
   const songGenModel = keys?.songGenPreferredModel;
   const wantAceStep = isAceStepMusicProvider(keys);
   const wantSongGen = isSongGenMusicProvider(keys);
@@ -1350,26 +1352,9 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
 
   if (wantAceStep) {
     const feat = normalizeFeatArtist(artist?.featArtist);
-    const leadVocal = vocalLockForArtist(artist);
     const featVocal = feat ? vocalLockForArtist(feat) : null;
-    // Duo mixte H/F : cover d’un titre solo (Lose Yourself) écrase souvent la 2e voix.
-    // Duo même sexe (rap×gospel) : on GARDE le cover pour le groove — le duo vient des tags singer, pas du cover.
-    const mixedGenderDuo =
-      Boolean(featVocal?.genderCode) &&
-      Boolean(leadVocal?.genderCode) &&
-      featVocal.genderCode !== leadVocal.genderCode;
-
-    let styleRef = { previewUrl: "", title: null, artistName: null, via: "none" };
-    if (!mixedGenderDuo) {
-      try {
-        styleRef = await resolveStyleLockPreview(keys, styleLock || artist?.styleLock);
-      } catch (e) {
-        console.warn("[acestep] preview style:", e.message);
-      }
-    } else {
-      console.info("[acestep] duo mixte H/F — cover désactivé pour préserver les deux voix");
-    }
-    const refTitle = [styleRef.title, styleRef.artistName].filter(Boolean).join(" — ");
+    // Preview Spotify/Deezer en taskType « cover » → bouillie (lab OK sans cover).
+    // DNA = prompt texte (styleLock.musicPrompt), pas l’extrait catalogue.
     let bpmForAce = bpmGuess;
     if (feat && Number(bpmForAce) > 118) bpmForAce = 118;
 
@@ -1380,10 +1365,8 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
       language: lang,
       bpm: bpmForAce,
       preview: isPreview,
-      referenceAudioUrl: skipStyleReference || mixedGenderDuo ? "" : styleRef.previewUrl,
-      referenceAudioTitle: skipStyleReference || mixedGenderDuo ? "" : refTitle,
-      // Duo même sexe / fusion de genres : cover léger (groove only), pas clone mono-voix.
-      audioCoverStrength: feat ? ACE_DUO_STYLE_TRANSFER_STRENGTH : undefined,
+      referenceAudioUrl: "",
+      referenceAudioTitle: "",
       styleLock,
       artist,
       forceModelId: String(forceAceModelId || "").trim() || null,
@@ -1407,19 +1390,19 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
           : vocal?.code,
         aceStepModel: started.model || null,
         aceStepQuality: started.quality || null,
+        aceGen: started.aceGen || null,
+        pickReason: started.pickReason || null,
+        usedReference: Boolean(started.usedReference),
+        language: lang,
         isPreview,
         status: isPreview ? "preview-ready" : "prompt-ready",
         note: isPreview
-          ? `Extrait ACE-Step · ${started.quality || "auto"}${
-              started.usedReference && refTitle ? ` · réf. « ${refTitle} »` : ""
-            }${feat ? " · duo" : ""} — brouillon indicatif`
-          : started.usedReference && refTitle
-            ? `ACE-Step · ${started.quality || started.model || "auto"} · réf. audio « ${refTitle} »`
-            : feat
-              ? `ACE-Step · ${started.quality || started.model || "auto"} · duo ${displayArtistCredit(artist, feat)}`
-              : started.model
-                ? `ACE-Step · ${started.quality || started.model}`
-                : draft.note,
+          ? `Extrait ACE-Step · ${started.quality || "auto"}${feat ? " · duo" : ""} — brouillon indicatif`
+          : feat
+            ? `ACE-Step · ${started.quality || started.model || "auto"} · duo ${displayArtistCredit(artist, feat)}`
+            : started.model
+              ? `ACE-Step · ${started.quality || started.model}`
+              : draft.note,
       },
     };
   }
@@ -1611,20 +1594,20 @@ export async function runTrack({ keys, lyrics, artist }) {
   let hasVocals = false;
 
   if (isAceStepMusicProvider(keys)) {
-    let styleRef = { previewUrl: "", title: null, artistName: null };
-    try {
-      styleRef = await resolveStyleLockPreview(keys, styleLock || artist?.styleLock);
-    } catch (e) {
-      console.warn("[acestep] preview style:", e.message);
-    }
+    // Pas de cover auto catalogue (cf. startTrack) — texte DNA seulement.
     const result = await generateMusicWithAceStep(keys, {
       prompt,
       lyrics: lyrics?.text || "",
       title: lyrics?.title || artist?.name || "SONOZZ",
-      language: lyrics?.language || artist?.language || "fr",
+      language: resolveAceVocalLanguage(
+        lyrics?.language || artist?.language || "fr",
+        lyrics?.text || "",
+      ),
       bpm: bpmGuess,
-      referenceAudioUrl: styleRef.previewUrl,
-      referenceAudioTitle: [styleRef.title, styleRef.artistName].filter(Boolean).join(" — "),
+      referenceAudioUrl: "",
+      referenceAudioTitle: "",
+      styleLock,
+      artist,
     });
     audioUrl = result.url;
     provider = result.provider;

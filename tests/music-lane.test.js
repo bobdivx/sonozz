@@ -111,7 +111,7 @@ describe("arrangement / prompts depuis le DNA", () => {
     assert.match(blob, /guttural death growl/);
     assert.match(blob, /crushing dense death metal mix/);
     assert.match(blob, /never pop|never clean singing|never synth/);
-    assert.match(blob, /never vocoder/);
+    assert.doesNotMatch(blob, /never vocoder|never autotune/);
     assert.ok(!metalFlavorTags("pop").length);
     const tags = metalFlavorTags(deathLock).join(" ");
     assert.match(tags, /guttural death growl|blast beats|Brutal Death Metal/i);
@@ -214,8 +214,8 @@ describe("DNA figé : pas d’override par nom d’artiste", () => {
     const style = composeAceStepStyle("high energy original", deathLock);
     assert.match(style, /Brutal Death Metal/i);
     assert.match(style, /guttural death growl/i);
-    assert.match(style, /not vocoder|no vocoder/i);
     assert.doesNotMatch(style, /Florida|George Fisher|Rammstein/i);
+    assert.doesNotMatch(style, /no vocoder|no autotune/i);
     assert.doesNotMatch(composeAceStepStyle("pop, emotional, radio-ready"), /guttural|industrial/i);
   });
 });

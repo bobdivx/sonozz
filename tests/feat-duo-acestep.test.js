@@ -91,6 +91,38 @@ describe("ensureAceStepDuoSingerTags", () => {
     assert.match(out, /\[singer 1: male\]/i);
     assert.match(out, /\[singer 2: female\]/i);
   });
+
+  it("1er Verse = lead même après Intro vide (pas gospel sur le rap)", () => {
+    const lead = { name: "Jeser Mathieu", gender: "male", genre: "Hip Hop" };
+    const feat = normalizeFeatArtist({
+      name: "Veridian Echoes",
+      gender: "male",
+      genre: "Gospel",
+    });
+    const raw = `[Intro]
+
+[Verse]
+Yeah, they buildin' empires outta dust and lies
+
+[Chorus]
+Fake God, Fake God
+Standin' on a shaky ground
+
+[Verse]
+Pavement cracks whisper tales of the grind`;
+    const out = ensureAceStepDuoSingerTags(raw, lead, feat);
+    // Intro vide → pas de tag singer
+    const introBlock = out.split(/\[Verse\]/i)[0];
+    assert.doesNotMatch(introBlock, /\[singer/i);
+    // 1er couplet → singer 1 rap, 2e → singer 2 gospel
+    const verses = out.split(/\[Verse\]/i).slice(1);
+    assert.match(verses[0], /^\[singer 1: male rap baritone\]/im);
+    assert.doesNotMatch(verses[0].split("\n").slice(0, 3).join("\n"), /singer 2: male gospel/i);
+    assert.match(verses[1], /^\[singer 2: male gospel tenor\]/im);
+    // Rap × gospel : le refrain appartient au feat gospel (pas call&response ligne à ligne)
+    assert.match(out, /\[Chorus\]\s*\n\[singer 2: male gospel tenor\]/i);
+    assert.doesNotMatch(out, /\[Chorus\]\s*\n\[singer 1:/i);
+  });
 });
 
 describe("buildAceStepDuoStyle", () => {
@@ -126,20 +158,31 @@ describe("buildAceStepDuoStyle", () => {
       },
     };
     const solo = soloizeFeatVocalForDuo(vocalLockForArtist(feat));
-    assert.match(solo.vocalStyle, /solo gospel/i);
-    assert.match(solo.vocalStyle, /NOT a full choir/i);
-    assert.match(solo.timbreHint, /solo/i);
+    assert.match(solo.vocalStyle, /Sister Act|gospel lead/i);
+    assert.match(solo.vocalStyle, /choir/i);
+    assert.match(solo.timbreHint, /gospel lead|church/i);
 
     const style = buildAceStepDuoStyle(
       { name: "Jeser Mathieu", gender: "male", genre: "Hip Hop" },
       feat,
       { styleBase: "hardcore hip hop", mood: "defiant" },
     );
-    assert.match(style, /ONE song only/i);
-    assert.match(style, /Gospel/i);
-    assert.match(style, /solo gospel|solo man gospel/i);
+    assert.match(style, /Sister Act|TRUE hip-hop/i);
+    assert.match(style, /Gospel|gospel/i);
+    assert.match(style, /baritone|tenor/i);
+    assert.match(style, /Hammond|handclap|choir|CHORUS/i);
     assert.doesNotMatch(style, /Billboard|Lose Yourself|Brooklyn Tabernacle/i);
-    assert.ok(style.length <= 800);
+    assert.ok(style.length <= 1100);
+  });
+
+  it("tags same-sex avec contraste baritone/tenor", () => {
+    const out = ensureAceStepDuoSingerTags(
+      `[Verse]\nYo pavement\n[Chorus]\nFake God rising\nIn the night`,
+      { name: "Jeser Mathieu", gender: "male", genre: "Hip Hop" },
+      { name: "Veridian Echoes", gender: "male", genre: "Gospel" },
+    );
+    assert.match(out, /\[singer 1: male rap baritone\]/i);
+    assert.match(out, /\[Chorus\]\s*\n\[singer 2: male gospel tenor\]/i);
   });
 });
 
@@ -285,7 +328,7 @@ Concrete cracks`;
 });
 
 describe("pickAceStepModel duo / fallback", () => {
-  it("respecte la préférence SFT même en duo", () => {
+  it("respecte la préférence SFT même en duo (mixte)", () => {
     const models = [
       { id: "acestep-v15-xl-sft", isPreloaded: true, isActive: true, engineKnown: true },
       { id: "marcorez8/acestep-v15-xl-turbo-bf16", isPreloaded: true, isActive: false, engineKnown: true },
@@ -307,6 +350,32 @@ describe("pickAceStepModel duo / fallback", () => {
 
     const autoDuo = pickAceStepModel({ models }, { duo: true });
     assert.notEqual(autoDuo.modelId, "acestep-v15-xl-merge-sft-turbo");
+  });
+
+  it("duo same-sex : Turbo avant SFT même si préférence SFT", () => {
+    const models = [
+      { id: "acestep-v15-xl-sft", isPreloaded: true, isActive: true, engineKnown: true },
+      { id: "acestep-v15-xl-turbo-bf16", isPreloaded: true, isActive: false, engineKnown: true },
+    ];
+    const pick = pickAceStepModel(
+      { models, activeModel: "acestep-v15-xl-sft" },
+      { preferredId: "acestep-v15-xl-sft", duo: true, sameSexDuo: true },
+    );
+    assert.match(pick.modelId, /turbo/i);
+    assert.match(pick.reason, /same-sex/i);
+  });
+
+  it("preview : Turbo avant SFT (évite vocoder SFT)", () => {
+    const models = [
+      { id: "acestep-v15-xl-sft", isPreloaded: true, isActive: true, engineKnown: true },
+      { id: "acestep-v15-xl-turbo-bf16", isPreloaded: true, isActive: false, engineKnown: true },
+    ];
+    const pick = pickAceStepModel(
+      { models, activeModel: "acestep-v15-xl-sft" },
+      { preferredId: "acestep-v15-xl-sft", preview: true },
+    );
+    assert.match(pick.modelId, /turbo/i);
+    assert.match(pick.reason, /preview/i);
   });
 
   it("ne confond pas NaN avec VRAM (cuda:0 dans le message)", () => {

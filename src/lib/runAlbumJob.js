@@ -7,6 +7,10 @@ import { persistAudioRemote } from "./audioResolve.js";
 import { loadKeys } from "./keys.js";
 import { emptyProject, createAlbumId, createAlbumTrackId } from "./studio.js";
 import {
+  applySonicVariation,
+  artistWithSonicVariation,
+} from "./sonicVariation.js";
+import {
   attachCoverToProject,
   albumNeedsCover,
   buildAlbumCoverRequest,
@@ -274,6 +278,7 @@ export async function runAlbumJob({
               role: "album",
               theme: t.theme,
               workingTitle: t.workingTitle || `Piste ${i + 2}`,
+              trackRole: t.trackRole || undefined,
               lyrics: null,
               track: null,
               status: "pending",
@@ -412,14 +417,34 @@ export async function runAlbumJob({
 
       let trackI;
       try {
+        const albumTotalForArc = albumTotal;
+        const usedRoles = (getWorking?.() || working).album.tracks
+          .filter((t) => t.id !== slot.id && t.sonicRole)
+          .map((t) => t.sonicRole);
+        const variation = applySonicVariation({
+          musicArrange: project.musicArrange,
+          styleLock: project.artist?.styleLock,
+          role: slot.trackRole || (slot.role === "lead" ? "single" : undefined),
+          title: lyricsI?.title || slot.workingTitle,
+          artistKey: project.artist?.slug || project.artist?.name || "",
+          trackIndex: slot.index,
+          trackTotal: albumTotalForArc,
+          usedRoles,
+        });
+        mark({
+          sonicRole: variation.sonicRole,
+          musicArrange: variation.musicArrange,
+        });
         trackI = await api.track(
           {
             lyrics: lyricsI,
-            artist: {
-              ...project.artist,
-              musicArrange: project.musicArrange,
-              featArtist: project.featArtist || null,
-            },
+            artist: artistWithSonicVariation(
+              {
+                ...project.artist,
+                featArtist: project.featArtist || null,
+              },
+              variation,
+            ),
           },
           (p) => {
             if (abortState.aborted) return;

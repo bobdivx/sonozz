@@ -23,6 +23,7 @@ function fallbackThemes({ lead, artist, count }) {
   return seeds.slice(0, Math.max(1, count)).map((theme, i) => ({
     theme,
     workingTitle: `Piste ${i + 2}`,
+    trackRole: ["opener", "midtempo", "ballad", "banger", "deep_cut", "midtempo", "banger"][i % 7],
   }));
 }
 
@@ -62,22 +63,29 @@ Single lead (ne pas le répéter): ${JSON.stringify(lead)}
 
 Propose exactement ${n} NOUVELLES pistes (hors lead), chacune avec un thème distinct mais dans la même lane artistique.
 Pas de reprises du titre lead. Thèmes chantables, concrets, 1 phrase max.
+Varie aussi le rôle sonore (énergie / place dans l’album) — pas 8 fois le même single.
 
 JSON strict:
 {
   "albumTitle": string,
   "concept": string,
   "tracks": [
-    { "theme": string, "workingTitle": string }
+    {
+      "theme": string,
+      "workingTitle": string,
+      "trackRole": "opener" | "midtempo" | "ballad" | "banger" | "deep_cut" | "closer"
+    }
   ]
 }
-"tracks" doit avoir exactement ${n} éléments.`,
+"tracks" doit avoir exactement ${n} éléments.
+Le dernier titre devrait souvent être "closer". Évite de mettre "banger" sur toutes les pistes.`,
     );
 
     const tracks = (Array.isArray(data?.tracks) ? data.tracks : [])
       .map((t) => ({
         theme: String(t?.theme || "").trim(),
         workingTitle: String(t?.workingTitle || t?.title || "").trim(),
+        trackRole: String(t?.trackRole || t?.role || "").trim() || undefined,
       }))
       .filter((t) => t.theme)
       .slice(0, n);
