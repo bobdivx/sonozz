@@ -260,10 +260,38 @@ export function aceStepProductionQualityFloor({ duo = false } = {}) {
     "lead vocal prominent and clear, instrumental mix with space around the vocal",
     "warm organic textures, balanced midrange, controlled low-end, peak headroom",
     "no clipping, no harsh brickwall limiting, natural dynamics",
+    "section-aware arrangement — layers change between verse, pre-chorus, chorus, bridge",
     duo
       ? "arrangement supports the active tagged singer"
       : "full band under the lead without crowding the vocal",
   ].join(". ");
+}
+
+/**
+ * Consignes d’arc sectionnel (compactes pour le plafond ACE ~700–850 chars).
+ * Verse réduit → chorus plus large → bridge contraste → final chorus max.
+ */
+export function aceStepSectionDynamicsLine({ duo = false } = {}) {
+  const core =
+    "section dynamics: lean verse → pre-chorus lift → thicker chorus (extra layers, wider snare) → contrasting bridge → biggest final chorus — never one flat loop";
+  if (duo) {
+    return `${core}; band lifts under the active tagged singer`;
+  }
+  return core;
+}
+
+/**
+ * Bits courts pour SongGen / MiniMax (pas de pavés — LeVo les ignore).
+ */
+export function sectionDynamicsStyleTags() {
+  return ["chorus lift", "section dynamics"];
+}
+
+/**
+ * Fragment arrangement (SongGen custom / MiniMax quality).
+ */
+export function sectionDynamicsArrangeFragment() {
+  return "section lifts: chorus thicker than verse, bridge contrasts, final chorus biggest — not one flat instrumental loop";
 }
 
 function artefactGuardsFromBlob(blob = "", lock = null) {
@@ -341,8 +369,7 @@ export function aceStepCommercialArrangementBits(lock = null, { duo = false } = 
     "streaming-ready commercial hit — Billboard / playlist quality (same bar for every genre)",
     `layered multi-instrument bed: ${band.join(", ")}`,
     "never drums-only, never sparse bed, never thin loop under vocals",
-    "dynamic arrangement arc: sparse intro → verse groove → pre-chorus lift → big chorus → contrasting bridge → biggest final chorus → outro",
-    "change layers between sections (fills, drops, add guitars/keys/pads) — NOT one flat linear loop",
+    aceStepSectionDynamicsLine({ duo }),
     rhythm ? `groove: ${rhythm}` : null,
     prod
       ? `production: ${prod}`
@@ -351,6 +378,13 @@ export function aceStepCommercialArrangementBits(lock = null, { duo = false } = 
       ? "duet vocals sit cleanly inside a full commercial band mix"
       : "lead vocal sits cleanly on top of a full commercial band mix, instruments leave space for the voice",
   ].filter(Boolean);
+}
+
+/** 1–2 bits band courts pour le style ACE (évite de saturer le plafond 700 chars). */
+export function aceStepCommercialBandBits(lock = null) {
+  const bits = aceStepCommercialArrangementBits(lock, { duo: false });
+  // [0]=streaming, [1]=layered bed, [2]=never drums-only
+  return [bits[1], bits[2]].filter(Boolean);
 }
 
 /**

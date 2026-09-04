@@ -1,6 +1,12 @@
 /** Réglages d’arrangement SongGen (projet) — défauts prudents = mix complet. */
 
-import { artefactGuardsFromLock, isMetalLane, metalBandInstruments, styleLockGenreBlob } from "./musicLane.js";
+import {
+  artefactGuardsFromLock,
+  isMetalLane,
+  metalBandInstruments,
+  sectionDynamicsArrangeFragment,
+  styleLockGenreBlob,
+} from "./musicLane.js";
 
 export const LEAD_INSTRUMENTS = [
   { id: "", label: "Auto (style artiste)" },
@@ -435,6 +441,8 @@ export function musicArrangeToSongGen(arrange, { styleLockInstruments, styleLock
             .join(" — ")
         : "full mixed song with lead vocals AND full band (bass, keys/guitar, drums, pads) — never a single instrument loop, never drums-only, never vocals-only",
   );
+
+  parts.push(sectionDynamicsArrangeFragment());
 
   return {
     instruments: fullInstruments.join(", ").slice(0, 160),

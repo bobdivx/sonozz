@@ -20,6 +20,7 @@ import {
   mapGenreForStudio,
   metalBandInstruments,
   metalFlavorTags,
+  sectionDynamicsStyleTags,
   styleLockGenreBlob,
   withKnownArtistLane,
 } from "../lib/musicLane.js";
@@ -716,6 +717,9 @@ function buildSongGenStyleTags(
     }
     push("clear lead vocal", 14);
     push("clean mix", 12);
+  }
+  for (const t of sectionDynamicsStyleTags()) {
+    push(t, 20);
   }
   const lang = String(language || "").toLowerCase();
   if (lang.startsWith("fr")) push("french lyrics", 16);

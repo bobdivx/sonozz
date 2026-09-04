@@ -39,6 +39,8 @@ import {
   isMetalLane,
   metalFlavorTags,
   metalVoiceHint,
+  sectionDynamicsArrangeFragment,
+  sectionDynamicsStyleTags,
   styleLockGenreBlob,
   withKnownArtistLane,
 } from "../lib/musicLane.js";
@@ -1114,13 +1116,19 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
         "commercial contemporary gospel-soul production",
         "full band with choir, organ, piano, bass and drums",
         "radio-ready streaming quality",
+        sectionDynamicsArrangeFragment(),
       ]
     : metal
-      ? [...metalFlavorTags(styleLock), ...artefactGuardsFromLock(styleLock)]
+      ? [
+          ...metalFlavorTags(styleLock),
+          ...artefactGuardsFromLock(styleLock),
+          ...sectionDynamicsStyleTags(),
+        ]
       : [
           "commercial radio-ready full-band production",
           "polished multi-instrument arrangement like a Billboard hit",
           "rich bass, harmony instruments, drums and pads — never thin or single-instrument",
+          sectionDynamicsArrangeFragment(),
         ];
 
   // Scrub fuites de sexe opposé depuis la référence lead.

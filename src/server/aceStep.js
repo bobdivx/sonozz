@@ -1,6 +1,7 @@
 import { isStudioEnabled } from "../lib/keys.js";
 import {
-  aceStepCommercialArrangementBits,
+  aceStepCommercialBandBits,
+  aceStepSectionDynamicsLine,
   composeAceStepStyle,
   aceStepProductionQualityFloor,
 } from "../lib/musicLane.js";
@@ -725,10 +726,12 @@ export function buildAceStepBody({
   // Style proche du Lab : court, positif, genre + voix + langue.
   // Les litanie « no vocoder / no autotune » embrouillent ACE sans corriger la cause.
   const qualityFloor = aceStepProductionQualityFloor({ duo: isDuo });
+  const sectionDynamics = aceStepSectionDynamicsLine({ duo: isDuo });
+  const bandBits = aceStepCommercialBandBits(styleLock);
   const langCode = resolveAceVocalLanguage(language, lyricsClean);
   const langBit = aceVocalLanguageStyleBit(langCode);
   const leadLock = vocalLockForArtist(lead);
-  const STYLE_CAP = 700;
+  const STYLE_CAP = 850;
   let styleFinal;
   if (isDuo) {
     const duoStyle = buildAceStepDuoStyle(lead || { name: "Lead" }, feat, {
@@ -737,7 +740,14 @@ export function buildAceStepBody({
       styleLock,
       styleBase,
     });
-    styleFinal = [langBit, duoStyle || composeAceStepStyle(styleBase, styleLock), qualityFloor]
+    // Casting duo d’abord (critique), puis dynamics — troncature en fin.
+    styleFinal = [
+      langBit,
+      duoStyle || composeAceStepStyle(styleBase, styleLock),
+      sectionDynamics,
+      ...bandBits.slice(0, 1),
+      qualityFloor,
+    ]
       .filter(Boolean)
       .join(". ")
       .slice(0, STYLE_CAP);
@@ -775,14 +785,17 @@ export function buildAceStepBody({
     const featureBit = Array.isArray(arrange.features)
       ? arrange.features.filter(Boolean).slice(0, 3).join(", ")
       : "";
+    // Dynamics tôt après identité, avant polish (troncature en fin).
     styleFinal = [
       `${genre}, ${gender}`,
       langBit,
+      sectionDynamics,
       mood || null,
       densityBit,
       instru ? `instruments: ${instru}` : null,
       featureBit || null,
-      timbre ? `voice: ${timbre}`.slice(0, 120) : null,
+      timbre ? `voice: ${timbre}`.slice(0, 80) : null,
+      ...bandBits.slice(0, 1),
       qualityFloor,
     ]
       .filter(Boolean)
@@ -829,8 +842,8 @@ export function buildAceStepBody({
     body.coverNoiseStrength = isDuo ? ACE_COVER_NOISE_DUO : ACE_COVER_NOISE_SOLO;
     body.taskType = "cover";
     body.instruction = isDuo
-      ? "ONE coherent duet song: balanced mix with headroom (no clipping, no brickwall limiting); lead vocals prominent and clear with space; keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
-      : "Generate a polished commercial song with multi-instrument arrangement and dynamic section changes (not a flat loop); lead vocal prominent and clear; instrumental mix with ample space for the vocal; warm organic textures; leave peak headroom, avoid clipping and harsh brickwall limiting:";
+      ? "ONE coherent duet song: balanced mix with headroom (no clipping, no brickwall limiting); lead vocals prominent and clear with space; chorus instrumentation lifts vs verse (thicker bed, wider snare); bridge contrasts; final chorus biggest; keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
+      : "Generate a polished commercial song with multi-instrument arrangement and dynamic section changes (not a flat loop); chorus instrumentation lifts vs verse; bridge contrasts; final chorus biggest; lead vocal prominent and clear; instrumental mix with ample space for the vocal; warm organic textures; leave peak headroom, avoid clipping and harsh brickwall limiting:";
     if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < ACE_SFT_GUIDANCE)) {
       body.guidanceScale = ACE_SFT_GUIDANCE;
     }
@@ -1187,7 +1200,7 @@ export async function switchAceStepModel(keys, modelId, opts = {}) {
     model: id,
     // Gradio /v1/init hardcodait offload=true ; on force GPU (Demeter 3090).
     offload_to_cpu: opts.offloadToCpu === true,
-    offload_dit_to_cpu: opts.offloadDitToCpu === true,
+    offload_dit_to_cpu: opts.offloadDitToCpu === true || opts.offloadToCpu === true,
   };
   if (opts.initLm === false) {
     body.init_llm = false;
@@ -1278,6 +1291,74 @@ export async function waitForAceStepModel(keys, modelId, { budgetMs = ACE_MODEL_
   return { ok: false, message: lastErr || `timeout ${Math.round(budgetMs / 1000)}s attente modèle` };
 }
 
+/**
+ * Ready ≠ résident GPU. Après switch SFT, la VRAM monte souvent pendant 1–3 min.
+ * On attend usedGb ≥ seuil (pas seulement state=ready).
+ */
+export async function waitForAceStepResidentVram(
+  keys,
+  modelId,
+  { budgetMs = 180_000, pollMs = 3_000 } = {},
+) {
+  const id = String(modelId || "").trim();
+  const need = aceStepMinResidentVramGb(id);
+  const start = Date.now();
+  let lastGpu = null;
+  while (Date.now() - start < budgetMs) {
+    lastGpu = await readAceStepGpu(keys);
+    const status = await testAceStep(keys, { ensure: false }).catch(() => null);
+    const ghost = isAceStepGhostLoad(lastGpu, id, {
+      offloadToCpu: status?.offloadToCpu,
+    });
+    if (!ghost && lastGpu?.usedGb != null) {
+      console.info(
+        `[acestep] DiT résident GPU · used ${lastGpu.usedGb}/${lastGpu.totalGb} Go` +
+          ` (seuil ≥${need} Go · ${aceStepModelLabel(id)})`,
+      );
+      return { ok: true, gpu: lastGpu, need };
+    }
+    // offload=false + VRAM stable sous le vieux seuil 14 Go mais ≥10.5 → OK (chunked FFN)
+    if (
+      status?.offloadToCpu === false &&
+      lastGpu?.usedGb != null &&
+      lastGpu.usedGb >= need
+    ) {
+      return { ok: true, gpu: lastGpu, need };
+    }
+    // VRAM qui ne monte plus : inutile d’attendre 3 min
+    if (
+      status?.offloadToCpu === false &&
+      lastGpu?.usedGb != null &&
+      Date.now() - start > 20_000 &&
+      lastGpu.usedGb < need
+    ) {
+      return {
+        ok: false,
+        gpu: lastGpu,
+        need,
+        message:
+          `DiT ${aceStepModelLabel(id)} offload=false mais VRAM bloquée à ${lastGpu.usedGb} Go` +
+          ` (seuil ≥${need}).`,
+      };
+    }
+    const elapsed = Math.round((Date.now() - start) / 1000);
+    console.info(
+      `[acestep] attente VRAM résidente ${aceStepModelLabel(id)}… ${elapsed}s` +
+        ` · used=${lastGpu?.usedGb ?? "?"} Go · seuil≥${need}` +
+        (status?.offloadToCpu === true ? " · offload=OUI" : ""),
+    );
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  return {
+    ok: false,
+    gpu: lastGpu,
+    need,
+    message:
+      `DiT ${aceStepModelLabel(id)} pas résident GPU après ${Math.round(budgetMs / 1000)}s` +
+      ` (used ${lastGpu?.usedGb ?? "?"} Go, besoin ≥${need} Go).`,
+  };
+}
+
 function parseAceStepGpu(sys) {
   if (!sys || typeof sys !== "object") {
     return { name: null, totalGb: null, usedGb: null, freeGb: null };
@@ -1303,14 +1384,15 @@ export function aceStepVramHeadroomGb(modelId) {
 
 /**
  * VRAM résidente minimale attendue quand le DiT est vraiment sur GPU.
- * En dessous (ex. ~1 Go) = offload CPU / modèle fantôme → audio pourri même en solo.
+ * En dessous (ex. ~1–3 Go) = offload CPU / modèle fantôme → audio pourri.
+ * XL SFT avec chunked FFN tient souvent ~11–13 Go (pas ~20 Go full).
  */
 export function aceStepMinResidentVramGb(modelId) {
   const id = String(modelId || "");
   const vram = aceStepModelMeta(modelId)?.vramGb || 12;
-  // SFT (~20 Go) partiellement offloadé → glitch HF même si usedGb > 8.
+  // SFT + chunkedFfn : ~12 Go résident typique sur 3090 (pas 18–20 Go).
   if (/sft/i.test(id) && !/turbo/i.test(id)) {
-    return Math.max(14, Math.round(vram * 0.7 * 10) / 10);
+    return Math.max(10.5, Math.round(vram * 0.5 * 10) / 10);
   }
   return Math.max(3.5, Math.round(vram * 0.4 * 10) / 10);
 }
@@ -1326,7 +1408,12 @@ export function isAceStepGhostLoad(gpu, modelId, status = null) {
   if (!gpu || gpu.usedGb == null || gpu.totalGb == null) return false;
   // Cartes <16 Go peuvent offloader légitimement ; Demeter 3090 = 24 Go.
   if (gpu.totalGb < 16) return false;
-  return gpu.usedGb < aceStepMinResidentVramGb(modelId);
+  const need = aceStepMinResidentVramGb(modelId);
+  // Studio dit explicitement GPU résident : faire confiance si VRAM plausible.
+  if (status && status.offloadToCpu === false && gpu.usedGb >= need) {
+    return false;
+  }
+  return gpu.usedGb < need;
 }
 
 export async function readAceStepGpu(keys) {
@@ -1366,24 +1453,55 @@ export async function ensureAceStepVram(keys, { modelId, skipSwitch = false } = 
   if (isAceStepGhostLoad(gpu, id)) {
     if (id) {
       console.warn(
-        `[acestep] DiT fantôme (~${gpu.usedGb} Go) — re-init sans offload CPU…`,
+        `[acestep] DiT fantôme (~${gpu.usedGb} Go) — libération + re-init sans offload CPU…`,
       );
+      // Libérer la carte avant re-pin (SongGen / job coincé) sinon SFT reste partiel.
+      const baseUrl = resolveAceStepBaseUrl(keys);
       try {
-        await switchAceStepModel(keys, id, { initLm: false, offloadToCpu: false });
+        await withAuth(baseUrl, (token) =>
+          aceFetch(baseUrl, "/api/generate/reset", {
+            method: "POST",
+            token,
+            timeoutMs: 30000,
+          }),
+        );
+        actions.push("reset-before-repin");
+      } catch {
+        /* optional */
+      }
+      try {
+        if (isStudioEnabled(keys, "songgen")) {
+          const { unloadSongGenModel } = await import("./songGeneration.js");
+          await unloadSongGenModel(keys);
+          actions.push("unload-songgen-before-repin");
+        }
+      } catch {
+        /* optional */
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        await switchAceStepModel(keys, id, {
+          initLm: false,
+          offloadToCpu: false,
+          offloadDitToCpu: false,
+        });
         actions.push("disable-offload");
         const waited = await waitForAceStepModel(keys, id, { budgetMs: 180_000 });
         if (waited.ok) {
-          // Laisse le DiT se poser en VRAM après Ready
-          for (let i = 0; i < 30; i++) {
-            await new Promise((r) => setTimeout(r, 2000));
-            gpu = await readAceStepGpu(keys);
-            if (!isAceStepGhostLoad(gpu, id)) {
-              console.info(
-                `[acestep] DiT sur GPU après re-init · utilisé ${gpu.usedGb}/${gpu.totalGb} Go`,
-              );
-              return { ok: true, freed: true, ghostFixed: true, gpu, needFree, actions };
-            }
+          const resident = await waitForAceStepResidentVram(keys, id, {
+            budgetMs: 180_000,
+          });
+          if (resident.ok) {
+            return {
+              ok: true,
+              freed: true,
+              ghostFixed: true,
+              gpu: resident.gpu,
+              needFree,
+              actions,
+            };
           }
+          gpu = resident.gpu || (await readAceStepGpu(keys));
         }
       } catch (e) {
         console.warn("[acestep] re-init sans offload échoué:", e?.message || e);
@@ -1391,7 +1509,8 @@ export async function ensureAceStepVram(keys, { modelId, skipSwitch = false } = 
     }
     const msg =
       `DiT ACE en offload CPU (~${gpu.usedGb} Go VRAM utilisés sur ${gpu.totalGb}). ` +
-      `Audio sera pourri. Sur Demeter: ACESTEP_OFFLOAD_TO_CPU=0 puis ` +
+      `Audio serait pourri — pas de fallback Turbo automatique. ` +
+      `Sur Demeter: ACESTEP_OFFLOAD_TO_CPU=0 puis ` +
       `systemctl --user restart ace-step-studio (attendu ≥${aceStepMinResidentVramGb(id)} Go utilisés).`;
     console.warn("[acestep]", msg);
     return { ok: false, ghost: true, gpu, needFree, actions, message: msg };
@@ -1837,10 +1956,33 @@ export async function startAceStep(keys, {
         slot.data?.message || "ok",
         slot.data?.vram_used_mib != null ? `· ${slot.data.vram_used_mib} MiB` : "",
       );
+      // Laisse la VRAM retomber après stop LLM/Wan avant de charger SFT (~20 Go).
+      for (let i = 0; i < 15; i++) {
+        const g = await readAceStepGpu(keys);
+        if (g.freeGb != null && g.freeGb >= 16) break;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
     }
   }
 
-  const needSwitch = Boolean(pick.modelId && active && !aceStepDitSame(pick.modelId, active));
+  // SFT déjà « actif » mais fantôme (offload) → forcer re-pin GPU.
+  let forceRepin = false;
+  if (wantSft && pick.modelId) {
+    const g0 = await readAceStepGpu(keys);
+    const st0 = await testAceStep(keys, { ensure: false }).catch(() => null);
+    if (
+      aceStepDitSame(active, pick.modelId) &&
+      isAceStepGhostLoad(g0, pick.modelId, { offloadToCpu: st0?.offloadToCpu })
+    ) {
+      forceRepin = true;
+      console.warn(
+        `[acestep] SFT déjà actif mais fantôme (~${g0.usedGb} Go) — re-pin GPU…`,
+      );
+    }
+  }
+
+  const needSwitch =
+    Boolean(pick.modelId && active && !aceStepDitSame(pick.modelId, active)) || forceRepin;
   if (needSwitch) {
     try {
       const probe = await testAceStep(keys);
@@ -1852,7 +1994,10 @@ export async function startAceStep(keys, {
       console.info(
         `[acestep] chargement ${aceStepModelLabel(pick.modelId)} (peut prendre plusieurs minutes)…`,
       );
-      await switchAceStepModel(keys, pick.modelId, { offloadToCpu: false });
+      await switchAceStepModel(keys, pick.modelId, {
+        offloadToCpu: false,
+        offloadDitToCpu: false,
+      });
     } catch (e) {
       // Timeout fréquent pendant load SFT : Studio mute mais continue côté GPU.
       console.warn("[acestep] switch-model:", e.message);
@@ -1877,6 +2022,15 @@ export async function startAceStep(keys, {
         );
       }
     }
+    // Ready ≠ VRAM résidente — attendre le seuil SFT (≥14 Go).
+    if (wantSft) {
+      const resident = await waitForAceStepResidentVram(keys, pick.modelId, {
+        budgetMs: 180_000,
+      });
+      if (!resident.ok) {
+        console.warn("[acestep]", resident.message);
+      }
+    }
   }
 
   // Re-probe : les steps / CFG doivent suivre le DiT ACTIF, pas la préférence seule.
@@ -1895,57 +2049,25 @@ export async function startAceStep(keys, {
   }
   let effectiveModelId = active || pick.modelId;
 
-  // Préflight VRAM + porte SFT : fantôme / offload → fallback Turbo (hors Lab / hors force).
+  // Préflight VRAM + porte SFT : fantôme → erreur claire (plus de fallback Turbo silencieux).
   try {
     const vram = await ensureAceStepVram(keys, {
       modelId: effectiveModelId,
       skipSwitch: true,
     });
     if (vram.ghost) {
-      const canFallback =
-        !labMode &&
-        !forceModelId &&
-        isAceStepSftModel(effectiveModelId) &&
-        !aceStepDitSame(effectiveModelId, ACE_FALLBACK_LIGHT_MODEL);
-      if (canFallback) {
-        console.warn(
-          `[acestep] SFT fantôme (~${vram.gpu?.usedGb ?? "?"} Go) — fallback Turbo BF16`,
-        );
-        try {
-          await switchAceStepModel(keys, ACE_FALLBACK_LIGHT_MODEL, {
-            offloadToCpu: false,
-          });
-        } catch (sw) {
-          console.warn("[acestep] switch Turbo fallback:", sw.message);
-        }
-        const waited = await waitForAceStepModel(keys, ACE_FALLBACK_LIGHT_MODEL, {
-          budgetMs: 180_000,
-        });
-        if (!waited.ok) {
-          throw new Error(
-            vram.message ||
-              "SFT en offload CPU et fallback Turbo impossible. Relance ACE (offload=0).",
-          );
-        }
-        effectiveModelId = waited.activeModel || ACE_FALLBACK_LIGHT_MODEL;
-        pickReason = `fallback Turbo · SFT pas résident GPU (≥${aceStepMinResidentVramGb(pick.modelId)} Go requis)`;
-        const v2 = await ensureAceStepVram(keys, {
-          modelId: effectiveModelId,
-          skipSwitch: true,
-        });
-        if (v2.ghost) {
-          throw new Error(
-            v2.message ||
-              "DiT ACE toujours en offload CPU après fallback Turbo. Vérifie ACESTEP_OFFLOAD_TO_CPU=0.",
-          );
-        }
-      } else {
-        throw new Error(vram.message || "DiT ACE en offload CPU (modèle fantôme)");
-      }
+      throw new Error(
+        vram.message ||
+          `DiT ACE en offload CPU (~${vram.gpu?.usedGb ?? "?"} Go). ` +
+            `Pas de fallback Turbo — charge ${aceStepModelLabel(effectiveModelId)} en GPU ` +
+            `(ACESTEP_OFFLOAD_TO_CPU=0, seuil ≥${aceStepMinResidentVramGb(effectiveModelId)} Go).`,
+      );
     }
-    if (vram.message && !vram.ghost) console.warn("[acestep]", vram.message);
+    if (vram.message) console.warn("[acestep]", vram.message);
   } catch (e) {
-    if (/offload CPU|modèle fantôme|fallback Turbo/i.test(String(e?.message || e))) throw e;
+    if (/offload CPU|modèle fantôme|pas résident|ACESTEP_OFFLOAD/i.test(String(e?.message || e))) {
+      throw e;
+    }
     console.warn("[acestep] préflight VRAM ignoré:", e?.message || e);
   }
 

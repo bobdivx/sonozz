@@ -247,6 +247,7 @@ Hello her`,
     assert.match(body.style, /singer 1 Jeser Mathieu \(male\)/i);
     assert.match(body.style, /singer 2 ZAHRA \(female\)/i);
     assert.match(body.style, /ONE song only|single production lane/i);
+    assert.match(body.style, /section dynamics|thicker chorus|chorus lift/i);
     assert.doesNotMatch(body.style, /singer 1 male rap lead AND singer 2 female melodic/i);
     assert.doesNotMatch(body.style, /Eminem/i);
     assert.doesNotMatch(body.lyrics, /^\(Jeser Mathieu\)$/m);
@@ -309,6 +310,7 @@ hook line`,
     });
     assert.equal(body.taskType, "cover");
     assert.ok(body.audioCoverStrength < 0.4);
+    assert.match(body.instruction, /chorus instrumentation lifts|final chorus biggest/i);
   });
 });
 

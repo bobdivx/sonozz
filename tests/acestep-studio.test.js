@@ -143,7 +143,8 @@ describe("ACE-Step Studio client", () => {
     assert.equal(aceStepVramHeadroomGb("acestep-v15-xl-sft"), 4);
     assert.equal(aceStepVramHeadroomGb("acestep-v15-xl-turbo-bf16"), 2.5);
     assert.equal(aceStepMinResidentVramGb("acestep-v15-xl-turbo-bf16"), 3.5);
-    assert.ok(aceStepMinResidentVramGb("acestep-v15-xl-sft") >= 14);
+    assert.ok(aceStepMinResidentVramGb("acestep-v15-xl-sft") >= 10);
+    assert.ok(aceStepMinResidentVramGb("acestep-v15-xl-sft") < 14);
     assert.equal(
       isAceStepGhostLoad({ usedGb: 1.1, totalGb: 24 }, "acestep-v15-xl-turbo-bf16"),
       true,
@@ -152,9 +153,15 @@ describe("ACE-Step Studio client", () => {
       isAceStepGhostLoad({ usedGb: 13.2, totalGb: 24 }, "acestep-v15-xl-turbo-bf16"),
       false,
     );
-    // SFT à ~13 Go = partiellement offloadé → glitch HF
+    // SFT chunked FFN ~12 Go = résident (plus le vieux seuil 14)
     assert.equal(
-      isAceStepGhostLoad({ usedGb: 13.2, totalGb: 24 }, "acestep-v15-xl-sft"),
+      isAceStepGhostLoad({ usedGb: 11.9, totalGb: 24 }, "acestep-v15-xl-sft", {
+        offloadToCpu: false,
+      }),
+      false,
+    );
+    assert.equal(
+      isAceStepGhostLoad({ usedGb: 5, totalGb: 24 }, "acestep-v15-xl-sft"),
       true,
     );
     assert.equal(
@@ -165,6 +172,11 @@ describe("ACE-Step Studio client", () => {
       isAceStepGhostLoad({ usedGb: 20, totalGb: 24 }, "x", { offloadToCpu: true }),
       true,
     );
+  });
+
+  it("waitForAceStepResidentVram est exporté", async () => {
+    const { waitForAceStepResidentVram } = await import("../src/server/aceStep.js");
+    assert.equal(typeof waitForAceStepResidentVram, "function");
   });
 
   it("ignore Merge (fantôme UI) et liste les DiT Gradio", async () => {
@@ -217,6 +229,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(sft.enableNormalization, true);
     assert.equal(sft.normalizationDb, -2.5);
     assert.equal(sft.mp3Bitrate, "320k");
+    assert.match(sft.style, /section dynamics|thicker chorus|chorus lift/i);
     assert.ok(sft.duration >= ACE_FULL_DURATION_MIN && sft.duration <= ACE_FULL_DURATION_MAX);
     assert.equal(sft.referenceAudioUrl, undefined);
     assert.equal(sft.taskType, undefined);
@@ -264,6 +277,8 @@ describe("ACE-Step Studio client", () => {
     assert.equal(body.normalizationDb, -2.5);
     assert.equal(body.mp3Bitrate, "320k");
     assert.match(body.instruction, /peak headroom|no clipping|full band mix|polished commercial/i);
+    assert.match(body.instruction, /chorus instrumentation lifts|final chorus biggest/i);
+    assert.match(body.style, /section dynamics|thicker chorus|chorus lift/i);
 
     const turbo = buildAceStepBody({
       title: "Echoes",

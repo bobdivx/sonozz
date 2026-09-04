@@ -2,6 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   artefactGuardsFromLock,
+  aceStepCommercialArrangementBits,
+  aceStepCommercialBandBits,
+  aceStepSectionDynamicsLine,
   coalesceGenres,
   composeAceStepStyle,
   defaultBpmForGenre,
@@ -11,6 +14,8 @@ import {
   mapGenreForStudio,
   metalFlavorTags,
   metalVoiceHint,
+  sectionDynamicsArrangeFragment,
+  sectionDynamicsStyleTags,
   withKnownArtistLane,
 } from "../src/lib/musicLane.js";
 import { musicArrangeFromStyleLock, musicArrangeToSongGen } from "../src/lib/musicArrange.js";
@@ -217,6 +222,35 @@ describe("DNA figé : pas d’override par nom d’artiste", () => {
     assert.doesNotMatch(style, /Florida|George Fisher|Rammstein/i);
     assert.doesNotMatch(style, /no vocoder|no autotune/i);
     assert.doesNotMatch(composeAceStepStyle("pop, emotional, radio-ready"), /guttural|industrial/i);
+  });
+});
+
+describe("section dynamics helpers", () => {
+  it("décrit un arc verse→chorus→bridge sans boucle plate", () => {
+    const line = aceStepSectionDynamicsLine();
+    assert.match(line, /section dynamics/i);
+    assert.match(line, /verse/i);
+    assert.match(line, /chorus/i);
+    assert.match(line, /thicker|lift/i);
+    assert.match(line, /bridge/i);
+    assert.match(line, /flat loop/i);
+    assert.match(aceStepSectionDynamicsLine({ duo: true }), /tagged singer/i);
+  });
+
+  it("commercial bits réutilisent la ligne sectionnelle", () => {
+    const bits = aceStepCommercialArrangementBits(deathLock);
+    assert.ok(bits.some((b) => /section dynamics/i.test(b)));
+    assert.ok(bits.some((b) => /layered multi-instrument/i.test(b)));
+    const band = aceStepCommercialBandBits(deathLock);
+    assert.equal(band.length, 2);
+    assert.match(band[0], /layered multi-instrument/i);
+  });
+
+  it("expose tags / fragment SongGen-MiniMax", () => {
+    assert.deepEqual(sectionDynamicsStyleTags(), ["chorus lift", "section dynamics"]);
+    assert.match(sectionDynamicsArrangeFragment(), /chorus thicker than verse/i);
+    const packed = musicArrangeToSongGen({ density: "mid", choir: "none" });
+    assert.ok(packed.customFragments.some((f) => /chorus thicker than verse/i.test(f)));
   });
 });
 
