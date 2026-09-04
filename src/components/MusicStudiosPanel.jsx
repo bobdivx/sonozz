@@ -511,6 +511,9 @@ export default function MusicStudiosPanel({ keys, onChange, onKeysReplace }) {
                     onUse={(id) => void runAceUse(id)}
                   />
                 )}
+                <a href="/lab/ace" class="btn btn-outline btn-sm gap-1 w-fit">
+                  Lab ACE-Step (test brut)
+                </a>
               </div>
             )}
 

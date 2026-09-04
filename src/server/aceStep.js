@@ -316,6 +316,13 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
     return { modelId: forceId, reason: `retry · ${aceStepModelLabel(forceId)}` };
   }
 
+  const pickReady = (...ids) => {
+    for (const id of ids) {
+      if (readySet.has(id)) return id;
+    }
+    return null;
+  };
+
   // Préférence utilisateur = priorité, seulement si DiT Gradio.
   if (preferredId && isAceStepEngineDit(preferredId)) {
     return {
@@ -332,13 +339,6 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
       reason: `auto · déjà chargé (${aceStepModelLabel(activeId)})${duo ? " · duo" : ""}`,
     };
   }
-
-  const pickReady = (...ids) => {
-    for (const id of ids) {
-      if (readySet.has(id)) return id;
-    }
-    return null;
-  };
 
   if (duo) {
     // Auto duo : Turbo BF16 d’abord (rapide) ; SFT reste dispo via préférence user.
@@ -491,6 +491,7 @@ export function buildAceStepBody({
     title: String(preview ? `${title || "SONOZZ"} · extrait` : title || "SONOZZ Track").slice(0, 120),
     style: styleFinal,
     lyrics: lyricsClean.slice(0, 8000),
+    // ACE Studio captions = `style` ; `prompt` est un alias UI des paroles — on aligne sur lyrics.
     prompt: lyricsClean.slice(0, 8000),
     instrumental: false,
     vocalLanguage: String(language || "fr").slice(0, 8),
@@ -690,6 +691,8 @@ export async function testAceStep(keys, { ensure = true } = {}) {
     preferredModel: String(keys?.aceStepPreferredModel || "").trim() || null,
     hasReadyModel,
     gpu,
+    offloadToCpu: status?.offloadToCpu ?? null,
+    pipelineState: String(status?.state || status?.status || "").trim() || null,
     pipelineUp: interpreted.pipelineUp,
     loading: Boolean(interpreted.loading),
     loadingModel: interpreted.loadingModel || null,
@@ -759,7 +762,12 @@ export async function switchAceStepModel(keys, modelId, opts = {}) {
     );
   }
 
-  const body = { model: id };
+  const body = {
+    model: id,
+    // Gradio /v1/init hardcodait offload=true ; on force GPU (Demeter 3090).
+    offload_to_cpu: opts.offloadToCpu === true,
+    offload_dit_to_cpu: opts.offloadDitToCpu === true,
+  };
   if (opts.initLm === false) {
     body.init_llm = false;
   } else if (opts.initLm === true && opts.lmModel) {
@@ -872,6 +880,29 @@ export function aceStepVramHeadroomGb(modelId) {
   return Math.max(2.5, Math.round(vram * 0.2 * 10) / 10);
 }
 
+/**
+ * VRAM résidente minimale attendue quand le DiT est vraiment sur GPU.
+ * En dessous (ex. ~1 Go) = offload CPU / modèle fantôme → audio pourri même en solo.
+ */
+export function aceStepMinResidentVramGb(modelId) {
+  const vram = aceStepModelMeta(modelId)?.vramGb || 12;
+  return Math.max(3.5, Math.round(vram * 0.4 * 10) / 10);
+}
+
+/**
+ * DiT « fantôme » : UI ready mais poids surtout en RAM (`offload_to_cpu`).
+ * @param {{ usedGb?: number|null, totalGb?: number|null }} gpu
+ * @param {string} [modelId]
+ * @param {{ offloadToCpu?: boolean }|null} [status]
+ */
+export function isAceStepGhostLoad(gpu, modelId, status = null) {
+  if (status && status.offloadToCpu === true) return true;
+  if (!gpu || gpu.usedGb == null || gpu.totalGb == null) return false;
+  // Cartes <16 Go peuvent offloader légitimement ; Demeter 3090 = 24 Go.
+  if (gpu.totalGb < 16) return false;
+  return gpu.usedGb < aceStepMinResidentVramGb(modelId);
+}
+
 export async function readAceStepGpu(keys) {
   const base = resolveAceStepBaseUrl(keys);
   const sys = await aceFetch(base, "/api/generate/system-info").catch(() => null);
@@ -881,6 +912,7 @@ export async function readAceStepGpu(keys) {
 /**
  * Avant génération : lit la VRAM libre ; si trop serrée, tente de libérer
  * (reset GPU Studio + unload SongGen ; re-init DiT seulement si critique).
+ * Détecte aussi le DiT fantôme (offload CPU → beaucoup de free, peu de used).
  * @param {{ modelId?: string, skipSwitch?: boolean }} [opts]
  *   skipSwitch: true après un switch SFT — évite un 2e chargement de plusieurs minutes.
  */
@@ -898,9 +930,46 @@ export async function ensureAceStepVram(keys, { modelId, skipSwitch = false } = 
   console.info(
     `[acestep] VRAM préflight · libre ${gpu.freeGb}/${gpu.totalGb} Go` +
       (gpu.name ? ` · ${gpu.name}` : "") +
+      ` · utilisé ${gpu.usedGb} Go` +
       ` · marge cible ≥${needFree} Go` +
       (id ? ` (${aceStepModelLabel(id)})` : ""),
   );
+
+  // Beaucoup de free ≠ OK si le DiT n’est pas résident GPU (offload CPU).
+  // Indépendant de skipSwitch : un switch SFT réactive souvent l’offload via /v1/init.
+  if (isAceStepGhostLoad(gpu, id)) {
+    if (id) {
+      console.warn(
+        `[acestep] DiT fantôme (~${gpu.usedGb} Go) — re-init sans offload CPU…`,
+      );
+      try {
+        await switchAceStepModel(keys, id, { initLm: false, offloadToCpu: false });
+        actions.push("disable-offload");
+        const waited = await waitForAceStepModel(keys, id, { budgetMs: 180_000 });
+        if (waited.ok) {
+          // Laisse le DiT se poser en VRAM après Ready
+          for (let i = 0; i < 30; i++) {
+            await new Promise((r) => setTimeout(r, 2000));
+            gpu = await readAceStepGpu(keys);
+            if (!isAceStepGhostLoad(gpu, id)) {
+              console.info(
+                `[acestep] DiT sur GPU après re-init · utilisé ${gpu.usedGb}/${gpu.totalGb} Go`,
+              );
+              return { ok: true, freed: true, ghostFixed: true, gpu, needFree, actions };
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[acestep] re-init sans offload échoué:", e?.message || e);
+      }
+    }
+    const msg =
+      `DiT ACE en offload CPU (~${gpu.usedGb} Go VRAM utilisés sur ${gpu.totalGb}). ` +
+      `Audio sera pourri. Sur Demeter: ACESTEP_OFFLOAD_TO_CPU=0 puis ` +
+      `systemctl --user restart ace-step-studio (attendu ≥${aceStepMinResidentVramGb(id)} Go utilisés).`;
+    console.warn("[acestep]", msg);
+    return { ok: false, ghost: true, gpu, needFree, actions, message: msg };
+  }
 
   if (gpu.freeGb >= needFree) {
     return { ok: true, freed: false, gpu, needFree, actions };
@@ -1275,6 +1344,9 @@ export async function startAceStep(keys, {
   artist = null,
   audioCoverStrength,
   forceModelId = null,
+  /** Lab : style/lyrics bruts, sans compose duo / DNA artiste. */
+  labMode = false,
+  durationSec = undefined,
 } = {}) {
   const base = resolveAceStepBaseUrl(keys);
   let info = await testAceStep(keys);
@@ -1293,7 +1365,7 @@ export async function startAceStep(keys, {
     );
   }
   const catalog = { models: info.models, activeModel: info.activeModel };
-  const duo = Boolean(normalizeFeatArtist(artist?.featArtist)?.name);
+  const duo = labMode ? false : Boolean(normalizeFeatArtist(artist?.featArtist)?.name);
   const pick = pickAceStepModel(catalog, {
     preferredId: String(keys?.aceStepPreferredModel || "").trim() || null,
     duo,
@@ -1342,8 +1414,12 @@ export async function startAceStep(keys, {
       modelId: pick.modelId,
       skipSwitch: true,
     });
+    if (vram.ghost) {
+      throw new Error(vram.message || "DiT ACE en offload CPU (modèle fantôme)");
+    }
     if (vram.message) console.warn("[acestep]", vram.message);
   } catch (e) {
+    if (/offload CPU|modèle fantôme/i.test(String(e?.message || e))) throw e;
     console.warn("[acestep] préflight VRAM ignoré:", e?.message || e);
   }
 
@@ -1365,29 +1441,72 @@ export async function startAceStep(keys, {
   }
   if (isAceHostedAudioUrl(base, refUrl)) refUrl = "";
 
-  const body = buildAceStepBody({
-    title,
-    style: prompt,
-    lyrics,
-    language,
-    bpm,
-    durationSec: preview ? 30 : undefined,
-    modelId: pick.modelId,
-    preview,
-    referenceAudioUrl: refUrl,
-    referenceAudioTitle,
-    audioCoverStrength,
-    studioBase: base,
-    styleLock,
-    artist,
-    featArtist: artist?.featArtist,
-  });
+  const meta = aceStepModelMeta(pick.modelId);
+  const isTurbo = Boolean(meta && meta.steps <= 8);
+  let body;
+  if (labMode) {
+    const styleFinal = String(prompt || "").trim().slice(0, 2000) || "pop music";
+    const lyricsClean = String(lyrics || "").trim().slice(0, 8000);
+    const strengthNum = Number(audioCoverStrength);
+    body = {
+      customMode: true,
+      title: String(preview ? `${title || "LAB"} · extrait` : title || "ACE Lab").slice(0, 120),
+      style: styleFinal,
+      lyrics: lyricsClean,
+      prompt: lyricsClean,
+      instrumental: !lyricsClean,
+      vocalLanguage: String(language || "en").slice(0, 8),
+      duration: pickAceStepDurationSec({
+        preview,
+        durationSec: preview ? 30 : durationSec,
+      }),
+      bpm: Number.isFinite(Number(bpm))
+        ? Math.min(200, Math.max(60, Math.round(Number(bpm))))
+        : undefined,
+      inferenceSteps: meta?.steps || (isTurbo ? 8 : 50),
+      guidanceScale: meta ? meta.guidance : 0,
+      ditModel: pick.modelId || undefined,
+      audioFormat: "mp3",
+      randomSeed: true,
+      pollinations: { enabled: false },
+    };
+    if (/^https?:\/\//i.test(refUrl)) {
+      body.referenceAudioUrl = refUrl;
+      body.sourceAudioUrl = refUrl;
+      const refTitle = String(referenceAudioTitle || "").trim();
+      if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
+      body.audioCoverStrength = Number.isFinite(strengthNum)
+        ? Math.min(1, Math.max(0.05, strengthNum))
+        : 0.35;
+      body.coverNoiseStrength = 0.35;
+      body.taskType = "cover";
+    }
+  } else {
+    body = buildAceStepBody({
+      title,
+      style: prompt,
+      lyrics,
+      language,
+      bpm,
+      durationSec: preview ? 30 : undefined,
+      modelId: pick.modelId,
+      preview,
+      referenceAudioUrl: refUrl,
+      referenceAudioTitle,
+      audioCoverStrength,
+      studioBase: base,
+      styleLock,
+      artist,
+      featArtist: artist?.featArtist,
+    });
+  }
 
   console.info(
     "[acestep] start…",
     base,
     body.title,
     preview ? "PREVIEW" : "FULL",
+    labMode ? "LAB" : "pipeline",
     `model=${pick.modelId}`,
     `pick=${pick.reason}`,
     `steps=${body.inferenceSteps}`,

@@ -15,6 +15,8 @@ import {
   ACE_FULL_DURATION_MIN,
   ACE_FULL_DURATION_MAX,
   aceStepVramHeadroomGb,
+  aceStepMinResidentVramGb,
+  isAceStepGhostLoad,
   resolveAceAudioUrl,
   resolveAceStepBaseUrl,
   resolveAceStepGradioUrl,
@@ -73,6 +75,20 @@ describe("ACE-Step Studio client", () => {
     assert.equal(aceStepVramHeadroomGb("marcorez8/acestep-v15-xl-turbo-bf16"), 2.5);
     assert.equal(aceStepVramHeadroomGb("acestep-v15-xl-sft"), 4);
     assert.equal(aceStepVramHeadroomGb("acestep-v15-xl-turbo-bf16"), 2.5);
+    assert.equal(aceStepMinResidentVramGb("acestep-v15-xl-turbo-bf16"), 3.5);
+    assert.ok(aceStepMinResidentVramGb("acestep-v15-xl-sft") >= 3.5);
+    assert.equal(
+      isAceStepGhostLoad({ usedGb: 1.1, totalGb: 24 }, "acestep-v15-xl-turbo-bf16"),
+      true,
+    );
+    assert.equal(
+      isAceStepGhostLoad({ usedGb: 13.2, totalGb: 24 }, "acestep-v15-xl-turbo-bf16"),
+      false,
+    );
+    assert.equal(
+      isAceStepGhostLoad({ usedGb: 20, totalGb: 24 }, "x", { offloadToCpu: true }),
+      true,
+    );
   });
 
   it("ignore Merge (fantôme UI) et liste les DiT Gradio", async () => {

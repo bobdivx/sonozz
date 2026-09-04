@@ -234,6 +234,19 @@ export function prepareAceStepLyrics(text, lead, feat) {
     return "male";
   };
 
+  /** Même sexe : ACE fusionne si les deux tags sont juste « male » — on ajoute le rôle. */
+  const sameSex = Boolean(a?.genderCode && b?.genderCode && a.genderCode === b.genderCode);
+  const singerTag = (lock, role) => {
+    const g = singerGender(lock);
+    if (!sameSex) return g;
+    const genre = `${lock?.genre || ""} ${lock?.vocalStyle || ""}`.toLowerCase();
+    if (role === "feat" && /gospel|soul|choir|chorale/.test(genre)) return `${g} gospel`;
+    if (role === "lead" && /hip.?hop|rap|trap|drill/.test(genre)) return `${g} rap`;
+    if (role === "feat" && /hip.?hop|rap|trap|drill/.test(genre)) return `${g} rap`;
+    if (role === "lead" && /gospel|soul/.test(genre)) return `${g} gospel`;
+    return g;
+  };
+
   const norm = (s) =>
     String(s || "")
       .toLowerCase()
@@ -276,10 +289,10 @@ export function prepareAceStepLyrics(text, lead, feat) {
 
   const singerLinesFor = (cue) => {
     if (cue === "duet") {
-      return [`[singer 1: ${singerGender(a)}]`, `[singer 2: ${singerGender(b)}]`];
+      return [`[singer 1: ${singerTag(a, "lead")}]`, `[singer 2: ${singerTag(b, "feat")}]`];
     }
-    if (cue === "feat") return [`[singer 2: ${singerGender(b || a)}]`];
-    return [`[singer 1: ${singerGender(a)}]`];
+    if (cue === "feat") return [`[singer 2: ${singerTag(b || a, "feat")}]`];
+    return [`[singer 1: ${singerTag(a, "lead")}]`];
   };
 
   const lines = raw.split(/\r?\n/);
@@ -360,14 +373,23 @@ export function ensureAceStepDuoSingerTags(text, lead, feat) {
   const b = feat ? vocalLockForArtist(feat) : null;
   if (!a || !b) return raw;
 
-  const g = (lock) => {
+  const g = (lock, role) => {
     if (!lock?.genderCode) return "vocal";
-    if (lock.genderCode === "female") return "female";
-    if (lock.genderCode === "nonbinary") return "androgynous";
-    return "male";
+    const base =
+      lock.genderCode === "female"
+        ? "female"
+        : lock.genderCode === "nonbinary"
+          ? "androgynous"
+          : "male";
+    const same = Boolean(a.genderCode && b.genderCode && a.genderCode === b.genderCode);
+    if (!same) return base;
+    const genre = `${lock?.genre || ""} ${lock?.vocalStyle || ""}`.toLowerCase();
+    if (role === "feat" && /gospel|soul|choir|chorale/.test(genre)) return `${base} gospel`;
+    if (role === "lead" && /hip.?hop|rap|trap|drill/.test(genre)) return `${base} rap`;
+    return base;
   };
-  const g1 = g(a);
-  const g2 = g(b);
+  const g1 = g(a, "lead");
+  const g2 = g(b, "feat");
 
   const structureRe = /^\[([^\]]+)\]\s*$/i;
   const lines = raw.split(/\r?\n/);
@@ -432,18 +454,24 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
       ? `ONE song only: ${leadGenre} production throughout; ${b.name} brings ${featGenre} vocal color on hooks — never switch to a second genre mid-track`
       : `ONE song only: coherent ${leadGenre} arrangement from intro to outro`;
 
+  const sameSex =
+    a.genderCode && b.genderCode && a.genderCode === b.genderCode
+      ? `CRITICAL same-sex duet: two DIFFERENT ${a.genderCode} voices — singer 1 = ${leadGenre} lead only, singer 2 = ${featGenre || "contrasting"} lead only; never blend into one voice or choir`
+      : null;
+
   return [
     `${leadGenre} duet hit — single production lane, full band, not two songs glued together`,
     `instruments: ${bed}`,
     fusion,
     moodBit || null,
+    sameSex,
     `singer 1 ${a.name} (${a.genderCode || "lead"}): ${leadTimbre}`.slice(0, 180),
     `singer 2 ${b.name} (${b.genderCode || "feat"}): ${featTimbre}`.slice(0, 180),
     `obey [singer 1]/[singer 2] tags; both voices clear; no anonymous choir as singer 2`,
   ]
     .filter(Boolean)
     .join(". ")
-    .slice(0, 700);
+    .slice(0, 750);
 }
 
 /**

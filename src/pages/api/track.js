@@ -13,6 +13,7 @@ import {
 import {
   aceStepLanHint,
   resolveAceStepBaseUrl,
+  startAceStep,
   switchAceStepModel,
   testAceStep,
 } from "../../server/aceStep.js";
@@ -81,8 +82,12 @@ export async function POST({ request }) {
           models: info.models || [],
           preferredModel: info.preferredModel || null,
           gpu: info.gpu || null,
+          offloadToCpu: info.offloadToCpu ?? null,
+          pipelineState: info.pipelineState || null,
           hasReadyModel: info.hasReadyModel,
           pipelineUp: info.pipelineUp,
+          loading: info.loading || false,
+          loadingModel: info.loadingModel || null,
           message: info.message || "Joignable",
         });
       } catch (e) {
@@ -101,7 +106,10 @@ export async function POST({ request }) {
       const modelId = String(body?.modelId || "").trim();
       if (!modelId) return error("modelId manquant", 400);
       try {
-        const switched = await switchAceStepModel(keys, modelId);
+        const switched = await switchAceStepModel(keys, modelId, {
+          initLm: false,
+          offloadToCpu: false,
+        });
         let probe = null;
         try {
           const info = await testAceStep(keys);
@@ -112,18 +120,50 @@ export async function POST({ request }) {
             pickedModel: info.pickedModel || null,
             models: info.models || [],
             gpu: info.gpu || null,
+            offloadToCpu: info.offloadToCpu ?? null,
+            pipelineState: info.pipelineState || null,
             hasReadyModel: info.hasReadyModel,
             message: info.message || "Joignable",
           };
         } catch (e) {
           probe = { ok: false, message: e.message, models: [] };
         }
-        return json({ ok: true, ...switched, probe });
+        return json({ ok: true, switched, probe });
       } catch (e) {
-        return json({
-          ok: false,
-          message: e.message || "Changement de modèle impossible",
+        return json({ ok: false, message: e.message || "Switch impossible" }, 500);
+      }
+    }
+
+    if (action === "lab-acestep") {
+      const keys = body?.keys || {};
+      const style = String(body?.style || body?.prompt || "").trim();
+      const lyrics = String(body?.lyrics || "").trim();
+      if (!style && !lyrics) {
+        return error("Style ou paroles requis", 400);
+      }
+      try {
+        const started = await startAceStep(keys, {
+          prompt: style,
+          lyrics,
+          title: String(body?.title || "ACE Lab").trim() || "ACE Lab",
+          language: String(body?.language || "en").trim() || "en",
+          bpm: body?.bpm,
+          preview: Boolean(body?.preview),
+          durationSec: body?.durationSec,
+          referenceAudioUrl: String(body?.referenceAudioUrl || "").trim(),
+          referenceAudioTitle: String(body?.referenceAudioTitle || "").trim(),
+          audioCoverStrength: body?.audioCoverStrength,
+          forceModelId: String(body?.modelId || "").trim() || null,
+          labMode: true,
         });
+        return json({
+          ok: true,
+          ...started,
+          lab: true,
+        });
+      } catch (e) {
+        console.error("[track] lab-acestep", e?.message || e);
+        return error(e.message || "Lab ACE impossible", 500);
       }
     }
 

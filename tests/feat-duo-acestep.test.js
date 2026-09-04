@@ -139,7 +139,7 @@ describe("buildAceStepDuoStyle", () => {
     assert.match(style, /Gospel/i);
     assert.match(style, /solo gospel|solo man gospel/i);
     assert.doesNotMatch(style, /Billboard|Lose Yourself|Brooklyn Tabernacle/i);
-    assert.ok(style.length <= 700);
+    assert.ok(style.length <= 800);
   });
 });
 

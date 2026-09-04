@@ -529,6 +529,26 @@ export const api = {
   albumPlan: (payload) => request("/api/album", { action: "plan", ...payload }),
   /** Ping ACE-Step Studio (URL des clés) — ne lance pas de génération. */
   probeAceStep: () => request("/api/track", { action: "probe-acestep" }),
+  /** Lab : génération ACE brute (style + paroles), sans wizard. */
+  labAceStep: (payload, opts) =>
+    request("/api/track", { action: "lab-acestep", ...payload }, opts),
+  /** Poll un job track / ACE / SongGen. */
+  pollTrack: (generationId, opts = {}) =>
+    request(
+      "/api/track",
+      {
+        action: "poll",
+        generationId,
+        musicKind: opts.musicKind || "acestep",
+      },
+      { signal: opts.signal },
+    ),
+  cancelTrack: (generationId, opts = {}) =>
+    request("/api/track", {
+      action: "cancel",
+      generationId,
+      musicKind: opts.musicKind || "acestep",
+    }),
   /** Vérifie le token Replicate (MiniMax / Flux / Seedance). */
   probeReplicate: () => request("/api/track", { action: "probe-replicate" }),
   /** Hot-swap du DiT ACE-Step (peut télécharger le checkpoint). */
