@@ -328,7 +328,7 @@ Concrete cracks`;
 });
 
 describe("pickAceStepModel duo / fallback", () => {
-  it("respecte la préférence SFT même en duo (mixte)", () => {
+  it("respecte la préférence SFT ; preview / same-sex → Turbo", () => {
     const models = [
       { id: "acestep-v15-xl-sft", isPreloaded: true, isActive: true, engineKnown: true },
       { id: "marcorez8/acestep-v15-xl-turbo-bf16", isPreloaded: true, isActive: false, engineKnown: true },
@@ -340,6 +340,7 @@ describe("pickAceStepModel duo / fallback", () => {
     );
     assert.equal(duo.modelId, "acestep-v15-xl-sft");
     assert.match(duo.reason, /forcé · XL SFT/i);
+    assert.equal(duo.needsResidentGate, true);
 
     const forced = pickAceStepModel(
       { models },

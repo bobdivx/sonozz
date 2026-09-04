@@ -613,6 +613,7 @@ export default function TracksStep({
       setImportError("URL invalide — doit commencer par https://");
       return;
     }
+    setOnceBusy(true);
     try {
       const saved = await persistAudioRemote(url, projectId || "anon");
       onAttachAudio?.(saved.audioUrl || url, {
@@ -621,6 +622,8 @@ export default function TracksStep({
         persisted: Boolean(saved.persisted || saved.reused),
         title: resolvedImportTitle(),
       });
+      setAudioUrlInput("");
+      closeModal();
     } catch (e) {
       onAttachAudio?.(url, {
         provider: "import-url",
@@ -630,6 +633,9 @@ export default function TracksStep({
       setImportError(
         `${e.message} — audio attaché en temporaire ; configure S3 pour le garder.`,
       );
+      closeModal();
+    } finally {
+      setOnceBusy(false);
     }
   }
 
@@ -1346,70 +1352,26 @@ export default function TracksStep({
               />
             </>
           ) : (
-            <div class="space-y-3 border border-base-content/10 bg-base-200/50 p-4">
-              <p class="text-sm font-medium">
-                {track.assetMissingReason
-                  ? "Audio perdu (lien expiré ou non sauvegardé) — réimporte un mp3"
-                  : "Importer l’audio (fichier local, Suno, FLAC…)"}
-              </p>
-              <label class="form-control w-full">
-                <span class="label-text mb-1 text-xs text-base-content/60">Titre du morceau</span>
-                <input
-                  class="input input-bordered input-sm w-full bg-base-100"
-                  type="text"
-                  placeholder="Ex. Dernier train"
-                  value={importTitle}
-                  onInput={(e) => setImportTitle(e.currentTarget.value)}
-                />
-              </label>
-              <ol class="list-decimal space-y-1 pl-5 text-xs text-base-content/60">
-                <li>
-                  Ouvre{" "}
-                  <button
-                    type="button"
-                    class="link link-primary"
-                    onClick={() => setModal("suno")}
-                  >
-                    Prompt Suno
-                  </button>{" "}
-                  et copie-le
-                </li>
-                <li>
-                  Génère sur{" "}
-                  <a
-                    class="link link-primary"
-                    href="https://suno.com"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    suno.com
-                  </a>
-                </li>
-                <li>Télécharge le fichier (mp3, wav, flac…), puis importe-le ici</li>
-              </ol>
-
-              <label class="btn btn-secondary btn-sm gap-2 cursor-pointer">
-                <Upload size={14} />
-                Importer un fichier audio
-                <input
-                  type="file"
-                  accept={AUDIO_FILE_ACCEPT}
-                  class="hidden"
-                  onChange={onFileChange}
-                />
-              </label>
-
-              <div class="flex flex-wrap gap-2">
-                <input
-                  class="input input-bordered input-sm min-w-[220px] flex-1 bg-base-100"
-                  placeholder="https://… lien mp3 / wav / flac"
-                  value={audioUrlInput}
-                  onInput={(e) => setAudioUrlInput(e.currentTarget.value)}
-                />
-                <button type="button" class="btn btn-outline btn-sm gap-1" onClick={attachUrl}>
-                  <Link2 size={14} /> Attacher URL
-                </button>
+            <div class="flex flex-wrap items-center gap-3 border border-dashed border-base-content/15 bg-base-200/30 px-4 py-5">
+              <FileAudio size={20} class="shrink-0 text-base-content/40" />
+              <div class="min-w-0 flex-1 space-y-1">
+                <p class="text-sm font-medium">
+                  {track.assetMissingReason
+                    ? "Audio perdu — réimporte un fichier"
+                    : "Pas d’audio pour ce morceau"}
+                </p>
+                <p class="text-xs text-base-content/55">
+                  Génère un extrait / le complet, ou importe un fichier (mp3, wav, flac, lien…).
+                </p>
               </div>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm gap-1.5"
+                onClick={openImportModal}
+              >
+                <Upload size={14} />
+                Importer un morceau
+              </button>
             </div>
           )}
 
@@ -1747,8 +1709,8 @@ export default function TracksStep({
       >
         <div class="space-y-4">
           <p class="text-xs text-base-content/60">
-            Importe n’importe quel fichier audio (FLAC, WAV, MP3, M4A…). Ce n’est pas forcément un
-            master ONCE.
+            Importe n’importe quel fichier audio (FLAC, WAV, MP3, M4A…) ou un lien. Ce n’est pas
+            forcément un master ONCE.
           </p>
           <label class="form-control w-full">
             <span class="label-text mb-1 text-sm text-base-content/60">Titre du morceau</span>
@@ -1777,6 +1739,36 @@ export default function TracksStep({
               onChange={onFileChange}
             />
           </label>
+
+          <div class="flex flex-wrap gap-2">
+            <input
+              class="input input-bordered input-sm min-w-[220px] flex-1 bg-base-100"
+              placeholder="https://… lien mp3 / wav / flac"
+              value={audioUrlInput}
+              disabled={onceBusy}
+              onInput={(e) => setAudioUrlInput(e.currentTarget.value)}
+            />
+            <button
+              type="button"
+              class="btn btn-outline btn-sm gap-1"
+              disabled={onceBusy || !audioUrlInput.trim()}
+              onClick={() => void attachUrl()}
+            >
+              <Link2 size={14} /> Attacher URL
+            </button>
+          </div>
+
+          <p class="text-xs text-base-content/50">
+            Suno : ouvre{" "}
+            <button type="button" class="link link-primary" onClick={() => setModal("suno")}>
+              Prompt Suno
+            </button>
+            , génère sur{" "}
+            <a class="link link-primary" href="https://suno.com" target="_blank" rel="noreferrer">
+              suno.com
+            </a>
+            , puis importe le fichier ici.
+          </p>
 
           <div class="divider my-1 text-xs text-base-content/40">optionnel · master ONCE</div>
           <p class="text-xs text-base-content/60">

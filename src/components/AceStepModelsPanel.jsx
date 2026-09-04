@@ -53,6 +53,9 @@ export default function AceStepModelsPanel({
           )}
         </p>
       </div>
+      <p class="text-[11px] text-base-content/45">
+        SFT : l’arbitre GPU libère LLM/Wan (file d’attente), puis charge le DiT. Résidence ≥ ~14–18 Go requise — sinon fallback Turbo. Preview / duo same-sex → Turbo.
+      </p>
 
       {freeGb != null && totalGb != null ? (
         <div class="h-1.5 overflow-hidden rounded-full bg-base-300" title="VRAM GPU">

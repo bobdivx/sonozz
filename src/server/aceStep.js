@@ -370,7 +370,13 @@ function normalizeModels(raw) {
 /**
  * Choisit le DiT à envoyer : préférence user (si Gradio), sinon actif, sinon premier préchargé.
  * Ignore les IDs ghost UI (Merge, etc.).
+ * SFT est autorisé si préféré ; la porte VRAM (résidence GPU) est appliquée après switch.
  */
+export function isAceStepSftModel(modelId) {
+  const id = String(modelId || "");
+  return /sft/i.test(id) && !/turbo/i.test(id);
+}
+
 export function pickAceStepModel(catalog = {}, opts = {}) {
   const models = Array.isArray(catalog?.models) ? catalog.models : [];
   const switchable = listAceStepSwitchableModels(models);
@@ -381,7 +387,8 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
   const allSwitchableIds = new Set(switchable.map((m) => m.id));
   const duo = Boolean(opts?.duo);
   const sameSexDuo = Boolean(opts?.sameSexDuo);
-  const preferTurbo = Boolean(opts?.preferTurbo || opts?.preview);
+  // Preview / duo same-sex : Turbo d’abord (SFT → mash / vocoder fréquent).
+  const preferTurbo = Boolean(opts?.preferTurbo || opts?.preview || sameSexDuo);
   const forceId = String(opts?.forceModelId || "").trim();
 
   const turboBf16Short = "acestep-v15-xl-turbo-bf16";
@@ -400,8 +407,7 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
     return null;
   };
 
-  // Duo same-sex OU preview : Turbo avant SFT (SFT → vocoder / mash fréquent).
-  if (sameSexDuo || preferTurbo) {
+  if (preferTurbo) {
     const id =
       pickReady(turboBf16Short, turboBf16, turbo) ||
       pickReady(sft) ||
@@ -411,17 +417,20 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
       modelId: id,
       reason: sameSexDuo
         ? `duo same-sex · ${aceStepModelLabel(id)} (Turbo privilégié)`
-        : `preview · ${aceStepModelLabel(id)} (Turbo privilégié)`,
+        : opts?.preview || opts?.preferTurbo
+          ? `preview · ${aceStepModelLabel(id)} (Turbo privilégié)`
+          : `pipeline · ${aceStepModelLabel(id)} (Turbo privilégié)`,
     };
   }
 
-  // Préférence utilisateur = priorité, seulement si DiT Gradio.
+  // Préférence utilisateur = priorité (SFT inclus — porte VRAM après switch).
   if (preferredId && isAceStepEngineDit(preferredId)) {
     return {
       modelId: preferredId,
       reason: readySet.has(preferredId) || allSwitchableIds.has(preferredId)
         ? `forcé · ${aceStepModelLabel(preferredId)}${duo ? " · duo" : ""}`
         : `forcé · ${aceStepModelLabel(preferredId)} (téléchargement possible)`,
+      needsResidentGate: isAceStepSftModel(preferredId),
     };
   }
 
@@ -429,13 +438,19 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
     return {
       modelId: activeId,
       reason: `auto · déjà chargé (${aceStepModelLabel(activeId)})${duo ? " · duo" : ""}`,
+      needsResidentGate: isAceStepSftModel(activeId),
     };
   }
 
   if (duo) {
-    // Auto duo mixte : Turbo BF16 d’abord ; SFT via préférence user.
     const id = pickReady(turboBf16Short, turboBf16, turbo, sft) || readyIds[0];
-    if (id) return { modelId: id, reason: `duo · ${aceStepModelLabel(id)} (auto)` };
+    if (id) {
+      return {
+        modelId: id,
+        reason: `duo · ${aceStepModelLabel(id)} (auto)`,
+        needsResidentGate: isAceStepSftModel(id),
+      };
+    }
   }
 
   const auto =
@@ -443,7 +458,11 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
     readyIds[0] ||
     switchable[0]?.id ||
     turboBf16Short;
-  return { modelId: auto, reason: `auto · ${aceStepModelLabel(auto)}` };
+  return {
+    modelId: auto,
+    reason: `auto · ${aceStepModelLabel(auto)}`,
+    needsResidentGate: isAceStepSftModel(auto),
+  };
 }
 
 export function lyricsForAceStepPreview(text) {
@@ -871,13 +890,88 @@ export function interpretAceProbe({ health, status, base } = {}) {
   };
 }
 
-/** Réveille ACE via l’arbitre GPU Demeter — soft si déjà up (évite systemd restart / 502). */
-export async function ensureAceGpuSlot(keys, { timeoutMs = 120_000 } = {}) {
+/** Réveille ACE via l’arbitre GPU Demeter — soft si déjà up (évite systemd restart / 502).
+ *  `exclusive: true` → acquire avec file d’attente + start (stop LLM/Wan) pour SFT / gros DiT.
+ */
+export async function ensureAceGpuSlot(
+  keys,
+  { timeoutMs = 120_000, exclusive = false } = {},
+) {
   const arbiter = String(keys?.gpuArbiterUrl || process.env.GPU_ARBITER_URL || DEFAULT_GPU_ARBITER)
     .trim()
     .replace(/\/+$/, "");
   if (!arbiter) return { ok: false, skipped: true };
+
+  const timeoutSec = Math.min(exclusive ? 600 : 120, Math.max(30, Math.round(timeoutMs / 1000)));
+
   try {
+    // Gros DiT (SFT) : toujours passer par la file — libère LLM/Wan, attend Steam, etc.
+    if (exclusive) {
+      console.info("[acestep] GPU arbiter · acquire exclusif ace (file + stop LLM/Wan)…");
+      const res = await fetch(`${arbiter}/acquire`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slot: "ace",
+          owner: "sonozz-sft",
+          timeout_s: timeoutSec,
+          start: true,
+        }),
+        signal: AbortSignal.timeout(Math.min(timeoutMs + 10_000, 620_000)),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) {
+        const err = data?.error || data?.message || `HTTP ${res.status}`;
+        if (err === "steam_priority" || /steam/i.test(String(data?.message || ""))) {
+          return {
+            ok: false,
+            arbiter,
+            steam: true,
+            error: data?.message || "GPU prioritaire Steam — réessaie après le jeu.",
+            data,
+          };
+        }
+        return { ok: false, arbiter, error: String(err), data };
+      }
+      // Attendre slot=ace stable (switch DiT peut laisser switching=true un moment).
+      const deadline = Date.now() + Math.min(timeoutMs, 180_000);
+      while (Date.now() < deadline) {
+        const stRes = await fetch(`${arbiter}/status`, {
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => null);
+        const st = stRes ? await stRes.json().catch(() => ({})) : {};
+        if (st?.slot === "ace" && !st?.switching) {
+          await fetch(`${arbiter}/touch`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ owner: "sonozz-sft" }),
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => null);
+          return {
+            ok: true,
+            arbiter,
+            exclusive: true,
+            data: {
+              ...data,
+              message: data.queued
+                ? "acquired-queued → ace"
+                : "acquired-exclusive → ace",
+              slot: "ace",
+              vram_used_mib: st.vram_used_mib,
+              queue: st.queue,
+            },
+          };
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      return {
+        ok: true,
+        arbiter,
+        exclusive: true,
+        data: { ...data, message: "acquired-exclusive (slot pas encore stable)" },
+      };
+    }
+
     const stRes = await fetch(`${arbiter}/status`, { signal: AbortSignal.timeout(5000) });
     const st = await stRes.json().catch(() => ({}));
     if (st?.procs?.ace && !st?.switching) {
@@ -896,7 +990,7 @@ export async function ensureAceGpuSlot(keys, { timeoutMs = 120_000 } = {}) {
         body: JSON.stringify({
           slot: "ace",
           owner: "sonozz",
-          timeout_s: Math.min(120, Math.round(timeoutMs / 1000)),
+          timeout_s: timeoutSec,
           start: false,
         }),
         signal: AbortSignal.timeout(Math.min(timeoutMs, 130_000)),
@@ -1194,7 +1288,12 @@ export function aceStepVramHeadroomGb(modelId) {
  * En dessous (ex. ~1 Go) = offload CPU / modèle fantôme → audio pourri même en solo.
  */
 export function aceStepMinResidentVramGb(modelId) {
+  const id = String(modelId || "");
   const vram = aceStepModelMeta(modelId)?.vramGb || 12;
+  // SFT (~20 Go) partiellement offloadé → glitch HF même si usedGb > 8.
+  if (/sft/i.test(id) && !/turbo/i.test(id)) {
+    return Math.max(14, Math.round(vram * 0.7 * 10) / 10);
+  }
   return Math.max(3.5, Math.round(vram * 0.4 * 10) / 10);
 }
 
@@ -1686,7 +1785,7 @@ export async function startAceStep(keys, {
       leadLock.genderCode === featLock.genderCode,
   );
   const pick = pickAceStepModel(catalog, {
-    // Lab : ne pas imposer la préférence settings (souvent SFT) si Turbo est chargé.
+    // Lab : pas de préférence settings. Pipeline : respecte SFT préféré + porte VRAM après.
     preferredId: labMode
       ? null
       : String(keys?.aceStepPreferredModel || "").trim() || null,
@@ -1696,7 +1795,33 @@ export async function startAceStep(keys, {
     preview: Boolean(preview) && !labMode,
     forceModelId,
   });
+  let pickReason = pick.reason;
   let active = String(catalog.activeModel || "").trim();
+  const wantSft = isAceStepSftModel(pick.modelId) && !labMode;
+
+  // SFT : file d’attente arbitre + stop LLM/Wan pour libérer la VRAM avant le switch DiT.
+  if (wantSft) {
+    const slot = await ensureAceGpuSlot(keys, {
+      timeoutMs: 300_000,
+      exclusive: true,
+    });
+    if (slot.steam || /steam/i.test(String(slot.error || ""))) {
+      throw new Error(
+        slot.error ||
+          "GPU prioritaire Steam — l’arbitre bloque ACE. Ferme le jeu puis réessaie.",
+      );
+    }
+    if (!slot.ok && !slot.skipped) {
+      console.warn("[acestep] acquire exclusif SFT:", slot.error || slot.data);
+    } else {
+      console.info(
+        "[acestep] GPU arbiter SFT…",
+        slot.data?.message || "ok",
+        slot.data?.vram_used_mib != null ? `· ${slot.data.vram_used_mib} MiB` : "",
+      );
+    }
+  }
+
   const needSwitch = Boolean(pick.modelId && active && !aceStepDitSame(pick.modelId, active));
   if (needSwitch) {
     try {
@@ -1750,25 +1875,66 @@ export async function startAceStep(keys, {
         `Clique « Charger ce modèle » dans /lab/ace et attends Ready.`,
     );
   }
-  const effectiveModelId = active || pick.modelId;
+  let effectiveModelId = active || pick.modelId;
 
-  // Préflight VRAM : pas de 2e switch DiT (évite un autre timeout SFT)
+  // Préflight VRAM + porte SFT : fantôme / offload → fallback Turbo (hors Lab / hors force).
   try {
     const vram = await ensureAceStepVram(keys, {
       modelId: effectiveModelId,
       skipSwitch: true,
     });
     if (vram.ghost) {
-      throw new Error(vram.message || "DiT ACE en offload CPU (modèle fantôme)");
+      const canFallback =
+        !labMode &&
+        !forceModelId &&
+        isAceStepSftModel(effectiveModelId) &&
+        !aceStepDitSame(effectiveModelId, ACE_FALLBACK_LIGHT_MODEL);
+      if (canFallback) {
+        console.warn(
+          `[acestep] SFT fantôme (~${vram.gpu?.usedGb ?? "?"} Go) — fallback Turbo BF16`,
+        );
+        try {
+          await switchAceStepModel(keys, ACE_FALLBACK_LIGHT_MODEL, {
+            offloadToCpu: false,
+          });
+        } catch (sw) {
+          console.warn("[acestep] switch Turbo fallback:", sw.message);
+        }
+        const waited = await waitForAceStepModel(keys, ACE_FALLBACK_LIGHT_MODEL, {
+          budgetMs: 180_000,
+        });
+        if (!waited.ok) {
+          throw new Error(
+            vram.message ||
+              "SFT en offload CPU et fallback Turbo impossible. Relance ACE (offload=0).",
+          );
+        }
+        effectiveModelId = waited.activeModel || ACE_FALLBACK_LIGHT_MODEL;
+        pickReason = `fallback Turbo · SFT pas résident GPU (≥${aceStepMinResidentVramGb(pick.modelId)} Go requis)`;
+        const v2 = await ensureAceStepVram(keys, {
+          modelId: effectiveModelId,
+          skipSwitch: true,
+        });
+        if (v2.ghost) {
+          throw new Error(
+            v2.message ||
+              "DiT ACE toujours en offload CPU après fallback Turbo. Vérifie ACESTEP_OFFLOAD_TO_CPU=0.",
+          );
+        }
+      } else {
+        throw new Error(vram.message || "DiT ACE en offload CPU (modèle fantôme)");
+      }
     }
-    if (vram.message) console.warn("[acestep]", vram.message);
+    if (vram.message && !vram.ghost) console.warn("[acestep]", vram.message);
   } catch (e) {
-    if (/offload CPU|modèle fantôme/i.test(String(e?.message || e))) throw e;
+    if (/offload CPU|modèle fantôme|fallback Turbo/i.test(String(e?.message || e))) throw e;
     console.warn("[acestep] préflight VRAM ignoré:", e?.message || e);
   }
 
   if (duo) {
-    console.info("[acestep] duo — modèle", effectiveModelId, pick.reason);
+    console.info("[acestep] duo — modèle", effectiveModelId, pickReason);
+  } else {
+    console.info("[acestep] modèle", effectiveModelId, pickReason);
   }
 
   let refUrl = String(referenceAudioUrl || "").trim();
@@ -1828,7 +1994,7 @@ export async function startAceStep(keys, {
     preview ? "PREVIEW" : "FULL",
     labMode ? "LAB" : "pipeline",
     `model=${effectiveModelId}`,
-    `pick=${pick.reason}`,
+    `pick=${pickReason}`,
     `active=${active || "?"}`,
     `steps=${body.inferenceSteps}`,
     `cfg=${body.guidanceScale}`,
@@ -1868,7 +2034,7 @@ export async function startAceStep(keys, {
   const gpu = await readAceStepGpu(keys).catch(() => null);
   const aceGen = snapshotAceGenParams(body, {
     modelId: effectiveModelId,
-    pickReason: pick.reason,
+    pickReason,
     gpu,
     lab: labMode,
     duo,
@@ -1879,7 +2045,7 @@ export async function startAceStep(keys, {
     base,
     model: effectiveModelId,
     quality: aceStepModelLabel(effectiveModelId),
-    pickReason: pick.reason,
+    pickReason,
     gpu: gpu?.freeGb != null ? gpu : null,
     usedReference: Boolean(body.referenceAudioUrl),
     referenceAudioTitle: body.referenceAudioTitle || null,

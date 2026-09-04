@@ -111,7 +111,7 @@ describe("ACE-Step Studio client", () => {
     );
   });
 
-  it("choisit le modèle : préférence > actif > turbo bf16", () => {
+  it("choisit le modèle : préférence SFT > actif > turbo bf16", () => {
     const models = [
       { id: "acestep-v15-xl-turbo", isPreloaded: true, isActive: false },
       { id: "marcorez8/acestep-v15-xl-turbo-bf16", isPreloaded: true, isActive: false },
@@ -126,6 +126,10 @@ describe("ACE-Step Studio client", () => {
       "acestep-v15-xl-sft",
     );
     assert.equal(
+      pickAceStepModel({ models }, { preferredId: "acestep-v15-xl-sft" }).needsResidentGate,
+      true,
+    );
+    assert.equal(
       pickAceStepModel({ models }, {}).modelId,
       "marcorez8/acestep-v15-xl-turbo-bf16",
     );
@@ -136,13 +140,22 @@ describe("ACE-Step Studio client", () => {
     assert.equal(aceStepVramHeadroomGb("acestep-v15-xl-sft"), 4);
     assert.equal(aceStepVramHeadroomGb("acestep-v15-xl-turbo-bf16"), 2.5);
     assert.equal(aceStepMinResidentVramGb("acestep-v15-xl-turbo-bf16"), 3.5);
-    assert.ok(aceStepMinResidentVramGb("acestep-v15-xl-sft") >= 3.5);
+    assert.ok(aceStepMinResidentVramGb("acestep-v15-xl-sft") >= 14);
     assert.equal(
       isAceStepGhostLoad({ usedGb: 1.1, totalGb: 24 }, "acestep-v15-xl-turbo-bf16"),
       true,
     );
     assert.equal(
       isAceStepGhostLoad({ usedGb: 13.2, totalGb: 24 }, "acestep-v15-xl-turbo-bf16"),
+      false,
+    );
+    // SFT à ~13 Go = partiellement offloadé → glitch HF
+    assert.equal(
+      isAceStepGhostLoad({ usedGb: 13.2, totalGb: 24 }, "acestep-v15-xl-sft"),
+      true,
+    );
+    assert.equal(
+      isAceStepGhostLoad({ usedGb: 18, totalGb: 24 }, "acestep-v15-xl-sft"),
       false,
     );
     assert.equal(
