@@ -31,7 +31,7 @@ const LEAD_IDS = new Set(
 export const SONIC_ROLES = {
   single: {
     label: "Single",
-    density: "dense",
+    density: "mid",
     bpmDelta: 0,
     energy: "high",
     mood: "anthemic radio hook",
@@ -71,7 +71,7 @@ export const SONIC_ROLES = {
     bpmDelta: 8,
     energy: "high",
     mood: "peak high energy",
-    features: ["breakdown drop", "live audience energy"],
+    features: ["breakdown drop"],
     leadBias: ["808 bass", "electric guitar", "synth lead", "brass section"],
   },
   deep_cut: {
@@ -80,8 +80,8 @@ export const SONIC_ROLES = {
     bpmDelta: -2,
     energy: "mid",
     mood: "moody reflective",
-    features: ["organ pads"],
-    leadBias: ["organ", "electric guitar", "piano"],
+    features: [],
+    leadBias: [],
   },
   closer: {
     label: "Final",
@@ -212,15 +212,19 @@ export function applySonicVariation({
   });
   const profile = SONIC_ROLES[sonicRole] || SONIC_ROLES.single;
 
-  let base = normalizeMusicArrange(musicArrange);
-  if (isDefaultMusicArrange(base) && styleLock) {
-    base = musicArrangeFromStyleLock(styleLock);
-  }
-
-  const manual =
+  const forcedManual =
     lightOnly != null
       ? Boolean(lightOnly)
-      : base.source === "manual" || (!isDefaultMusicArrange(musicArrange) && musicArrange?.source === "manual");
+      : normalizeMusicArrange(musicArrange).source === "manual";
+
+  // Hors arrangement manuel : repartir du DNA (évite d’accumuler pads / features d’une gen précédente).
+  let base = forcedManual
+    ? normalizeMusicArrange(musicArrange)
+    : styleLock
+      ? musicArrangeFromStyleLock(styleLock)
+      : normalizeMusicArrange(musicArrange);
+
+  const manual = forcedManual;
 
   const genreBlob = styleLockGenreBlob(styleLock, []);
   const lockBpm = Number(base.bpm ?? styleLock?.bpm);
@@ -259,7 +263,15 @@ export function applySonicVariation({
         FEATURE_IDS.has(f),
       ),
     ),
-  ].slice(0, 6);
+  ]
+    // Pads orgue / chorale auto du DNA → résonance métallique fréquente hors gospel.
+    .filter(
+      (f) =>
+        f !== "organ pads" ||
+        (profile.features || []).includes("organ pads") ||
+        (base.choir && base.choir !== "none"),
+    )
+    .slice(0, 6);
 
   const leadInstrument = pickLead(
     profile.leadBias,
@@ -299,15 +311,14 @@ export function artistWithSonicVariation(artist, variation, { musicArrange } = {
   if (lead && !instruments.map((x) => String(x).toLowerCase()).includes(lead.toLowerCase())) {
     instruments.unshift(lead);
   }
+  // Garde le mood DNA artiste ; le rôle agit via energy + musicArrange (pas un overwrite mood).
   return {
     ...artist,
-    mood: variation.mood || artist?.mood,
     musicArrange: variation.musicArrange,
     sonicRole: variation.sonicRole,
     styleLock: lock
       ? {
           ...lock,
-          mood: variation.mood || lock.mood,
           energy: variation.energy || lock.energy,
           instruments: instruments.slice(0, 8),
         }

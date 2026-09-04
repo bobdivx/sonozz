@@ -40,7 +40,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(turbo.isTurbo, true);
     const sft = aceStepInferenceForModel("acestep-v15-xl-sft");
     assert.equal(sft.inferenceSteps, 50);
-    assert.equal(sft.guidanceScale, 7);
+    assert.equal(sft.guidanceScale, 6.5);
     assert.equal(sft.isTurbo, false);
     const body = buildAceStepBody({
       title: "t",
@@ -197,7 +197,7 @@ describe("ACE-Step Studio client", () => {
       preview: false,
     });
     assert.equal(sft.inferenceSteps, 50);
-    assert.equal(sft.guidanceScale, 7);
+    assert.equal(sft.guidanceScale, 6.5);
     assert.ok(sft.duration >= ACE_FULL_DURATION_MIN && sft.duration <= ACE_FULL_DURATION_MAX);
     assert.equal(sft.referenceAudioUrl, undefined);
     assert.equal(sft.taskType, undefined);
@@ -240,7 +240,7 @@ describe("ACE-Step Studio client", () => {
     assert.match(body.referenceAudioTitle, /Condemnation Contagion/);
     assert.equal(body.audioCoverStrength, 0.5);
     assert.equal(body.coverNoiseStrength, 0.35);
-    assert.equal(body.guidanceScale, 7);
+    assert.equal(body.guidanceScale, 6.5);
     assert.match(body.instruction, /STREAMING-READY commercial hit|full band mix/i);
 
     const turbo = buildAceStepBody({

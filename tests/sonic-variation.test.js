@@ -101,7 +101,7 @@ describe("sonicVariation", () => {
     assert.match(v.musicArrange.notes, /sonic:banger/);
   });
 
-  it("artistWithSonicVariation injecte mood + instruments", () => {
+  it("artistWithSonicVariation garde le mood DNA, ajuste energy + arrange", () => {
     const v = applySonicVariation({
       styleLock: lock,
       role: "ballad",
@@ -113,7 +113,8 @@ describe("sonicVariation", () => {
       v,
     );
     assert.equal(artist.sonicRole, "ballad");
-    assert.match(artist.mood, /intimate|emotional/i);
+    assert.equal(artist.mood, "nocturne");
+    assert.equal(artist.styleLock.mood, "nocturne");
     assert.equal(artist.styleLock.energy, "low");
     assert.ok(artist.musicArrange.bpm < 96);
   });

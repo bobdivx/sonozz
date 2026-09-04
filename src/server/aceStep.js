@@ -90,7 +90,7 @@ export const ACE_STEP_MODELS = [
     id: "acestep-v15-xl-sft",
     label: "XL SFT",
     steps: 50,
-    guidance: 7,
+    guidance: 6.5,
     vramGb: 20,
   },
   {
@@ -111,7 +111,7 @@ export const ACE_STEP_MODELS = [
     id: "acestep-v15-xl-base",
     label: "XL Base",
     steps: 50,
-    guidance: 7,
+    guidance: 6.5,
     vramGb: 20,
   },
   // Ghost UI Pinokio — pas un DiT Gradio
@@ -119,7 +119,7 @@ export const ACE_STEP_MODELS = [
     id: "acestep-v15-xl-merge-sft-turbo",
     label: "XL Merge",
     steps: 50,
-    guidance: 7,
+    guidance: 6.5,
     vramGb: 16,
     engineKnown: false,
   },
@@ -191,7 +191,7 @@ export function aceStepInferenceForModel(modelId) {
   }
   return {
     inferenceSteps: isTurbo ? 8 : 50,
-    guidanceScale: isTurbo ? 0 : 7,
+    guidanceScale: isTurbo ? 0 : 6.5,
     isTurbo,
   };
 }
@@ -734,10 +734,10 @@ export function buildAceStepBody({
     const timbre = vocalTimbreLine(leadLock);
     const densityBit =
       arrange.density === "dense"
-        ? "dense layered arrangement"
+        ? "rich arrangement with clear space for the lead vocal"
         : arrange.density === "sparse"
-          ? "intimate spaced arrangement"
-          : null;
+          ? "intimate arrangement with air around the lead vocal"
+          : "open mix, lead vocal prominent over the band";
     const featureBit = Array.isArray(arrange.features)
       ? arrange.features.filter(Boolean).slice(0, 3).join(", ")
       : "";
@@ -761,7 +761,7 @@ export function buildAceStepBody({
   // Duo same-sex sur SFT : un peu plus de steps ; CFG plafonné (CFG trop haut → voix saturée).
   if (sameSexDuo && !infer.isTurbo) {
     steps = Math.max(Number(steps) || 50, 60);
-    guidance = Math.min(8, Math.max(Number(guidance) || 7, 7));
+    guidance = Math.min(7.5, Math.max(Number(guidance) || 6.5, 6.5));
   }
 
   const body = {
@@ -792,10 +792,10 @@ export function buildAceStepBody({
     body.coverNoiseStrength = isDuo ? ACE_COVER_NOISE_DUO : ACE_COVER_NOISE_SOLO;
     body.taskType = "cover";
     body.instruction = isDuo
-      ? "ONE coherent duet song: balanced commercial mix with headroom; clean distinct vocals; keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
-      : "Generate a STREAMING-READY commercial hit with multi-instrument arrangement and dynamic section changes (not a flat loop); balanced mix with headroom; clean clear lead vocal sitting in a full band mix:";
-    if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < 7)) {
-      body.guidanceScale = 7;
+      ? "ONE coherent duet song: balanced commercial mix with headroom; lead vocals prominent and clear with space; keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
+      : "Generate a STREAMING-READY commercial hit with multi-instrument arrangement and dynamic section changes (not a flat loop); lead vocal prominent and clear; instrumental mix with ample space for the vocal; warm organic textures:";
+    if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < 6.5)) {
+      body.guidanceScale = 6.5;
     }
   }
   return body;

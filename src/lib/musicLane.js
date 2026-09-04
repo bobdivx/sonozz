@@ -253,11 +253,12 @@ export function artefactGuardsFromLock(lock) {
 
 /**
  * Plancher de qualité prod ACE — court, positif.
- * Priorité headroom / voix propres (évite le mix « trop chaud » / saturé).
+ * Voix en avant + air dans le mix (évite saturation / pads métalliques denses).
  */
 export function aceStepProductionQualityFloor({ duo = false } = {}) {
   return [
-    "balanced studio mix with headroom, clean clear lead vocal, controlled low-end",
+    "lead vocal prominent and clear, instrumental mix with space around the vocal",
+    "warm organic textures, balanced midrange, controlled low-end, headroom",
     duo
       ? "arrangement supports the active tagged singer"
       : "full band under the lead without crowding the vocal",
@@ -344,10 +345,10 @@ export function aceStepCommercialArrangementBits(lock = null, { duo = false } = 
     rhythm ? `groove: ${rhythm}` : null,
     prod
       ? `production: ${prod}`
-      : "wide stereo, controlled low-end, clean vocal midrange, polished mastering with headroom",
+      : "wide stereo, controlled low-end, lead vocal prominent with air in the midrange, polished mastering with headroom",
     duo
       ? "duet vocals sit cleanly inside a full commercial band mix"
-      : "lead vocal sits cleanly on top of a full commercial band mix",
+      : "lead vocal sits cleanly on top of a full commercial band mix, instruments leave space for the voice",
   ].filter(Boolean);
 }
 
