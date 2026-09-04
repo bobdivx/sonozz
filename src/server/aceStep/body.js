@@ -6,6 +6,7 @@ import {
 import {
   resolveAceVocalLanguage,
   aceVocalLanguageStyleBit,
+  aceDuoVocalLanguageStyleBit,
   lyricsForAceStepPreview,
   stripAceStageDirections,
 } from "./lyrics.js";
@@ -23,6 +24,7 @@ import {
   buildAceStepDuoStyle,
   vocalLockForArtist,
   vocalTimbreLine,
+  resolveDuoLanguages,
 } from "../../lib/featArtist.js";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
 
@@ -259,8 +261,14 @@ export function buildAceStepBody({
   const qualityFloor = aceStepProductionQualityFloor({ duo: isDuo });
   const sectionDynamics = aceStepSectionDynamicsLine({ duo: isDuo });
   const bandBits = aceStepCommercialBandBits(styleLock);
-  const langCode = resolveAceVocalLanguage(language, lyricsClean);
-  const langBit = aceVocalLanguageStyleBit(langCode);
+  const duoLangs = isDuo ? resolveDuoLanguages(lead, feat, language) : null;
+  // API ACE = une seule vocalLanguage ; en bilingue on garde le lead + consignes style.
+  const langCode = duoLangs?.bilingual
+    ? duoLangs.leadLang
+    : resolveAceVocalLanguage(language, lyricsClean);
+  const langBit = duoLangs?.bilingual
+    ? aceDuoVocalLanguageStyleBit(duoLangs.leadLang, duoLangs.featLang)
+    : aceVocalLanguageStyleBit(langCode);
   const leadLock = vocalLockForArtist(lead);
   const STYLE_CAP = 850;
   let styleFinal;

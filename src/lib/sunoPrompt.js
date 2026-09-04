@@ -10,6 +10,7 @@ import {
   duoVocalPromptBits,
   duoStylePromptBits,
   displayArtistCredit,
+  resolveDuoLanguages,
 } from "./featArtist.js";
 import { defaultBpmForGenre, isMetalLane, metalFlavorTags, metalVoiceHint, styleLockGenreBlob, withKnownArtistLane } from "./musicLane.js";
 import { languageLabel, languagePrompt } from "./studio.js";
@@ -121,18 +122,24 @@ export function buildSunoPrompt({
         ? metalVoiceHint(resolveArtistGender(artist)?.code, genreBlob, lock)
         : voiceHintFromArtist(artist));
 
-  const langCode = String(lyrics?.language || artist?.language || "fr")
-    .toLowerCase()
-    .slice(0, 2);
+  const duoLangs = resolveDuoLanguages(
+    artist,
+    feat,
+    lyrics?.language || artist?.language,
+  );
+  const langCode = duoLangs.leadLang;
   const langName = languagePrompt(langCode);
   const langUi = languageLabel(langCode);
+  const langLine = duoLangs.bilingual
+    ? `Language: bilingual duet — singer 1 (${artist?.name || "lead"}) in ${langUi} (${langCode}), singer 2 (${feat.name}) in ${languageLabel(duoLangs.featLang)} (${duoLangs.featLang}); each stays in their own language`
+    : `Language: ${langUi} (${langCode}) — vocals and lyrics sung entirely in ${langName}`;
 
   return `Style: ${lock.genreSummary || artist?.genre || (metal ? "metal" : "indie pop")}${
     lock.matchedName || seed?.artistName
       ? ` (lane of ${lock.matchedName || seed.artistName})`
       : ""
   }. ${voice}. Mood: ${artist?.mood || lock.mood || (metal ? "aggressive" : "emotional")}.
-Language: ${langUi} (${langCode}) — vocals and lyrics sung entirely in ${langName}
+${langLine}
 Artist: ${displayArtistCredit(artist, feat)}
 Production: ${production}
 Keywords: ${keywords}

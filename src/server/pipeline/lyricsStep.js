@@ -3,16 +3,36 @@ import {
   detectLyricsForm,
 } from "../../lib/musicLane.js";
 import { normalizeAndValidateLyrics } from "../../lib/lyricsStructure.js";
-import { normalizeFeatArtist, duoLyricsInstruction } from "../../lib/featArtist.js";
+import {
+  normalizeFeatArtist,
+  duoLyricsInstruction,
+  duoLanguageRules,
+} from "../../lib/featArtist.js";
 import { llmJson, requireTextLlm } from "../llm.js";
 import {
   promptJson,
-  resolveLanguage,
   languagePromptName,
 } from "./util.js";
 
-function buildLyricsPrompt({ lang, langName, theme, artist, trends, lock, feat, form, duoBlock, repairNote = "" }) {
-  return `Écris des paroles de chanson originales en ${langName} pour cet artiste.
+function buildLyricsPrompt({
+  lang,
+  langName,
+  langBlock,
+  bilingual,
+  featLangName,
+  theme,
+  artist,
+  trends,
+  lock,
+  feat,
+  form,
+  duoBlock,
+  repairNote = "",
+}) {
+  const lyricsLangHint = bilingual
+    ? `vraies paroles bilingues sous chaque tag (lead = ${langName}, feat = ${featLangName})`
+    : `de vraies paroles en ${langName} sous chaque tag`;
+  return `Écris des paroles de chanson originales${bilingual ? " en duo bilingue" : ` en ${langName}`} pour cet artiste.
 Artiste LEAD: ${promptJson({
   name: artist?.name,
   mode: artist?.mode,
@@ -22,6 +42,7 @@ Artiste LEAD: ${promptJson({
   genres: artist?.genres,
   mood: artist?.mood,
   voice: artist?.voice,
+  language: lang,
   bio: artist?.bio,
   influences: artist?.influences,
   styleArtist: artist?.styleArtist,
@@ -36,6 +57,7 @@ ${
         genres: feat.genres,
         mood: feat.mood,
         voice: feat.voice,
+        language: feat.language || lang,
         vocalStyle: feat.styleLock?.vocalStyle,
         timbre: feat.styleLock?.timbre,
         writingStyle: feat.styleLock?.writingStyle,
@@ -64,7 +86,7 @@ ${
 }
 ${duoBlock}
 ${buildLyricsCraftBrief(form)}
-Langue obligatoire des paroles: ${langName} (code ${lang}) — aucune autre langue dans le chant.
+${langBlock}
 Thème/titre: ${theme || "inspire-toi des tendances"}
 Tendances: ${promptJson(lock ? {} : trends || {})}
 ${repairNote ? `\nCORRECTION OBLIGATOIRE (précédente version invalide): ${repairNote}\n` : ""}
@@ -76,7 +98,7 @@ JSON strict RFC 8259:
   "structure": string[],
   "text": string
 }
-Le champ text doit contenir les tags MiniMax/ACE en anglais selon l'arc « ${form.id} »: ${form.tagsArc} avec de vraies paroles en ${langName} sous chaque tag.
+Le champ text doit contenir les tags MiniMax/ACE en anglais selon l'arc « ${form.id} »: ${form.tagsArc} avec ${lyricsLangHint}.
 "structure" doit lister dans l'ordre les tags réellement présents dans "text".
 Dans "text", apostrophes brutes (don't) — jamais \\'. Sauts de ligne = \\n uniquement.
 "language" doit être exactement "${lang}".`;
@@ -84,14 +106,29 @@ Dans "text", apostrophes brutes (don't) — jamais \\'. Sauts de ligne = \\n uni
 
 export async function runLyrics({ keys, theme, artist, trends, language }) {
   requireTextLlm(keys);
-  const lang = resolveLanguage(language, artist);
-  const langName = languagePromptName(lang);
   const lock = artist?.styleLock;
   const form = detectLyricsForm(lock, artist);
   const feat = normalizeFeatArtist(artist?.featArtist);
-  const duoBlock = feat ? duoLyricsInstruction(artist, feat, form) : "";
+  const langRules = duoLanguageRules(artist, feat, language);
+  const lang = langRules.leadLang;
+  const langName = languagePromptName(lang);
+  const featLangName = languagePromptName(langRules.featLang);
+  const duoBlock = feat ? duoLyricsInstruction(artist, feat, form, language) : "";
 
-  const promptArgs = { lang, langName, theme, artist, trends, lock, feat, form, duoBlock };
+  const promptArgs = {
+    lang,
+    langName,
+    langBlock: langRules.block,
+    bilingual: langRules.bilingual,
+    featLangName,
+    theme,
+    artist,
+    trends,
+    lock,
+    feat,
+    form,
+    duoBlock,
+  };
   let data = await llmJson(keys, buildLyricsPrompt(promptArgs));
   let normalized = normalizeAndValidateLyrics(data, form);
 
@@ -102,5 +139,10 @@ export async function runLyrics({ keys, theme, artist, trends, language }) {
   }
 
   const { _validation, ...lyrics } = normalized;
-  return { ...lyrics, language: lang, lyricsForm: form.id };
+  return {
+    ...lyrics,
+    language: lang,
+    ...(langRules.bilingual ? { featLanguage: langRules.featLang } : {}),
+    lyricsForm: form.id,
+  };
 }

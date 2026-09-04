@@ -6,6 +6,7 @@
 export {
   resolveAceVocalLanguage,
   aceVocalLanguageStyleBit,
+  aceDuoVocalLanguageStyleBit,
   lyricsForAceStepPreview,
   stripAceStageDirections,
 } from "./lyrics.js";

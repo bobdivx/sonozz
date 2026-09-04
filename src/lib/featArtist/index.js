@@ -5,3 +5,4 @@ export * from "./aceStepLyrics.js";
 export * from "./aceStepStyle.js";
 export * from "./duoBits.js";
 export * from "./duoLyrics.js";
+export * from "./duoLanguages.js";

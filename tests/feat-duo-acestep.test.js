@@ -8,6 +8,8 @@ import {
   soloizeFeatVocalForDuo,
   vocalLockForArtist,
   duoLyricsInstruction,
+  resolveDuoLanguages,
+  duoLanguageRules,
 } from "../src/lib/featArtist.js";
 import { buildSunoPrompt } from "../src/lib/sunoPrompt.js";
 import {
@@ -17,6 +19,7 @@ import {
   isAceNanLatentsError,
   isAceVramError,
   stripAceStageDirections,
+  aceDuoVocalLanguageStyleBit,
 } from "../src/server/aceStep.js";
 
 describe("prepareAceStepLyrics (duo)", () => {
@@ -78,6 +81,53 @@ describe("duoLyricsInstruction", () => {
     assert.match(text, /\[singer 2: male\]/);
     assert.doesNotMatch(text, /\[Verse - male vocal\][\s\S]*\[Verse - male vocal\]/);
     assert.match(text, /didascalies/i);
+  });
+
+  it("langues différentes → consignes bilingues par singer", () => {
+    const text = duoLyricsInstruction(
+      { name: "Jeser", gender: "male", language: "fr", genre: "Rap" },
+      { name: "ZAHRA", gender: "female", language: "en", genre: "Afro" },
+    );
+    assert.match(text, /BILINGUE/i);
+    assert.match(text, /français/i);
+    assert.match(text, /anglais/i);
+    assert.match(text, /singer 1.*français|couplets singer 1 en français/i);
+  });
+});
+
+describe("resolveDuoLanguages / duoLanguageRules", () => {
+  it("même langue si feat sans language", () => {
+    const d = resolveDuoLanguages(
+      { name: "A", language: "fr" },
+      { name: "B", gender: "female" },
+    );
+    assert.equal(d.leadLang, "fr");
+    assert.equal(d.featLang, "fr");
+    assert.equal(d.bilingual, false);
+  });
+
+  it("bilingue fr+en", () => {
+    const d = resolveDuoLanguages(
+      { name: "A", language: "fr" },
+      { name: "B", language: "en" },
+    );
+    assert.equal(d.bilingual, true);
+    assert.equal(d.featLang, "en");
+    const rules = duoLanguageRules(
+      { name: "A", language: "fr" },
+      { name: "B", language: "en" },
+    );
+    assert.match(rules.block, /DUO BILINGUE/i);
+    assert.equal(rules.jsonLanguage, "fr");
+  });
+});
+
+describe("aceDuoVocalLanguageStyleBit", () => {
+  it("bilingue mentionne singer 1 et 2", () => {
+    const bit = aceDuoVocalLanguageStyleBit("fr", "en");
+    assert.match(bit, /bilingual/i);
+    assert.match(bit, /singer 1.*fr/i);
+    assert.match(bit, /singer 2.*en/i);
   });
 });
 
@@ -311,6 +361,32 @@ hook line`,
     assert.equal(body.taskType, "cover");
     assert.ok(body.audioCoverStrength < 0.4);
     assert.match(body.instruction, /chorus instrumentation lifts|final chorus biggest/i);
+  });
+
+  it("langues différentes → style bilingue, vocalLanguage = lead", () => {
+    const body = buildAceStepBody({
+      title: "Bilingue",
+      style: "hip hop",
+      lyrics: `[Verse]
+Bonjour la street
+[Verse]
+Hello from the block
+[Chorus]
+Ensemble forever`,
+      language: "fr",
+      modelId: "acestep-v15-xl-turbo",
+      artist: {
+        name: "LeadFR",
+        gender: "male",
+        language: "fr",
+        featArtist: { name: "FeatEN", gender: "female", language: "en" },
+      },
+      featArtist: { name: "FeatEN", gender: "female", language: "en" },
+    });
+    assert.equal(body.vocalLanguage, "fr");
+    assert.match(body.style, /bilingual/i);
+    assert.match(body.style, /singer 1.*fr/i);
+    assert.match(body.style, /singer 2.*en/i);
   });
 });
 

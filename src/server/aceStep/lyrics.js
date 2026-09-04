@@ -36,6 +36,16 @@ export function aceVocalLanguageStyleBit(languageCode) {
   return `sung in ${name} (${code})`;
 }
 
+/** Style ACE pour duo : une langue ou bilingue (singer 1 / singer 2). */
+export function aceDuoVocalLanguageStyleBit(leadLang, featLang) {
+  const a = resolveAceVocalLanguage(leadLang);
+  const b = resolveAceVocalLanguage(featLang);
+  if (a === b) return aceVocalLanguageStyleBit(a);
+  const aName = languagePrompt(a);
+  const bName = languagePrompt(b);
+  return `bilingual duet: singer 1 sings in ${aName} (${a}), singer 2 sings in ${bName} (${b}); each singer stays in their own language`;
+}
+
 export function lyricsForAceStepPreview(text) {
   const lines = String(text || "")
     .split(/\r?\n/)
