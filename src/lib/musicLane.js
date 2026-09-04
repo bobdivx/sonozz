@@ -258,7 +258,8 @@ export function artefactGuardsFromLock(lock) {
 export function aceStepProductionQualityFloor({ duo = false } = {}) {
   return [
     "lead vocal prominent and clear, instrumental mix with space around the vocal",
-    "warm organic textures, balanced midrange, controlled low-end, headroom",
+    "warm organic textures, balanced midrange, controlled low-end, peak headroom",
+    "no clipping, no harsh brickwall limiting, natural dynamics",
     duo
       ? "arrangement supports the active tagged singer"
       : "full band under the lead without crowding the vocal",
@@ -345,7 +346,7 @@ export function aceStepCommercialArrangementBits(lock = null, { duo = false } = 
     rhythm ? `groove: ${rhythm}` : null,
     prod
       ? `production: ${prod}`
-      : "wide stereo, controlled low-end, lead vocal prominent with air in the midrange, polished mastering with headroom",
+      : "wide stereo, controlled low-end, lead vocal prominent with air in the midrange, polished mix with peak headroom, no clipping",
     duo
       ? "duet vocals sit cleanly inside a full commercial band mix"
       : "lead vocal sits cleanly on top of a full commercial band mix, instruments leave space for the voice",

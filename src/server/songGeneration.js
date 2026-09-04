@@ -53,10 +53,11 @@ const MODEL_RANK = {
   songgeneration_base: 1,
 };
 
-/** Params d’inférence selon le modèle réellement choisi (matériel). */
+/** Params d’inférence selon le modèle réellement choisi (matériel).
+ * CFG un cran plus bas : >2.0 → rendu souvent saturé / dense. */
 const MODEL_INFER_PARAMS = {
   songgeneration_large: {
-    cfg_coef: 1.95,
+    cfg_coef: 1.8,
     temperature: 0.72,
     top_k: 40,
     top_p: 0.0,
@@ -64,7 +65,7 @@ const MODEL_INFER_PARAMS = {
     label: "Large · qualité max",
   },
   songgeneration_base_full: {
-    cfg_coef: 2.05,
+    cfg_coef: 1.85,
     temperature: 0.78,
     top_k: 45,
     top_p: 0.0,
@@ -72,7 +73,7 @@ const MODEL_INFER_PARAMS = {
     label: "Base Full · durée + mix",
   },
   songgeneration_base_new: {
-    cfg_coef: 2.0,
+    cfg_coef: 1.8,
     temperature: 0.78,
     top_k: 45,
     top_p: 0.0,
@@ -80,7 +81,7 @@ const MODEL_INFER_PARAMS = {
     label: "Base New · rapide",
   },
   songgeneration_base: {
-    cfg_coef: 1.95,
+    cfg_coef: 1.75,
     temperature: 0.8,
     top_k: 45,
     top_p: 0.0,
@@ -1384,9 +1385,12 @@ export async function startSongGeneration(
   });
   const modelId = pick.modelId;
   const infer = { ...(pick.params || MODEL_INFER_PARAMS.songgeneration_base) };
-  // Preview : stride court (Large=8 allonge le drone) + CFG un peu plus bas (moins de saturation)
+  // Preview : stride court (Large=8 allonge le drone) + CFG un cran plus bas (moins de saturation)
   if (preview) {
     infer.extend_stride = Math.min(Number(infer.extend_stride) || 5, 4);
+    infer.cfg_coef = Math.min(Number(infer.cfg_coef) || 1.7, 1.7);
+  } else {
+    // Full : plafond anti-saturation (évite les presets >1.9 hérités)
     infer.cfg_coef = Math.min(Number(infer.cfg_coef) || 1.8, 1.85);
   }
 

@@ -40,7 +40,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(turbo.isTurbo, true);
     const sft = aceStepInferenceForModel("acestep-v15-xl-sft");
     assert.equal(sft.inferenceSteps, 50);
-    assert.equal(sft.guidanceScale, 6.5);
+    assert.equal(sft.guidanceScale, 5.5);
     assert.equal(sft.isTurbo, false);
     const body = buildAceStepBody({
       title: "t",
@@ -63,6 +63,9 @@ describe("ACE-Step Studio client", () => {
     assert.equal(auto.inferenceSteps, 8);
     assert.equal(auto.guidanceScale, 0);
     assert.equal(auto.taskType, undefined);
+    assert.equal(auto.enableNormalization, true);
+    assert.equal(auto.normalizationDb, -2.5);
+    assert.equal(auto.mp3Bitrate, "320k");
 
     const forced = buildLabAceStepBody({
       title: "lab",
@@ -210,7 +213,10 @@ describe("ACE-Step Studio client", () => {
       preview: false,
     });
     assert.equal(sft.inferenceSteps, 50);
-    assert.equal(sft.guidanceScale, 6.5);
+    assert.equal(sft.guidanceScale, 5.5);
+    assert.equal(sft.enableNormalization, true);
+    assert.equal(sft.normalizationDb, -2.5);
+    assert.equal(sft.mp3Bitrate, "320k");
     assert.ok(sft.duration >= ACE_FULL_DURATION_MIN && sft.duration <= ACE_FULL_DURATION_MAX);
     assert.equal(sft.referenceAudioUrl, undefined);
     assert.equal(sft.taskType, undefined);
@@ -253,8 +259,11 @@ describe("ACE-Step Studio client", () => {
     assert.match(body.referenceAudioTitle, /Condemnation Contagion/);
     assert.equal(body.audioCoverStrength, 0.5);
     assert.equal(body.coverNoiseStrength, 0.35);
-    assert.equal(body.guidanceScale, 6.5);
-    assert.match(body.instruction, /STREAMING-READY commercial hit|full band mix/i);
+    assert.equal(body.guidanceScale, 5.5);
+    assert.equal(body.enableNormalization, true);
+    assert.equal(body.normalizationDb, -2.5);
+    assert.equal(body.mp3Bitrate, "320k");
+    assert.match(body.instruction, /peak headroom|no clipping|full band mix|polished commercial/i);
 
     const turbo = buildAceStepBody({
       title: "Echoes",
