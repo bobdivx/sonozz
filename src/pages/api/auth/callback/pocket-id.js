@@ -104,10 +104,14 @@ export async function GET({ request, cookies, url }) {
       }
     }
 
-    const user = await upsertUserFromOidc({ email: claims.email, sub: claims.sub });
+    const user = await upsertUserFromOidc({
+      email: claims.email,
+      sub: claims.sub,
+      allowCreate: false,
+    });
     cookies.set(
       SESSION_COOKIE,
-      createSessionToken(user.email),
+      createSessionToken(user.email, user.role),
       sessionCookieOptions(),
     );
     cookies.set(SSO_HINT_COOKIE, "1", {
@@ -116,10 +120,9 @@ export async function GET({ request, cookies, url }) {
     });
     clearOidcCookies(cookies);
 
-    const dest =
-      intent === "link"
-        ? "/parametres?section=compte&pocket=linked"
-        : next;
+    const accountPath =
+      user.role === "admin" ? "/parametres?section=compte&pocket=linked" : "/compte?pocket=linked";
+    const dest = intent === "link" ? accountPath : next;
     return new Response(null, {
       status: 302,
       headers: { Location: dest },
@@ -128,6 +131,9 @@ export async function GET({ request, cookies, url }) {
     const msg = String(e?.message || "");
     if (/déjà lié/i.test(msg)) {
       return loginError(cookies, "sso_taken");
+    }
+    if (/invitation|inconnu|désactivé/i.test(msg)) {
+      return loginError(cookies, "sso_invite");
     }
     return loginError(cookies, "sso");
   }

@@ -122,7 +122,7 @@ describe("Pocket ID SSO optionnel", () => {
   });
 
   it("refuse le mot de passe uniquement si CE user a lié le SSO", () => {
-    assert.deepEqual(decidePasswordLogin(true, false), { ok: true });
+    assert.deepEqual(decidePasswordLogin(true, false), { ok: true, role: "member" });
     assert.deepEqual(decidePasswordLogin(true, true), {
       ok: false,
       reason: "sso_required",
@@ -138,6 +138,7 @@ describe("Pocket ID SSO optionnel", () => {
     const token = createSessionToken("sso.user@example.test");
     const session = readSessionToken(token);
     assert.equal(session.email, "sso.user@example.test");
+    assert.equal(session.role, "member");
   });
 
   it("extrait email + sub depuis userinfo / id_token", () => {

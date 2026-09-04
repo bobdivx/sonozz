@@ -207,6 +207,9 @@ describe("duoLyricsInstruction + forme", () => {
     const block = duoLyricsInstruction(lead, feat, LYRICS_FORM_PRESETS.rap_trap);
     assert.match(block, /rap_trap/);
     assert.match(block, /\[Hook\]/);
-    assert.match(block, /Hook - duet/);
+    // Format ACE actuel : singer 1/2 sous le hook (plus « Hook - duet … vocals »).
+    assert.match(block, /\[singer 1: male\]/);
+    assert.match(block, /\[singer 2: female\]/);
+    assert.doesNotMatch(block, /Pre-Chorus/);
   });
 });

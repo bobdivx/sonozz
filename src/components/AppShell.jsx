@@ -17,7 +17,8 @@ const NAV = [
   { href: "/", id: "studio", label: "Studio", icon: Waves, hint: "Un morceau : paroles, audio, jaquette, stores" },
   { href: "/artistes", id: "artistes", label: "Artistes", icon: UserRound, hint: "Profils, catalogue et albums" },
   { href: "/play", id: "play", label: "Play", icon: Headphones },
-  { href: "/parametres", id: "parametres", label: "Paramètres", icon: Settings2 },
+  { href: "/parametres", id: "parametres", label: "Paramètres", icon: Settings2, adminOnly: true },
+  { href: "/compte", id: "compte", label: "Compte", icon: UserRound, memberOnly: true },
 ];
 
 /**
@@ -63,6 +64,7 @@ function initialsFromEmail(email) {
 
 function TopHeader({
   email,
+  accountHref,
   search,
   onSearchChange,
   onSearchSubmit,
@@ -125,10 +127,10 @@ function TopHeader({
         </form>
 
         <a
-          href="/parametres"
+          href={accountHref}
           class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/20 text-xs font-bold text-primary ring-2 ring-base-content/10 transition hover:ring-primary/40 sm:h-10 sm:w-10 sm:text-sm"
-          title={email || "Paramètres"}
-          aria-label="Compte et paramètres"
+          title={email || "Compte"}
+          aria-label="Compte"
         >
           {email ? initialsFromEmail(email) : <UserRound size={16} />}
         </a>
@@ -140,12 +142,13 @@ function TopHeader({
 /**
  * Shell app avec top header (logo · recherche · avatar) + sidebar (si connecté)
  * ou bandeau logo public (écoute /play).
- * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres', children: any, title?: string, subtitle?: string, fillViewport?: boolean, actions?: any }} props
+ * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres' | 'compte', children: any, title?: string, subtitle?: string, fillViewport?: boolean, actions?: any }} props
  */
 export default function AppShell({ active, children, title, subtitle, fillViewport = false, actions }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [email, setEmail] = useState(null);
+  const [canManageSettings, setCanManageSettings] = useState(false);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -155,7 +158,8 @@ export default function AppShell({ active, children, title, subtitle, fillViewpo
         const ok = Boolean(d?.authenticated);
         setAuthed(ok);
         setEmail(d?.email || null);
-        if (ok) void ensureKeysHydrated();
+        setCanManageSettings(Boolean(d?.canManageSettings));
+        if (ok && d?.canManageSettings) void ensureKeysHydrated();
       })
       .catch(() => setAuthed(false));
   }, []);
@@ -200,6 +204,13 @@ export default function AppShell({ active, children, title, subtitle, fillViewpo
     if (q) url.searchParams.set("q", q);
     location.assign(url.pathname + url.search);
   }
+
+  const accountHref = canManageSettings ? "/parametres?section=compte" : "/compte";
+  const navItems = NAV.filter((item) => {
+    if (item.adminOnly && !canManageSettings) return false;
+    if (item.memberOnly && canManageSettings) return false;
+    return true;
+  });
 
   const chromePad = {
     paddingBottom:
@@ -285,6 +296,7 @@ export default function AppShell({ active, children, title, subtitle, fillViewpo
     <div class={fillViewport ? "flex h-dvh flex-col overflow-hidden" : "flex min-h-screen flex-col"}>
       <TopHeader
         email={email}
+        accountHref={accountHref}
         search={search}
         onSearchChange={setSearch}
         onSearchSubmit={submitSearch}
@@ -313,7 +325,7 @@ export default function AppShell({ active, children, title, subtitle, fillViewpo
           }}
         >
           <nav class="flex flex-col gap-1 p-3 pt-4" aria-label="Navigation principale">
-            {NAV.map((item) => {
+            {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = active === item.id;
               return (

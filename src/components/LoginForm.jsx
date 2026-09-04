@@ -8,6 +8,7 @@ const ERROR_MESSAGES = {
   sso_email: "Pocket ID n’a pas renvoyé d’email.",
   sso_taken: "Ce compte Pocket ID est déjà lié à un autre utilisateur.",
   sso_mismatch: "L’email Pocket ID ne correspond pas à ce compte.",
+  sso_invite: "Compte inconnu — demande une invitation au studio.",
 };
 
 function ssoStartHref(next, intent = "login") {

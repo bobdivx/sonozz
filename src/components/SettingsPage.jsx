@@ -12,9 +12,12 @@ import {
   Radio,
   Share2,
   Shield,
+  Users,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import PocketIdAccount from "./PocketIdAccount.jsx";
+import ChangePasswordForm from "./ChangePasswordForm.jsx";
+import TeamPanel from "./TeamPanel.jsx";
 import {
   KEY_FIELDS,
   loadKeys,
@@ -40,7 +43,12 @@ const SECTION_META = {
   Compte: {
     id: "compte",
     icon: Shield,
-    blurb: "Lier ou délier Pocket ID (SSO DevForge) pour ce compte uniquement.",
+    blurb: "Mot de passe et liaison Pocket ID pour ce compte.",
+  },
+  Équipe: {
+    id: "equipe",
+    icon: Users,
+    blurb: "Inviter des membres au studio. Ils n’auront pas accès aux clés sensibles.",
   },
   IA: { id: "ia", icon: Sparkles, blurb: "Texte, images et clips : Gemini, Ollama, Veo / Wan2GP." },
   Morceaux: {
@@ -70,6 +78,7 @@ function sectionFromQuery() {
 
 const SETTINGS_NAV = [
   { group: "Compte", items: [] },
+  { group: "Équipe", items: [] },
   ...KEY_FIELDS,
 ];
 
@@ -95,6 +104,7 @@ export default function SettingsPage() {
 
   const activeGroup = useMemo(() => {
     if (section === "compte") return { group: "Compte", items: [] };
+    if (section === "equipe") return { group: "Équipe", items: [] };
     return KEY_FIELDS.find((g) => SECTION_META[g.group]?.id === section) || KEY_FIELDS[0];
   }, [section]);
 
@@ -482,7 +492,17 @@ export default function SettingsPage() {
           </div>
 
           {section === "compte" ? (
-            <PocketIdAccount />
+            <div class="space-y-8">
+              <ChangePasswordForm />
+              <div>
+                <h3 class="mb-3 text-sm font-semibold uppercase tracking-wider text-base-content/50">
+                  Pocket ID
+                </h3>
+                <PocketIdAccount />
+              </div>
+            </div>
+          ) : section === "equipe" ? (
+            <TeamPanel />
           ) : section === "morceaux" ? (
             <MusicStudiosPanel
               keys={keys}

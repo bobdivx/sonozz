@@ -1,0 +1,8 @@
+---
+import Layout from "../layouts/Layout.astro";
+import AccountPage from "../components/AccountPage.jsx";
+---
+
+<Layout title="SONOZZ — Mon compte" description="Compte studio SONOZZ.">
+  <AccountPage client:only="preact" />
+</Layout>

@@ -2,7 +2,9 @@ import { defineMiddleware } from "astro:middleware";
 import {
   getSessionFromCookies,
   isAccessControlEnabled,
+  isAdminOnlyPath,
   isPublicPath,
+  ROLE_ADMIN,
 } from "./server/auth.js";
 
 function withNoStore(response) {
@@ -16,6 +18,23 @@ function withNoStore(response) {
     statusText: response.statusText,
     headers,
   });
+}
+
+function forbidden(pathname) {
+  if (pathname.startsWith("/api/")) {
+    return withNoStore(
+      new Response(JSON.stringify({ error: "Accès réservé à l’administrateur" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  }
+  return withNoStore(
+    new Response(null, {
+      status: 302,
+      headers: { Location: "/compte" },
+    }),
+  );
 }
 
 /**
@@ -37,15 +56,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
           }),
         );
       }
-      
+
       // Pour les pages, traiter d'abord la requête pour savoir si la route existe
       const response = await next();
-      
+
       // Si 404 ou erreur >= 400, laisser passer (ne pas rediriger vers login pour URLs inexistantes)
       if (response.status >= 404) {
         return withNoStore(response);
       }
-      
+
       // Si la page existe (200, 3xx mais pas 404), page d’accès réservé
       if (response.status < 400) {
         const nextUrl = `${pathname}${search || ""}`;
@@ -53,9 +72,14 @@ export const onRequest = defineMiddleware(async (context, next) => {
           context.redirect(`/403?next=${encodeURIComponent(nextUrl)}`),
         );
       }
-      
+
       // Autres erreurs 400-403, retourner la réponse
       return withNoStore(response);
+    }
+
+    // Membres : pas d’accès aux paramètres sensibles
+    if (session.role !== ROLE_ADMIN && isAdminOnlyPath(pathname)) {
+      return forbidden(pathname);
     }
   }
 

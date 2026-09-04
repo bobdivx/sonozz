@@ -49,9 +49,15 @@ if (Astro.request.method === "POST") {
     } else {
       const result = await authenticatePassword(email, password);
       if (!result.ok) {
-        error = result.reason === "sso_required" ? SSO_PASSWORD_BLOCKED : "Identifiants incorrects";
+        if (result.reason === "sso_required") error = SSO_PASSWORD_BLOCKED;
+        else if (result.reason === "disabled") error = "Compte désactivé";
+        else error = "Identifiants incorrects";
       } else {
-        Astro.cookies.set(SESSION_COOKIE, createSessionToken(email), sessionCookieOptions());
+        Astro.cookies.set(
+          SESSION_COOKIE,
+          createSessionToken(email, result.role),
+          sessionCookieOptions(),
+        );
         Astro.cookies.set(SSO_HINT_COOKIE, "", { ...oidcCookieOptions(0), httpOnly: false, maxAge: 0 });
         return Astro.redirect(formNext);
       }

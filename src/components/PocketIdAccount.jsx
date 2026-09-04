@@ -6,7 +6,7 @@ const ERRORS = {
   sso: "Liaison Pocket ID impossible. Réessaie.",
 };
 
-export default function PocketIdAccount() {
+export default function PocketIdAccount({ accountPath = "/parametres?section=compte" }) {
   const [email, setEmail] = useState("");
   const [oidcConfigured, setOidcConfigured] = useState(false);
   const [ssoLinked, setSsoLinked] = useState(false);
@@ -18,12 +18,12 @@ export default function PocketIdAccount() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("pocket") === "linked") {
       setMessage("Pocket ID lié — la prochaine connexion passera par le SSO.");
-      window.history.replaceState({}, "", "/parametres?section=compte");
+      window.history.replaceState({}, "", accountPath);
     }
     const err = params.get("error");
     if (err && ERRORS[err]) {
       setMessage(ERRORS[err]);
-      window.history.replaceState({}, "", "/parametres?section=compte");
+      window.history.replaceState({}, "", accountPath);
     }
 
     fetch("/api/auth/me")
@@ -35,7 +35,7 @@ export default function PocketIdAccount() {
         setSsoLinkedAt(d.ssoLinkedAt || null);
       })
       .catch(() => {});
-  }, []);
+  }, [accountPath]);
 
   async function unlink() {
     setBusy(true);
@@ -83,7 +83,10 @@ export default function PocketIdAccount() {
           <p class="text-sm text-base-content/60">
             Optionnel. Une fois lié, ce compte se connecte uniquement avec Pocket ID.
           </p>
-          <a href="/api/auth/pocket-id?intent=link" class="btn btn-primary btn-sm gap-2">
+          <a
+            href={`/api/auth/pocket-id?intent=link&next=${encodeURIComponent(accountPath.split("?")[0] || "/compte")}`}
+            class="btn btn-primary btn-sm gap-2"
+          >
             <Link2 size={14} />
             Lier Pocket ID
           </a>

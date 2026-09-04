@@ -25,12 +25,16 @@ export async function POST({ request, cookies }) {
       if (result.reason === "sso_required") {
         return error(SSO_PASSWORD_BLOCKED, 403);
       }
+      if (result.reason === "disabled") {
+        return error("Compte désactivé", 403);
+      }
       return error("Identifiants incorrects", 401);
     }
-    const token = createSessionToken(email);
+    const normalized = email.toLowerCase();
+    const token = createSessionToken(normalized, result.role);
     cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
     cookies.set(SSO_HINT_COOKIE, "", { ...oidcCookieOptions(0), httpOnly: false, maxAge: 0 });
-    return json({ ok: true, email: email.toLowerCase() });
+    return json({ ok: true, email: normalized, role: result.role });
   } catch (e) {
     return error(e.message || "Connexion impossible", 500);
   }

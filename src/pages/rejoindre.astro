@@ -1,0 +1,26 @@
+---
+import Layout from "../layouts/Layout.astro";
+import InviteAcceptForm from "../components/InviteAcceptForm.jsx";
+
+export const prerender = false;
+
+const token = Astro.url.searchParams.get("token") || "";
+---
+
+<Layout title="SONOZZ — Rejoindre le studio" description="Accepte ton invitation SONOZZ.">
+  <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12">
+    <div class="mb-8 text-center">
+      <img
+        src="/logo.png"
+        alt="SONOZZ"
+        class="mx-auto mb-6 h-20 w-20 rounded-2xl object-cover shadow-lg shadow-black/40"
+        width="80"
+        height="80"
+      />
+      <h1 class="font-display text-3xl font-bold tracking-tight text-base-content">SONOZZ</h1>
+      <p class="mt-2 text-sm text-base-content/55">Invitation au studio</p>
+    </div>
+
+    <InviteAcceptForm client:load token={token} />
+  </div>
+</Layout>
