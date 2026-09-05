@@ -40,6 +40,11 @@ export function startAlbumJob({
   resume = false,
   href,
   label,
+  title = "",
+  concept = "",
+  dbAlbumId = null,
+  withFeats = false,
+  featArtists = [],
 } = {}) {
   if (!projectId) throw new Error("projectId manquant pour l’album");
   const id = albumJobId(projectId);
@@ -48,14 +53,23 @@ export function startAlbumJob({
     type: "album",
     status: "running",
     phase: "running",
-    label: label || `Album · ${totalCount} titres`,
-    message: resume ? "Reprise album…" : "Démarrage album…",
+    label: label || (title ? `Album · ${title}` : `Album · ${totalCount} titres`),
+    message: resume
+      ? "Reprise album…"
+      : withFeats
+        ? "Démarrage album (feats auto)…"
+        : "Démarrage album…",
     progress: resume ? 8 : 4,
     projectId,
     totalCount,
     resume: Boolean(resume),
     href: href || studioHref(projectId, "tracks"),
     remoteAlbum: false,
+    preferredTitle: title || "",
+    preferredConcept: concept || "",
+    dbAlbumId: dbAlbumId || null,
+    withFeats: Boolean(withFeats),
+    featArtists: Array.isArray(featArtists) ? featArtists : [],
   });
   ensureRunning(id);
   return id;
@@ -99,6 +113,20 @@ export async function runAlbumBackgroundJob(job) {
   });
 
   try {
+    const preferredTitle = String(job.preferredTitle || "").trim();
+    const preferredConcept = String(job.preferredConcept || "").trim();
+    const withFeats = Boolean(job.withFeats);
+    const featArtists = Array.isArray(job.featArtists) ? job.featArtists : [];
+    if ((preferredTitle || preferredConcept || withFeats) && !resume) {
+      project.album = {
+        ...(project.album || {}),
+        ...(preferredTitle ? { title: preferredTitle } : {}),
+        ...(preferredConcept ? { concept: preferredConcept } : {}),
+        withFeats,
+      };
+      workingRef.current = project;
+    }
+
     const result = await runAlbumJob({
       project,
       projectId,
@@ -106,6 +134,10 @@ export async function runAlbumBackgroundJob(job) {
       totalCount: job.totalCount || project.album?.targetCount || 8,
       resume,
       abortState,
+      preferredTitle,
+      preferredConcept,
+      withFeats,
+      featArtists,
       persist: async (next, event) => {
         if (abortState.aborted) return;
         workingRef.current = next;

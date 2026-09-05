@@ -296,8 +296,7 @@ Hello her`,
     assert.equal(body.bpm, ACE_DUO_BPM_CAP);
     assert.match(body.style, /singer 1 Jeser Mathieu \(male\)/i);
     assert.match(body.style, /singer 2 ZAHRA \(female\)/i);
-    assert.match(body.style, /ONE song only|single production lane/i);
-    assert.match(body.style, /section dynamics|thicker chorus|chorus lift/i);
+    assert.match(body.style, /dry clear lead vocal|dry natural|clear diction/i);
     assert.doesNotMatch(body.style, /singer 1 male rap lead AND singer 2 female melodic/i);
     assert.doesNotMatch(body.style, /Eminem/i);
     assert.doesNotMatch(body.lyrics, /^\(Jeser Mathieu\)$/m);

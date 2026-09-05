@@ -3,15 +3,13 @@ import { styleLockGenreBlob, isMetalLane } from "./genres.js";
 import { artefactGuardsFromLock, metalBandInstruments } from "./metal.js";
 
 /**
- * Plancher de qualité prod ACE — court, positif.
- * Voix en avant + air dans le mix (évite saturation / pads métalliques denses).
+ * Plancher de qualité prod ACE — court (le plafond style ~700 tronque la fin).
+ * Voix dry + air — évite vocoder / saturation.
  */
 export function aceStepProductionQualityFloor({ duo = false } = {}) {
   return [
-    "lead vocal prominent and clear, instrumental mix with space around the vocal",
-    "warm organic textures, balanced midrange, controlled low-end, peak headroom",
-    "no clipping, no harsh brickwall limiting, natural dynamics",
-    "section-aware arrangement — layers change between verse, pre-chorus, chorus, bridge",
+    "dry clear lead vocal, light compression, natural dynamics",
+    "warm organic textures, peak headroom, no clipping",
     duo
       ? "arrangement supports the active tagged singer"
       : "full band under the lead without crowding the vocal",

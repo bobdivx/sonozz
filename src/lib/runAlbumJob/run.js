@@ -18,6 +18,7 @@ import {
   resumeAlbumTracks,
 } from "../albumTracks.js";
 import { probeMusicProvider, providerDownError } from "./provider.js";
+import { assignAlbumAutoFeats } from "../albumAutoFeats.js";
 
 export async function runAlbumJob({
   project,
@@ -31,6 +32,10 @@ export async function runAlbumJob({
   getWorking,
   jobId,
   onProgress,
+  preferredTitle = "",
+  preferredConcept = "",
+  withFeats = false,
+  featArtists = [],
 } = {}) {
   const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
   const extra = total - 1;
@@ -193,15 +198,24 @@ export async function runAlbumJob({
       ...project,
       album: {
         id: keepId || createAlbumId(),
-        title: keepId ? project.album?.title || "" : "",
-        concept: keepId ? project.album?.concept || "" : "",
+        title:
+          (keepId ? project.album?.title : "") ||
+          String(preferredTitle || "").trim() ||
+          "",
+        concept:
+          (keepId ? project.album?.concept : "") ||
+          String(preferredConcept || "").trim() ||
+          "",
         targetCount: total,
         status: "running",
         jobId,
         live: {
           percent: 2,
           message: "Planification de la tracklist…",
-          label: `Album · ${total} titres`,
+          label:
+            String(preferredTitle || "").trim()
+              ? `Album · ${String(preferredTitle).trim()}`
+              : `Album · ${total} titres`,
         },
         tracks: [leadTrack],
         updatedAt: new Date().toISOString(),
@@ -244,32 +258,42 @@ export async function runAlbumJob({
       });
       if (abortState.aborted) throw Object.assign(new Error("Album annulé"), { name: "AbortError" });
 
+      const plannedTracks = (plan.tracks || []).map((t, i) => ({
+        id: `${createAlbumTrackId()}_${i}`,
+        index: i + 2,
+        role: "album",
+        theme: t.theme,
+        workingTitle: t.workingTitle || `Piste ${i + 2}`,
+        trackRole: t.trackRole || undefined,
+        lyrics: null,
+        track: null,
+        status: "pending",
+      }));
+      const withAssignedFeats =
+        withFeats || project.album?.withFeats
+          ? assignAlbumAutoFeats(plannedTracks, featArtists)
+          : plannedTracks;
+      const featCount = withAssignedFeats.filter((t) => t.featArtist?.name).length;
+
       working = {
         ...working,
         album: {
           ...working.album,
-          title: plan.albumTitle || working.album.title,
-          concept: plan.concept || "",
+          title: working.album.title || plan.albumTitle || working.album.title,
+          concept: working.album.concept || plan.concept || "",
+          withFeats: Boolean(withFeats || project.album?.withFeats),
           jobId,
           live: {
             percent: 8,
-            message: "Tracklist prête — génération des titres…",
-            label: plan.albumTitle ? `Album · ${plan.albumTitle}` : `Album · ${total} titres`,
+            message:
+              featCount > 0
+                ? `Tracklist prête — ${featCount} feat${featCount > 1 ? "s" : ""} auto…`
+                : "Tracklist prête — génération des titres…",
+            label: (working.album.title || plan.albumTitle)
+              ? `Album · ${working.album.title || plan.albumTitle}`
+              : `Album · ${total} titres`,
           },
-          tracks: [
-            working.album.tracks[0],
-            ...(plan.tracks || []).map((t, i) => ({
-              id: `${createAlbumTrackId()}_${i}`,
-              index: i + 2,
-              role: "album",
-              theme: t.theme,
-              workingTitle: t.workingTitle || `Piste ${i + 2}`,
-              trackRole: t.trackRole || undefined,
-              lyrics: null,
-              track: null,
-              status: "pending",
-            })),
-          ],
+          tracks: [working.album.tracks[0], ...withAssignedFeats],
           updatedAt: new Date().toISOString(),
         },
       };
@@ -328,6 +352,10 @@ export async function runAlbumJob({
 
       const slot = slots[i];
       if (!working.album.tracks.some((t) => t.id === slot.id)) continue;
+      const slotFeat =
+        slot.featArtist ||
+        working.album.tracks.find((t) => t.id === slot.id)?.featArtist ||
+        null;
       const basePct = Math.round(((i + 0.15) / Math.max(1, slots.length)) * 90) + 5;
 
       const mark = (patch) => {
@@ -347,7 +375,9 @@ export async function runAlbumJob({
         mark({ status: "lyrics", error: undefined });
         await setAlbumLive(
           basePct,
-          `Titre ${slot.index}/${albumTotal} — paroles « ${slot.workingTitle} »…`,
+          `Titre ${slot.index}/${albumTotal} — paroles « ${slot.workingTitle} »${
+            slotFeat?.name ? ` feat. ${slotFeat.name}` : ""
+          }…`,
           { persistNow: true },
         );
         if (abortState.aborted) break;
@@ -358,7 +388,7 @@ export async function runAlbumJob({
             theme: `${slot.workingTitle} — ${slot.theme}`,
             artist: {
               ...project.artist,
-              featArtist: project.featArtist || project.artist?.featArtist || null,
+              featArtist: slotFeat || null,
             },
             trends: project.trends,
             language: lang,
@@ -427,7 +457,7 @@ export async function runAlbumJob({
             artist: artistWithSonicVariation(
               {
                 ...project.artist,
-                featArtist: project.featArtist || null,
+                featArtist: slotFeat || null,
               },
               variation,
             ),

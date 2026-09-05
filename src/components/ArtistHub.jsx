@@ -312,6 +312,7 @@ export default function ArtistHub({ slug }) {
     typeof window === "undefined" ? { queue: [], playing: false, index: 0 } : readPlaySession(),
   );
   const [showAlbumModal, setShowAlbumModal] = useState(false);
+  const [pendingAlbumStart, setPendingAlbumStart] = useState(null);
 
   useEffect(() => subscribePlaySession(setPlaySession), []);
 
@@ -1188,7 +1189,12 @@ export default function ArtistHub({ slug }) {
 
                 {albums.length > 0 ? (
                   <div class="space-y-4">
-                    {albums.map((album) => (
+                    {albums.map((album) => {
+                      const startMatch =
+                        pendingAlbumStart &&
+                        (pendingAlbumStart.albumId === album.id ||
+                          pendingAlbumStart.leadId === album.lead?.id);
+                      return (
                       <div key={album.id} class="rounded-3xl border border-base-content/10 bg-base-300/30 p-5">
                         <div class="mb-3 flex items-start justify-between">
                           <div>
@@ -1203,9 +1209,17 @@ export default function ArtistHub({ slug }) {
                           releases={releases}
                           pinnedLeadId={album.lead?.id}
                           embedded
+                          dbAlbumId={album.id}
+                          seedTitle={album.title || ""}
+                          seedConcept={album.concept || ""}
+                          seedTargetCount={album.targetCount || 8}
+                          kickIfIdle={album.status === "draft"}
+                          autoStart={startMatch ? pendingAlbumStart : null}
+                          onAutoStarted={() => setPendingAlbumStart(null)}
                         />
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : canCreateAlbum ? (
                   <div class="rounded-3xl border border-dashed border-base-content/15 bg-base-300/20 px-5 py-8 text-center">
@@ -1699,11 +1713,29 @@ export default function ArtistHub({ slug }) {
       {showAlbumModal && (
         <AlbumCreationModal
           slug={slug}
-          leadCandidates={releases.filter((r) => r.hasAudio && r.hasLyrics)}
+          leadCandidates={releases.filter(
+            (r) => r.hasAudio && r.hasLyrics && !r.albumStatus && !r.albumLeadId,
+          )}
           onClose={() => setShowAlbumModal(false)}
-          onCreate={() => {
+          onCreate={(payload) => {
             setShowAlbumModal(false);
-            loadData();
+            const meta = payload && typeof payload === "object" ? payload : {};
+            const album = meta.album || payload;
+            setPendingAlbumStart({
+              albumId: album?.id || null,
+              leadId: meta.leadProjectId || null,
+              title: meta.title || album?.title || "",
+              concept: meta.concept || album?.concept || "",
+              targetCount: meta.targetCount || album?.targetCount || 8,
+              withFeats: Boolean(meta.withFeats),
+              featArtists: Array.isArray(meta.featArtists) ? meta.featArtists : [],
+            });
+            selectTab("album");
+            void loadData();
+          }}
+          leadArtist={{
+            slug,
+            name: profile.name || data?.name || slug,
           }}
         />
       )}

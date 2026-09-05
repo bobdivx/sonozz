@@ -85,6 +85,60 @@ export function vocalTimbreLine(lock) {
   return parts.join(", ");
 }
 
+/** Lanes où le traitement vocal électronique est voulu. */
+export function wantsProcessedVocals(lock, genreBlob = "") {
+  const blob = [
+    genreBlob,
+    lock?.genre,
+    lock?.timbreHint,
+    lock?.vocalStyle,
+    lock?.voiceHint,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /vocoder|autotune|hyperpop|edm|\btechno\b|industrial|\bebm\b|robot|synthetic|chipmunk|formant/.test(
+    blob,
+  );
+}
+
+/**
+ * Voix ACE courte et directe — les pavés « warm baritone melodic, conversational »
+ * poussent souvent ACE vers vocoder / réverb lourde.
+ */
+export function aceLeadVocalPhrase(lock, genreBlob = "") {
+  if (!lock) return "clear natural lead vocal, warm tone, dry mix";
+  if (wantsProcessedVocals(lock, genreBlob)) {
+    return (vocalTimbreLine(lock) || lock.voiceHint || "processed lead vocal").slice(0, 100);
+  }
+
+  const g = lock.genderCode;
+  const gender = g === "female" ? "female" : g === "male" ? "male" : "lead";
+  const blob = `${lock.timbreHint || ""} ${lock.vocalStyle || ""}`.toLowerCase();
+
+  let register = "warm tone";
+  if (/baritone/.test(blob)) register = "warm baritone";
+  else if (/tenor/.test(blob)) register = "warm tenor";
+  else if (/alto|mezzo/.test(blob)) register = "warm alto";
+  else if (/soprano/.test(blob)) register = "bright soprano";
+  else if (/breathy|soft|douce/.test(blob)) register = "soft warm tone";
+
+  if (/rap|spoken|rhythmic bark|trap flow/.test(blob)) {
+    return `clear natural ${gender} rap vocal, ${register}, dry mix, intelligible lyrics`.slice(0, 95);
+  }
+
+  return `clear natural ${gender} vocal, ${register}, dry studio take, intelligible lyrics`.slice(
+    0,
+    95,
+  );
+}
+
+/** Garde positive anti-vocoder (évite les litanie « no vocoder » qui embrouillent ACE). */
+export function aceOrganicVocalGuard(lock, genreBlob = "") {
+  if (wantsProcessedVocals(lock, genreBlob)) return "";
+  return "dry natural sung vocal, clear diction, intimate presence";
+}
+
 /**
  * Duo même sexe : forcer un contraste de registre (sinon ACE mash métallique).
  * Lead = grave / parlé ; feat = aigu / mélodique (ou l’inverse selon genres).

@@ -189,6 +189,11 @@ export default function AlbumAutonomePanel({
                   {entry.role === "lead" ? (
                     <span class="badge badge-primary badge-xs ml-2">Lead</span>
                   ) : null}
+                  {entry.featArtist?.name || entry.featuring ? (
+                    <span class="badge badge-secondary badge-xs ml-2">
+                      feat. {entry.featArtist?.name || entry.featuring}
+                    </span>
+                  ) : null}
                 </p>
                 <p class="truncate text-xs text-base-content/50">{entry.theme}</p>
                 {entry.error && <p class="text-xs text-error">{entry.error}</p>}

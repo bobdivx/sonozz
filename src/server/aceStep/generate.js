@@ -90,6 +90,19 @@ export async function startAceStep(keys, {
       featLock?.genderCode &&
       leadLock.genderCode === featLock.genderCode,
   );
+  // SFT → vocoder fréquent sur indie/folk/acoustic ; Turbo plus stable (comme preview / same-sex).
+  const organicBlob = [
+    artist?.genre,
+    styleLock?.genreSummary,
+    ...(Array.isArray(styleLock?.genres) ? styleLock.genres : []),
+    prompt,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const organicPreferTurbo =
+    /indie|folk|acoustic|singer[- ]?songwriter|ballad|americana|dream pop|chamber pop|soft rock/i.test(
+      organicBlob,
+    ) && !/metal|trap|drill|edm|techno|hyperpop|industrial|\bebm\b/i.test(organicBlob);
   const pick = pickAceStepModel(catalog, {
     // Lab : pas de préférence settings. Pipeline : respecte SFT préféré + porte VRAM après.
     preferredId: labMode
@@ -97,7 +110,7 @@ export async function startAceStep(keys, {
       : String(keys?.aceStepPreferredModel || "").trim() || null,
     duo,
     sameSexDuo,
-    preferTurbo: Boolean(preview) && !labMode,
+    preferTurbo: (!labMode && (Boolean(preview) || organicPreferTurbo)) || undefined,
     preview: Boolean(preview) && !labMode,
     forceModelId,
   });

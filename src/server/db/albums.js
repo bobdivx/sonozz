@@ -129,20 +129,42 @@ export async function listAlbumsByArtist(artistSlug, limit = 50) {
     args: [artistSlug, limit],
   });
 
-  return res.rows.map((row) => ({
-    id: row.id,
-    artistSlug: row.artist_slug,
-    title: row.title,
-    concept: row.concept,
-    status: row.status,
-    targetCount: row.target_count,
-    doneCount: Number(row.done_count || 0),
-    coverUrl: row.cover_url,
-    jobId: row.job_id,
-    live: row.live_json ? JSON.parse(row.live_json) : null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  const albums = [];
+  for (const row of res.rows) {
+    const tracksRes = await db.execute({
+      sql: `SELECT * FROM album_tracks WHERE album_id = ? ORDER BY index_position`,
+      args: [row.id],
+    });
+    albums.push({
+      id: row.id,
+      artistSlug: row.artist_slug,
+      title: row.title,
+      concept: row.concept,
+      status: row.status,
+      targetCount: row.target_count,
+      doneCount: Number(row.done_count || 0),
+      coverUrl: row.cover_url,
+      jobId: row.job_id,
+      live: row.live_json ? JSON.parse(row.live_json) : null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      tracks: tracksRes.rows.map((t) => ({
+        id: t.id,
+        albumId: t.album_id,
+        projectId: t.project_id,
+        role: t.role,
+        index: t.index_position,
+        workingTitle: t.working_title,
+        theme: t.theme,
+        status: t.status,
+        error: t.error,
+        createdAt: t.created_at,
+        updatedAt: t.updated_at,
+      })),
+    });
+  }
+
+  return albums;
 }
 
 export async function addAlbumTrack({ albumId, projectId = null, role = "member", index, workingTitle = "", theme = "", status = "pending" } = {}) {

@@ -173,7 +173,7 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
   const allSwitchableIds = new Set(switchable.map((m) => m.id));
   const duo = Boolean(opts?.duo);
   const sameSexDuo = Boolean(opts?.sameSexDuo);
-  // Preview / duo same-sex : Turbo d’abord (SFT → mash / vocoder fréquent).
+  // Preview / duo same-sex / indie organique : Turbo d’abord (SFT → mash / vocoder fréquent).
   const preferTurbo = Boolean(opts?.preferTurbo || opts?.preview || sameSexDuo);
   const forceId = String(opts?.forceModelId || "").trim();
 

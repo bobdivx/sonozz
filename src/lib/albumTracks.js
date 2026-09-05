@@ -102,6 +102,7 @@ export function buildAlbumMemberProject({ leadProject, entry, leadProjectId }) {
     ...emptyProject(),
     trends: leadProject?.trends || null,
     artist: leadProject?.artist || null,
+    featArtist: entry?.featArtist || null,
     lyrics: entry?.lyrics || null,
     track: entry?.track || null,
     musicArrange: entry?.musicArrange || leadProject?.musicArrange || null,
@@ -114,6 +115,7 @@ export function buildAlbumMemberProject({ leadProject, entry, leadProjectId }) {
       index: entry?.index || null,
       theme: entry?.theme || "",
       trackRole: entry?.sonicRole || entry?.trackRole || null,
+      featuring: entry?.featArtist?.name || entry?.featuring || null,
     },
   };
   const artwork = pickAlbumArtwork(leadProject);
@@ -189,6 +191,7 @@ export function organizeArtistReleases(releases = [], albumsData = []) {
       organizedAlbums.push({
         id: album.id,
         title: album.title,
+        concept: album.concept || "",
         status: album.status,
         targetCount: album.targetCount,
         doneCount: album.doneCount || 0,

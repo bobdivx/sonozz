@@ -7,6 +7,7 @@ import { keysReady, loadKeys, isStudioEnabled } from "../lib/keys.js";
 import { emptyProject, isTrackAudioFinal, studioHref, artistAlbumHref } from "../lib/studio.js";
 import { cancelAlbumJob, startAlbumJob } from "../lib/jobRunner.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
+import { albumsApi } from "../lib/albumsApi.js";
 import {
   albumStudioHref,
   cancelledAlbumState,
@@ -23,6 +24,15 @@ export default function ArtistAlbumSection({
   pinnedLeadId = null,
   embedded = false,
   createOnly = false,
+  /** Démarre la génération dès que le lead est chargé (après modal). */
+  autoStart = null,
+  /** Si true et project.album absent : lance une fois (brouillon DB jamais démarré). */
+  kickIfIdle = false,
+  dbAlbumId = null,
+  seedTitle = "",
+  seedConcept = "",
+  seedTargetCount = null,
+  onAutoStarted,
 }) {
   const leadCandidates = createOnly
     ? releases.filter((r) => r.hasAudio && r.hasLyrics && !r.albumStatus && !r.albumLeadId)
@@ -48,6 +58,7 @@ export default function ArtistAlbumSection({
   const [pendingAlbumSize, setPendingAlbumSize] = useState(8);
 
   const albumWorkingRef = useRef(null);
+  const autoStartedRef = useRef(false);
 
   useEffect(() => {
     const keys = loadKeys();
@@ -58,6 +69,10 @@ export default function ArtistAlbumSection({
         (isStudioEnabled(keys, "replicate") && Boolean(keys.replicateApiToken?.trim())),
     );
   }, []);
+
+  useEffect(() => {
+    autoStartedRef.current = false;
+  }, [pinnedLeadId, autoStart?.leadId, autoStart?.albumId]);
 
   useEffect(() => {
     if (pinnedLeadId) {
@@ -245,15 +260,24 @@ export default function ArtistAlbumSection({
     startAlbumCreation(totalCount, resume);
   }
 
-  function startAlbumCreation(totalCount, resume = false) {
+  function startAlbumCreation(totalCount, resume = false, prefs = {}) {
     const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
+    const preferredTitle = String(prefs.title || "").trim();
+    const preferredConcept = String(prefs.concept || "").trim();
+    const withFeats = Boolean(prefs.withFeats);
+    const featArtists = Array.isArray(prefs.featArtists) ? prefs.featArtists : [];
     setError("");
     const jobId = startAlbumJob({
       projectId,
       totalCount: total,
       resume,
       href: artistAlbumHref(slug, projectId),
-      label: `Album · ${total} titres`,
+      label: preferredTitle ? `Album · ${preferredTitle}` : `Album · ${total} titres`,
+      title: preferredTitle,
+      concept: preferredConcept,
+      dbAlbumId: prefs.dbAlbumId || dbAlbumId || null,
+      withFeats,
+      featArtists,
     });
     setProject((prev) =>
       prev
@@ -261,19 +285,94 @@ export default function ArtistAlbumSection({
             ...prev,
             album: {
               ...(prev.album || {}),
+              ...(preferredTitle ? { title: preferredTitle } : {}),
+              ...(preferredConcept ? { concept: preferredConcept } : {}),
+              targetCount: total,
               jobId,
               status: "running",
+              withFeats,
               live: {
                 percent: resume ? 8 : 4,
-                message: resume ? "Reprise de l’album…" : "Démarrage album…",
-                label: prev.album?.title ? `Album · ${prev.album.title}` : `Album · ${total} titres`,
+                message: resume
+                  ? "Reprise de l’album…"
+                  : withFeats
+                    ? "Démarrage album (feats auto)…"
+                    : "Démarrage album…",
+                label: preferredTitle
+                  ? `Album · ${preferredTitle}`
+                  : prev.album?.title
+                    ? `Album · ${prev.album.title}`
+                    : `Album · ${total} titres`,
               },
               updatedAt: new Date().toISOString(),
             },
           }
         : prev,
     );
+    if (prefs.dbAlbumId || dbAlbumId) {
+      void albumsApi
+        .updateAlbum(prefs.dbAlbumId || dbAlbumId, { status: "running" })
+        .catch(() => {});
+    }
   }
+
+  // Démarre la génération (modal ou brouillon jamais lancé) — progression dans la carte.
+  useEffect(() => {
+    if (autoStartedRef.current || bootLoading || !project || !projectId) return;
+    if (project?.album?.status === "running") return;
+
+    const fromModal = Boolean(autoStart);
+    const fromIdleDraft = Boolean(kickIfIdle && !project.album);
+    if (!fromModal && !fromIdleDraft) return;
+
+    if (!keysReady(loadKeys())) {
+      setError("Configure d’abord un LLM (Gemini ou Ollama) dans Paramètres.");
+      return;
+    }
+    if (!isTrackAudioFinal(project?.track)) {
+      setError(
+        project?.track?.status === "preview-ready" || project?.track?.isPreview
+          ? "Génère d’abord le morceau complet du lead (après l’extrait) dans le Studio."
+          : "Le lead doit avoir un audio prêt.",
+      );
+      return;
+    }
+    if (!project.artist || !project.lyrics) {
+      setError("Artiste et paroles du lead requis.");
+      return;
+    }
+
+    autoStartedRef.current = true;
+    const total =
+      autoStart?.targetCount ||
+      seedTargetCount ||
+      albumSize ||
+      project.album?.targetCount ||
+      8;
+    if (autoStart?.targetCount || seedTargetCount) {
+      setAlbumSize(autoStart?.targetCount || seedTargetCount);
+    }
+    startAlbumCreation(total, false, {
+      title: autoStart?.title || seedTitle || project.album?.title || "",
+      concept: autoStart?.concept || seedConcept || project.album?.concept || "",
+      dbAlbumId: autoStart?.albumId || dbAlbumId || null,
+      withFeats: Boolean(autoStart?.withFeats),
+      featArtists: Array.isArray(autoStart?.featArtists) ? autoStart.featArtists : [],
+    });
+    onAutoStarted?.();
+  }, [
+    bootLoading,
+    project,
+    projectId,
+    autoStart,
+    kickIfIdle,
+    albumSize,
+    dbAlbumId,
+    seedTitle,
+    seedConcept,
+    seedTargetCount,
+    onAutoStarted,
+  ]);
 
   async function openTrack(entry) {
     if (!entry || (!entry.lyrics && !entry.track)) return;

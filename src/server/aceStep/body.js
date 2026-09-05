@@ -12,8 +12,6 @@ import {
 } from "./lyrics.js";
 import { isAceHostedAudioUrl } from "./gradio.js";
 import {
-  aceStepCommercialBandBits,
-  aceStepSectionDynamicsLine,
   composeAceStepStyle,
   aceStepProductionQualityFloor,
 } from "../../lib/musicLane.js";
@@ -23,7 +21,8 @@ import {
   ensureAceStepDuoSingerTags,
   buildAceStepDuoStyle,
   vocalLockForArtist,
-  vocalTimbreLine,
+  aceLeadVocalPhrase,
+  aceOrganicVocalGuard,
   resolveDuoLanguages,
 } from "../../lib/featArtist.js";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
@@ -48,6 +47,33 @@ export const ACE_COVER_NOISE_DUO = 0.28;
 /** Plage durée titres complets (secondes) — hits radio typiques. */
 export const ACE_FULL_DURATION_MIN = 140; // ~2:20
 export const ACE_FULL_DURATION_MAX = 250; // ~4:10
+
+/** Instruments ACE : lead / fingerpick mis en avant dans le mix. */
+function aceInstrumentStyleBits(arrange, instruFromLock = []) {
+  const feats = Array.isArray(arrange?.features) ? arrange.features.filter(Boolean) : [];
+  const lead = String(arrange?.leadInstrument || "").trim();
+  const finger =
+    feats.includes("fingerpicked guitar") || /fingerpick|acoustic guitar/i.test(lead);
+  const parts = [];
+  if (finger) {
+    parts.push("acoustic fingerpicked guitar, prominent in the mix");
+  } else if (lead) {
+    parts.push(`${lead} prominent in the mix`);
+  }
+  const rest = instruFromLock
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+    .filter((x) => {
+      if (finger && /acoustic|finger/i.test(x)) return false;
+      if (lead && x.toLowerCase() === lead.toLowerCase()) return false;
+      return true;
+    })
+    .slice(0, 4);
+  if (rest.length) parts.push(`instruments: ${rest.join(", ")}`);
+  const otherFeats = feats.filter((f) => f !== "fingerpicked guitar").slice(0, 2);
+  if (otherFeats.length) parts.push(otherFeats.join(", "));
+  return parts;
+}
 
 /**
  * Durée ACE-Step : preview courte, sinon explicite, sinon tirage commercial aléatoire.
@@ -253,14 +279,9 @@ export function buildAceStepBody({
   }
 
   const styleBase = String(style || "");
-  // Duo : style dédié depuis les genres réels — jamais « male rap + female » hardcodé,
-  // et on évite le DNA mono-voix du styleLock (Eminem, etc.).
-  // Qualité de prod = plancher commun (genre/sexe changent le DNA, pas le polish).
-  // Style proche du Lab : court, positif, genre + voix + langue.
-  // Les litanie « no vocoder / no autotune » embrouillent ACE sans corriger la cause.
+  // Style Lab : COURT. Au-delà de ~700 chars ACE tronque / sature → vocoder.
+  // Pas de pavés sectionDynamics + bandBits (régression post-bloat).
   const qualityFloor = aceStepProductionQualityFloor({ duo: isDuo });
-  const sectionDynamics = aceStepSectionDynamicsLine({ duo: isDuo });
-  const bandBits = aceStepCommercialBandBits(styleLock);
   const duoLangs = isDuo ? resolveDuoLanguages(lead, feat, language) : null;
   // API ACE = une seule vocalLanguage ; en bilingue on garde le lead + consignes style.
   const langCode = duoLangs?.bilingual
@@ -270,21 +291,22 @@ export function buildAceStepBody({
     ? aceDuoVocalLanguageStyleBit(duoLangs.leadLang, duoLangs.featLang)
     : aceVocalLanguageStyleBit(langCode);
   const leadLock = vocalLockForArtist(lead);
-  const STYLE_CAP = 850;
+  const STYLE_CAP = 700;
   let styleFinal;
   if (isDuo) {
+    const genreBlob = String(styleLock?.genreSummary || lead?.genre || styleBase || "").trim();
     const duoStyle = buildAceStepDuoStyle(lead || { name: "Lead" }, feat, {
       genreSummary: styleLock?.genreSummary || lead?.genre,
       mood: styleLock?.mood || lead?.mood,
       styleLock,
       styleBase,
     });
-    // Casting duo d’abord (critique), puis dynamics — troncature en fin.
+    const vocalGuard = aceOrganicVocalGuard(leadLock, genreBlob);
+    // Casting duo d’abord (critique) — troncature en fin.
     styleFinal = [
       langBit,
       duoStyle || composeAceStepStyle(styleBase, styleLock),
-      sectionDynamics,
-      ...bandBits.slice(0, 1),
+      vocalGuard,
       qualityFloor,
     ]
       .filter(Boolean)
@@ -313,28 +335,23 @@ export function buildAceStepBody({
     if (arrange.leadInstrument && !instruFromLock.includes(arrange.leadInstrument)) {
       instruFromLock.unshift(arrange.leadInstrument);
     }
-    const instru = instruFromLock.slice(0, 5).join(", ");
-    const timbre = vocalTimbreLine(leadLock);
     const densityBit =
       arrange.density === "dense"
         ? "rich arrangement with clear space for the lead vocal"
         : arrange.density === "sparse"
           ? "intimate arrangement with air around the lead vocal"
           : "open mix, lead vocal prominent over the band";
-    const featureBit = Array.isArray(arrange.features)
-      ? arrange.features.filter(Boolean).slice(0, 3).join(", ")
-      : "";
-    // Dynamics tôt après identité, avant polish (troncature en fin).
+    const instruBits = aceInstrumentStyleBits(arrange, instruFromLock);
+    const voiceBit = aceLeadVocalPhrase(leadLock, genre);
+    // Identité + voix dry en tête ; polish court en queue (survit à STYLE_CAP).
     styleFinal = [
       `${genre}, ${gender}`,
       langBit,
-      sectionDynamics,
+      voiceBit,
       mood || null,
       densityBit,
-      instru ? `instruments: ${instru}` : null,
-      featureBit || null,
-      timbre ? `voice: ${timbre}`.slice(0, 80) : null,
-      ...bandBits.slice(0, 1),
+      ...instruBits.slice(0, 2),
+      "chorus thicker than verse, bridge contrasts",
       qualityFloor,
     ]
       .filter(Boolean)
@@ -381,8 +398,8 @@ export function buildAceStepBody({
     body.coverNoiseStrength = isDuo ? ACE_COVER_NOISE_DUO : ACE_COVER_NOISE_SOLO;
     body.taskType = "cover";
     body.instruction = isDuo
-      ? "ONE coherent duet song: balanced mix with headroom (no clipping, no brickwall limiting); lead vocals prominent and clear with space; chorus instrumentation lifts vs verse (thicker bed, wider snare); bridge contrasts; final chorus biggest; keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
-      : "Generate a polished commercial song with multi-instrument arrangement and dynamic section changes (not a flat loop); chorus instrumentation lifts vs verse; bridge contrasts; final chorus biggest; lead vocal prominent and clear; instrumental mix with ample space for the vocal; warm organic textures; leave peak headroom, avoid clipping and harsh brickwall limiting:";
+      ? "ONE coherent duet song: balanced mix with headroom (no clipping, no brickwall limiting); dry natural vocals prominent and clear with space; chorus instrumentation lifts vs verse (thicker bed, wider snare); bridge contrasts; final chorus biggest; keep groove/BPM energy from the reference only; do NOT clone its single-singer performance; obey [singer 1]/[singer 2] tags; same production lane intro→outro; never glue two different songs or switch genre mid-track; full band, not a cappella:"
+      : "Generate a polished commercial song with multi-instrument arrangement and dynamic section changes (not a flat loop); chorus instrumentation lifts vs verse; bridge contrasts; final chorus biggest; dry natural lead vocal, clear diction, light compression; instrumental mix with ample space for the vocal; warm organic textures; leave peak headroom, avoid clipping and harsh brickwall limiting:";
     if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < ACE_SFT_GUIDANCE)) {
       body.guidanceScale = ACE_SFT_GUIDANCE;
     }

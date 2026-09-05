@@ -229,7 +229,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(sft.enableNormalization, true);
     assert.equal(sft.normalizationDb, -2.5);
     assert.equal(sft.mp3Bitrate, "320k");
-    assert.match(sft.style, /section dynamics|thicker chorus|chorus lift/i);
+    assert.match(sft.style, /chorus thicker than verse|bridge contrasts|dry clear lead vocal/i);
     assert.ok(sft.duration >= ACE_FULL_DURATION_MIN && sft.duration <= ACE_FULL_DURATION_MAX);
     assert.equal(sft.referenceAudioUrl, undefined);
     assert.equal(sft.taskType, undefined);
@@ -252,6 +252,45 @@ describe("ACE-Step Studio client", () => {
     const b = pickAceStepDurationSec({ preview: false });
     assert.ok(a >= ACE_FULL_DURATION_MIN && a <= ACE_FULL_DURATION_MAX);
     assert.ok(b >= ACE_FULL_DURATION_MIN && b <= ACE_FULL_DURATION_MAX);
+  });
+
+  it("indie pop organique : voix dry courte, pas de pavé conversational → vocoder", () => {
+    const body = buildAceStepBody({
+      title: "Echoes in the Haze",
+      style: "indie pop",
+      lyrics: "[Verse]\nHaze in the street",
+      language: "en",
+      modelId: "acestep-v15-xl-turbo",
+      styleLock: {
+        genreSummary: "Indie Pop",
+        vocalStyle: "warm baritone melodic, conversational",
+        timbre: "warm baritone melodic, conversational",
+        instruments: ["acoustic guitar", "soft drums", "bass", "pads"],
+        mood: "hazy",
+      },
+      artist: {
+        name: "Haze",
+        gender: "male",
+        genre: "Indie Pop",
+        musicArrange: {
+          leadInstrument: "acoustic guitar",
+          density: "sparse",
+          features: ["fingerpicked guitar"],
+        },
+        styleLock: {
+          vocalStyle: "warm baritone melodic, conversational",
+          timbre: "warm baritone melodic, conversational",
+        },
+      },
+    });
+    assert.match(body.style, /clear natural male vocal/i);
+    assert.ok(body.style.length <= 700, `style trop long: ${body.style.length}`);
+    assert.match(body.style, /dry clear lead vocal|light compression|natural dynamics/i);
+    assert.match(body.style, /acoustic fingerpicked guitar, prominent/i);
+    assert.match(body.style, /chorus thicker than verse/i);
+    assert.doesNotMatch(body.style, /conversational/i);
+    assert.doesNotMatch(body.style, /no vocoder|no autotune/i);
+    assert.match(body.style, /peak headroom|no clipping/i);
   });
 
   it("envoie le preview titre phare en cover (source + référence)", () => {
@@ -278,7 +317,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(body.mp3Bitrate, "320k");
     assert.match(body.instruction, /peak headroom|no clipping|full band mix|polished commercial/i);
     assert.match(body.instruction, /chorus instrumentation lifts|final chorus biggest/i);
-    assert.match(body.style, /section dynamics|thicker chorus|chorus lift/i);
+    assert.match(body.style, /section dynamics|thicker chorus|chorus lift|chorus thicker than verse|dry clear lead vocal/i);
 
     const turbo = buildAceStepBody({
       title: "Echoes",

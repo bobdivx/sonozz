@@ -5,7 +5,8 @@ import {
   isGospelFeatLock,
   sisterActGospelProductionLine,
   aceStepSameSexDuoNegatives,
-  vocalTimbreLine,
+  aceLeadVocalPhrase,
+  aceOrganicVocalGuard,
 } from "./vocalLock.js";
 
 /**
@@ -19,10 +20,13 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
   b = soloizeFeatVocalForDuo(b);
 
   const contrast = contrastSameSexVocalHints(a, b);
+  const genreBlob = String(
+    a.genre || styleLock?.genreSummary || genreSummary || styleBase || "",
+  ).trim();
   const leadTimbre =
-    contrast.leadHint || vocalTimbreLine(a) || a.voiceHint;
+    contrast.leadHint || aceLeadVocalPhrase(a, genreBlob) || a.voiceHint;
   const featTimbre =
-    contrast.featHint || vocalTimbreLine(b) || b.voiceHint;
+    contrast.featHint || aceLeadVocalPhrase(b, b.genre || genreBlob) || b.voiceHint;
   const lock = styleLock && typeof styleLock === "object" ? styleLock : null;
 
   const leadGenre = String(
@@ -32,6 +36,7 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
     .slice(0, 80);
   const featGenre = String(b.genre || "").trim().slice(0, 60);
   const moodBit = String(mood || lock?.mood || a.mood || "").trim().slice(0, 60);
+  const vocalGuard = aceOrganicVocalGuard(a, genreBlob);
 
   // Verses = lane lead ; hooks gospel = vrai arrangement Sister Act (pas une touche soft).
   const genreNorm = leadGenre.toLowerCase();
@@ -65,6 +70,7 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
     fusion,
     moodBit || null,
     sameSex,
+    vocalGuard || null,
     `singer 1 ${a.name} (${contrast.leadTag || a.genderCode || "lead"}): ${leadTimbre}`.slice(
       0,
       220,
