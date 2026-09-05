@@ -4,16 +4,72 @@ import { artefactGuardsFromLock, metalBandInstruments } from "./metal.js";
 
 /**
  * Plancher de qualité prod ACE — court (le plafond style ~700 tronque la fin).
- * Voix dry + air — évite vocoder / saturation.
+ * Voix dry + air — évite vocoder / saturation. (Le lit band est ailleurs, en tête.)
  */
 export function aceStepProductionQualityFloor({ duo = false } = {}) {
-  return [
-    "dry clear lead vocal, light compression, natural dynamics",
-    "warm organic textures, peak headroom, no clipping",
-    duo
-      ? "arrangement supports the active tagged singer"
-      : "full band under the lead without crowding the vocal",
-  ].join(". ");
+  return duo
+    ? "dry clear vocals, light compression, natural dynamics, peak headroom, no clipping"
+    : "dry clear lead vocal, light compression, natural dynamics, peak headroom, no clipping";
+}
+
+/**
+ * Arc sectionnel COURT — changements d’INSTRUMENTS (pas seulement la batterie).
+ * À placer TÔT dans le style (survit au plafond ~700).
+ */
+export function aceStepSectionDynamicsCompact({ duo = false } = {}) {
+  const core =
+    "NOT one flat loop: verse = guitar+bass+light drums → pre-chorus adds keys/pads → chorus = fuller band (extra guitar layers, bigger drums, pads, wider snare) → thinner bridge → biggest final chorus";
+  if (duo) return `${core}; band lifts under the active tagged singer`;
+  return core;
+}
+
+/**
+ * Lit multi-instruments COURT — en tête du style (évite drums-only / boucle unique).
+ */
+export function aceStepBandBedCompact(lock = null, arrange = null) {
+  const genre = norm(
+    [
+      lock?.genreSummary,
+      ...(Array.isArray(lock?.genres) ? lock.genres : []),
+      arrange?.leadInstrument,
+      ...(Array.isArray(arrange?.features) ? arrange.features : []),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+  const fromLock = Array.isArray(lock?.instruments)
+    ? lock.instruments.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 5)
+    : [];
+
+  let band = fromLock;
+  if (band.length < 3) {
+    if (/trap|hip[\s-]?hop|drill|\brap\b|boom\s*bap|grime/.test(genre)) {
+      band = ["808 bass", "trap drums", "hi-hats", "synth pads", "piano"];
+    } else if (/r&?b|soul|gospel|neo[\s-]?soul|sister act|church/.test(genre)) {
+      band = ["drum kit", "bass", "piano", "Hammond organ", "pads"];
+    } else if (/electro|edm|\bdance\b|house|techno|hyperpop|synth/.test(genre)) {
+      band = ["kick", "bass", "synth pads", "arpeggios", "lead synth"];
+    } else if (/metal|hardcore|punk/.test(genre)) {
+      band = metalBandInstruments().slice(0, 5);
+    } else if (/indie|folk|acoustic|singer|americana|dream pop|chamber/.test(genre)) {
+      band = ["acoustic guitar", "electric bass", "drum kit", "piano", "warm pads"];
+    } else if (/rock|grunge/.test(genre)) {
+      band = ["drum kit", "bass guitar", "rhythm guitars", "lead guitar", "cymbals"];
+    } else if (/afro|dancehall|reggae|amapiano/.test(genre)) {
+      band = ["drums", "bass", "guitar", "keys", "percussion"];
+    } else if (/pop|radio|ballad/.test(genre)) {
+      band = ["drums", "bass", "keys", "guitars", "pads"];
+    } else {
+      band = ["drums", "bass", "guitars", "keys", "pads"];
+    }
+  }
+
+  const lead = String(arrange?.leadInstrument || "").trim();
+  if (lead && !band.some((b) => b.toLowerCase().includes(lead.toLowerCase().slice(0, 8)))) {
+    band = [lead, ...band].slice(0, 5);
+  }
+
+  return `full band always: ${band.join(", ")} — never drums-only, never single-instrument loop`;
 }
 
 /**

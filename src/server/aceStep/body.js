@@ -14,6 +14,8 @@ import { isAceHostedAudioUrl } from "./gradio.js";
 import {
   composeAceStepStyle,
   aceStepProductionQualityFloor,
+  aceStepSectionDynamicsCompact,
+  aceStepBandBedCompact,
 } from "../../lib/musicLane.js";
 import {
   normalizeFeatArtist,
@@ -47,33 +49,6 @@ export const ACE_COVER_NOISE_DUO = 0.28;
 /** Plage durée titres complets (secondes) — hits radio typiques. */
 export const ACE_FULL_DURATION_MIN = 140; // ~2:20
 export const ACE_FULL_DURATION_MAX = 250; // ~4:10
-
-/** Instruments ACE : lead / fingerpick mis en avant dans le mix. */
-function aceInstrumentStyleBits(arrange, instruFromLock = []) {
-  const feats = Array.isArray(arrange?.features) ? arrange.features.filter(Boolean) : [];
-  const lead = String(arrange?.leadInstrument || "").trim();
-  const finger =
-    feats.includes("fingerpicked guitar") || /fingerpick|acoustic guitar/i.test(lead);
-  const parts = [];
-  if (finger) {
-    parts.push("acoustic fingerpicked guitar, prominent in the mix");
-  } else if (lead) {
-    parts.push(`${lead} prominent in the mix`);
-  }
-  const rest = instruFromLock
-    .map((x) => String(x || "").trim())
-    .filter(Boolean)
-    .filter((x) => {
-      if (finger && /acoustic|finger/i.test(x)) return false;
-      if (lead && x.toLowerCase() === lead.toLowerCase()) return false;
-      return true;
-    })
-    .slice(0, 4);
-  if (rest.length) parts.push(`instruments: ${rest.join(", ")}`);
-  const otherFeats = feats.filter((f) => f !== "fingerpicked guitar").slice(0, 2);
-  if (otherFeats.length) parts.push(otherFeats.join(", "));
-  return parts;
-}
 
 /**
  * Durée ACE-Step : preview courte, sinon explicite, sinon tirage commercial aléatoire.
@@ -279,9 +254,9 @@ export function buildAceStepBody({
   }
 
   const styleBase = String(style || "");
-  // Style Lab : COURT. Au-delà de ~700 chars ACE tronque / sature → vocoder.
-  // Pas de pavés sectionDynamics + bandBits (régression post-bloat).
+  // Style Lab : COURT (≤700). Band + dynamics TÔT ; polish en queue.
   const qualityFloor = aceStepProductionQualityFloor({ duo: isDuo });
+  const sectionDyn = aceStepSectionDynamicsCompact({ duo: isDuo });
   const duoLangs = isDuo ? resolveDuoLanguages(lead, feat, language) : null;
   // API ACE = une seule vocalLanguage ; en bilingue on garde le lead + consignes style.
   const langCode = duoLangs?.bilingual
@@ -302,10 +277,13 @@ export function buildAceStepBody({
       styleBase,
     });
     const vocalGuard = aceOrganicVocalGuard(leadLock, genreBlob);
-    // Casting duo d’abord (critique) — troncature en fin.
+    const bandBed = aceStepBandBedCompact(styleLock, normalizeMusicArrange(lead?.musicArrange));
+    // Casting + band + arc tôt — polish tronqué en dernier.
     styleFinal = [
       langBit,
       duoStyle || composeAceStepStyle(styleBase, styleLock),
+      bandBed,
+      sectionDyn,
       vocalGuard,
       qualityFloor,
     ]
@@ -324,34 +302,34 @@ export function buildAceStepBody({
         .trim()
         .slice(0, 120) || "pop";
     const mood =
-      String(styleLock?.mood || lead?.mood || "").trim().slice(0, 60);
+      String(styleLock?.mood || lead?.mood || "").trim().slice(0, 40);
     const arrange = normalizeMusicArrange(lead?.musicArrange);
-    const instruFromLock = Array.isArray(styleLock?.instruments)
-      ? styleLock.instruments
-          .map((x) => String(x || "").trim())
-          .filter(Boolean)
-          .slice(0, 5)
-      : [];
-    if (arrange.leadInstrument && !instruFromLock.includes(arrange.leadInstrument)) {
-      instruFromLock.unshift(arrange.leadInstrument);
-    }
+    const bandBed = aceStepBandBedCompact(styleLock, arrange);
     const densityBit =
       arrange.density === "dense"
-        ? "rich arrangement with clear space for the lead vocal"
+        ? "rich full band; chorus denser than verse"
         : arrange.density === "sparse"
-          ? "intimate arrangement with air around the lead vocal"
-          : "open mix, lead vocal prominent over the band";
-    const instruBits = aceInstrumentStyleBits(arrange, instruFromLock);
+          ? "space around vocals but always guitar+bass+drums+keys; chorus adds layers"
+          : "open mix; every section changes instrumentation, chorus thicker than verse";
+    const finger =
+      Array.isArray(arrange.features) && arrange.features.includes("fingerpicked guitar");
+    const leadInstru = String(arrange.leadInstrument || "").trim();
+    const leadInstruBit = finger
+      ? "acoustic fingerpicked guitar audible in verses and choruses"
+      : leadInstru
+        ? `${leadInstru} audible throughout`
+        : null;
     const voiceBit = aceLeadVocalPhrase(leadLock, genre);
-    // Identité + voix dry en tête ; polish court en queue (survit à STYLE_CAP).
+    // Genre → band → voix → arc → densité ; polish court en queue.
     styleFinal = [
       `${genre}, ${gender}`,
+      bandBed,
       langBit,
       voiceBit,
+      sectionDyn,
       mood || null,
       densityBit,
-      ...instruBits.slice(0, 2),
-      "chorus thicker than verse, bridge contrasts",
+      leadInstruBit,
       qualityFloor,
     ]
       .filter(Boolean)
@@ -403,6 +381,11 @@ export function buildAceStepBody({
     if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < ACE_SFT_GUIDANCE)) {
       body.guidanceScale = ACE_SFT_GUIDANCE;
     }
+  } else {
+    // text2music : band + arc (sinon ACE → drums-only / boucle plate).
+    body.instruction = isDuo
+      ? "Full multi-instrument band required (never drums-only); section dynamics: lean verse → thicker chorus → contrasting bridge → biggest final chorus; obey [singer 1]/[singer 2]:"
+      : "Full multi-instrument band required throughout (guitar, bass, drums, keys/pads — never drums-only, never single-instrument loop); section dynamics: verse guitar+bass+light drums → pre-chorus adds layers → thick chorus → thin bridge → biggest final chorus:";
   }
   return body;
 }

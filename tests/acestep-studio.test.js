@@ -229,7 +229,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(sft.enableNormalization, true);
     assert.equal(sft.normalizationDb, -2.5);
     assert.equal(sft.mp3Bitrate, "320k");
-    assert.match(sft.style, /chorus thicker than verse|bridge contrasts|dry clear lead vocal/i);
+    assert.match(sft.style, /NOT one flat loop|thick chorus|chorus thicker than verse|dry clear lead vocal/i);
     assert.ok(sft.duration >= ACE_FULL_DURATION_MIN && sft.duration <= ACE_FULL_DURATION_MAX);
     assert.equal(sft.referenceAudioUrl, undefined);
     assert.equal(sft.taskType, undefined);
@@ -285,12 +285,13 @@ describe("ACE-Step Studio client", () => {
     });
     assert.match(body.style, /clear natural male vocal/i);
     assert.ok(body.style.length <= 700, `style trop long: ${body.style.length}`);
+    assert.match(body.style, /full band always|never drums-only/i);
+    assert.match(body.style, /NOT one flat loop|guitar\+bass|biggest final chorus/i);
     assert.match(body.style, /dry clear lead vocal|light compression|natural dynamics/i);
-    assert.match(body.style, /acoustic fingerpicked guitar, prominent/i);
-    assert.match(body.style, /chorus thicker than verse/i);
+    assert.match(body.style, /fingerpicked guitar|acoustic guitar/i);
     assert.doesNotMatch(body.style, /conversational/i);
     assert.doesNotMatch(body.style, /no vocoder|no autotune/i);
-    assert.match(body.style, /peak headroom|no clipping/i);
+    assert.match(body.instruction, /never drums-only|Full multi-instrument/i);
   });
 
   it("envoie le preview titre phare en cover (source + référence)", () => {
