@@ -1,7 +1,7 @@
-import { json, error } from "../../../../server/http.js";
-import { getSessionFromCookies } from "../../../../server/auth.js";
-import { isAdminRole } from "../../../../server/users.js";
-import { revokeInvitation } from "../../../../server/invites.js";
+import { json, error } from "../../../server/http.js";
+import { getSessionFromCookies } from "../../../server/auth.js";
+import { isAdminRole } from "../../../server/users.js";
+import { revokeInvitation } from "../../../server/invites.js";
 
 export const prerender = false;
 
