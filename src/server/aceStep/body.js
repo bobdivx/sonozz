@@ -27,6 +27,13 @@ import {
   resolveDuoLanguages,
 } from "../../lib/featArtist.js";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
+import {
+  ACE_STYLE_CAP,
+  ACE_STYLE_TARGET,
+  buildAceStyleBriefLocks,
+} from "./styleRules.js";
+
+export { ACE_STYLE_CAP, ACE_STYLE_TARGET } from "./styleRules.js";
 
 /** Force du source audio en mode cover (0 = texte seul, 1 = clone).
  * 0.5 = groove / structure du titre phare, paroles originales.
@@ -199,9 +206,6 @@ export function buildLabAceStepBody({
   return body;
 }
 
-/** Plafond caption ACE — au-delà = troncature / mur de bruit. */
-export const ACE_STYLE_CAP = 700;
-
 /**
  * Assemble le style ACE déterministe (squelette / fallback LLM).
  * @returns {{ style: string, langCode: string, duo: boolean, bilingual: boolean, brief: object }}
@@ -314,23 +318,14 @@ export function assembleAceStepStyle({
       ? styleLock.instruments.slice(0, 6)
       : null,
     skeleton: styleFinal,
-    maxChars: 650,
-    mustKeep: [
-      "full multi-instrument band",
-      "never drums-only",
-      "dry clear natural vocals",
-      "section dynamics (verse lean → thicker chorus → bridge → biggest final chorus)",
-      isDuo ? "singer 1 / singer 2 distinct" : "lead vocal clear",
-      duoLangs?.bilingual ? `bilingual singer1=${duoLangs.leadLang} singer2=${duoLangs.featLang}` : null,
-    ].filter(Boolean),
-    avoid: [
-      "vocoder",
-      "heavy autotune",
-      "digital distortion",
-      "Sister Act essay",
-      "conflicting multi-genre paragraphs",
-      "truncated mid-sentence",
-    ],
+    maxChars: ACE_STYLE_TARGET,
+    ...buildAceStyleBriefLocks({
+      genderCode: leadLock?.genderCode || null,
+      duo: isDuo,
+      bilingualBit: duoLangs?.bilingual
+        ? `bilingual singer1=${duoLangs.leadLang} singer2=${duoLangs.featLang}`
+        : null,
+    }),
   };
 
   return {

@@ -1,10 +1,24 @@
 import { createHash } from "node:crypto";
 import { llmText, requireTextLlm, isOllamaProvider } from "../llm.js";
 import { resolveOllamaModel } from "../ollama.js";
-import { assembleAceStepStyle, ACE_STYLE_CAP } from "./body.js";
+import { assembleAceStepStyle } from "./body.js";
+import {
+  ACE_STYLE_CAP,
+  ACE_STYLE_TARGET,
+  ACE_STYLE_LLM_SKIP_MAX,
+  ACE_STYLE_RULES_VERSION,
+  sanitizeAceStyleCaption,
+  enforceAceStyleLocks,
+  aceStyleLlmRulesBlock,
+} from "./styleRules.js";
 
-/** Cible LLM (marge sous le plafond ACE). */
-export const ACE_STYLE_TARGET = 650;
+export {
+  ACE_STYLE_TARGET,
+  ACE_STYLE_CAP,
+  ACE_STYLE_RULES_VERSION,
+  sanitizeAceStyleCaption,
+  enforceAceStyleLocks,
+} from "./styleRules.js";
 
 const cache = new Map();
 const CACHE_MAX = 80;
@@ -17,6 +31,7 @@ function canUseTextLlm(keys) {
 
 function cacheKey(brief) {
   const payload = JSON.stringify({
+    v: ACE_STYLE_RULES_VERSION,
     duo: brief?.duo,
     bilingual: brief?.bilingual,
     lead: brief?.lead,
@@ -36,47 +51,13 @@ function remember(key, value) {
   cache.set(key, value);
 }
 
-/**
- * Nettoie + valide un caption LLM (longueur, pas de troncature évidente).
- * @returns {string|null}
- */
-export function sanitizeAceStyleCaption(raw, { max = ACE_STYLE_CAP } = {}) {
-  let s = String(raw || "")
-    .trim()
-    .replace(/^["'`]+|["'`]+$/g, "")
-    .replace(/^Style:\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!s) return null;
-  // Coupe au dernier point avant max si trop long
-  if (s.length > max) {
-    const cut = s.slice(0, max);
-    const lastDot = cut.lastIndexOf(". ");
-    s = lastDot > 80 ? cut.slice(0, lastDot + 1).trim() : cut.trim();
-  }
-  if (s.length < 48 || s.length > max) return null;
-  // Refuse les fins de mots tronqués typiques
-  if (/\b(sin|lyr|intelligib|chorus=sin|singer)$/i.test(s)) return null;
-  return s;
-}
-
 function buildCompressPrompt(brief, { shorten = false } = {}) {
   const max = Number(brief?.maxChars) || ACE_STYLE_TARGET;
   const skeleton = String(brief?.skeleton || "").trim();
   return `You write ACE-Step music STYLE captions (English).
 ${shorten ? `SHORTEN hard. ` : ""}Output ONLY the caption text. No quotes, no markdown, no explanation.
 Hard limit: ${max} characters (count carefully). Prefer ~${Math.min(max, 580)} chars.
-Rules:
-- One coherent commercial song description.
-- Keep MUST: ${(brief?.mustKeep || []).join("; ")}.
-- Avoid: ${(brief?.avoid || []).join("; ")}.
-- Full band always (never drums-only / single-instrument loop).
-- Dry clear natural vocals (no vocoder essay).
-- Clear section dynamics in few words.
-- If duo: name singer 1 / singer 2 roles briefly.
-- If bilingual: state singer 1 lang + singer 2 lang briefly.
-- Do NOT invent a second genre mid-track; one production lane.
-- Do NOT truncate mid-word or mid-sentence.
+${aceStyleLlmRulesBlock(brief)}
 
 Facts JSON:
 ${JSON.stringify(
@@ -98,7 +79,7 @@ ${skeleton}`;
 }
 
 /**
- * Résout le caption ACE : LLM compress (si dispo) → validateur → squelette.
+ * Résout le caption ACE : LLM compress (si dispo) → règles → squelette.
  * @returns {Promise<{ style: string, source: 'llm'|'cache'|'skeleton', brief: object }>}
  */
 export async function resolveAceStepStyleCaption(
@@ -128,7 +109,8 @@ export async function resolveAceStepStyleCaption(
   const key = cacheKey(brief);
 
   if (cache.has(key)) {
-    return { style: cache.get(key), source: "cache", brief, langCode: assembled.langCode };
+    const cached = enforceAceStyleLocks(cache.get(key), brief);
+    return { style: cached, source: "cache", brief, langCode: assembled.langCode };
   }
 
   const skipLlm =
@@ -137,13 +119,18 @@ export async function resolveAceStepStyleCaption(
     !canUseTextLlm(keys);
 
   if (skipLlm) {
-    return { style: skeleton, source: "skeleton", brief, langCode: assembled.langCode };
+    return {
+      style: enforceAceStyleLocks(skeleton, brief),
+      source: "skeleton",
+      brief,
+      langCode: assembled.langCode,
+    };
   }
 
-  // Solo simple déjà court → pas besoin LLM
-  if (!forceLlm && !assembled.duo && !assembled.bilingual && skeleton.length <= 520) {
-    remember(key, skeleton);
-    return { style: skeleton, source: "skeleton", brief, langCode: assembled.langCode };
+  if (!forceLlm && !assembled.duo && !assembled.bilingual && skeleton.length <= ACE_STYLE_LLM_SKIP_MAX) {
+    const locked = enforceAceStyleLocks(skeleton, brief);
+    remember(key, locked);
+    return { style: locked, source: "skeleton", brief, langCode: assembled.langCode };
   }
 
   try {
@@ -155,17 +142,19 @@ export async function resolveAceStepStyleCaption(
       ok = sanitizeAceStyleCaption(raw, { max: ACE_STYLE_TARGET });
     }
     if (ok) {
-      remember(key, ok);
-      console.info("[acestep] style caption LLM", ok.length, "chars");
-      return { style: ok, source: "llm", brief, langCode: assembled.langCode };
+      const locked = enforceAceStyleLocks(ok, brief);
+      remember(key, locked);
+      console.info("[acestep] style caption LLM", locked.length, "chars");
+      return { style: locked, source: "llm", brief, langCode: assembled.langCode };
     }
     console.warn("[acestep] style LLM invalid/too long — skeleton fallback");
   } catch (e) {
     console.warn("[acestep] style LLM fallback:", e?.message || e);
   }
 
-  remember(key, skeleton);
-  return { style: skeleton, source: "skeleton", brief, langCode: assembled.langCode };
+  const locked = enforceAceStyleLocks(skeleton, brief);
+  remember(key, locked);
+  return { style: locked, source: "skeleton", brief, langCode: assembled.langCode };
 }
 
 /** Test helper — vide le cache. */

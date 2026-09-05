@@ -56,11 +56,20 @@ export {
   buildAceStepBody,
   assembleAceStepStyle,
   ACE_STYLE_CAP,
+  ACE_STYLE_TARGET,
 } from "./body.js";
 
 export {
-  ACE_STYLE_TARGET,
+  ACE_STYLE_RULES_VERSION,
+  ACE_STYLE_AVOID,
+  ACE_STYLE_MUST_CORE,
+  buildAceStyleBriefLocks,
+  aceStyleLlmRulesBlock,
+} from "./styleRules.js";
+
+export {
   sanitizeAceStyleCaption,
+  enforceAceStyleLocks,
   resolveAceStepStyleCaption,
   clearAceStyleCaptionCache,
 } from "./styleCaption.js";

@@ -2,6 +2,7 @@ import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   sanitizeAceStyleCaption,
+  enforceAceStyleLocks,
   resolveAceStepStyleCaption,
   clearAceStyleCaptionCache,
   ACE_STYLE_TARGET,
@@ -29,6 +30,31 @@ describe("sanitizeAceStyleCaption", () => {
     assert.ok(s);
     assert.ok(s.length <= 200);
     assert.match(s, /\.$|\w$/);
+  });
+});
+
+describe("enforceAceStyleLocks", () => {
+  it("force le genre féminin en tête et corrige male", () => {
+    const out = enforceAceStyleLocks(
+      "Indie Pop, male lead vocal, muffled vibe. pads only.",
+      { lead: { gender: "female" } },
+    );
+    assert.match(out, /^female lead vocal/i);
+    assert.match(out, /woman singer/i);
+    assert.doesNotMatch(out, /\bmale lead vocal\b/i);
+    assert.match(out, /guitar|full band|bass|drums/i);
+  });
+
+  it("mustKeep genre dans le brief assemble", () => {
+    const a = assembleAceStepStyle({
+      style: "pop",
+      language: "fr",
+      artist: { name: "Luna", gender: "female", genre: "Indie Pop" },
+      styleLock: { genreSummary: "Indie Pop" },
+      lyrics: "bonjour le monde",
+    });
+    assert.ok(a.brief.mustKeep.some((m) => /female lead/i.test(m)));
+    assert.match(a.style, /female lead vocal/i);
   });
 });
 
