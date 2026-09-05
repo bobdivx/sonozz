@@ -189,10 +189,10 @@ describe("buildAceStepDuoStyle", () => {
         },
       },
     );
-    assert.match(style, /ONE song only|single production lane/i);
+    assert.match(style, /ONE production lane|duet/i);
     assert.match(style, /singer 1 Ava/i);
     assert.match(style, /singer 2 Leo/i);
-    assert.ok(style.length <= 700);
+    assert.ok(style.length <= 420);
   });
 
   it("fusionne rap × gospel sans coller un chœur anonyme en singer 2", () => {
@@ -217,12 +217,12 @@ describe("buildAceStepDuoStyle", () => {
       feat,
       { styleBase: "hardcore hip hop", mood: "defiant" },
     );
-    assert.match(style, /Sister Act|TRUE hip-hop/i);
-    assert.match(style, /Gospel|gospel/i);
-    assert.match(style, /baritone|tenor/i);
-    assert.match(style, /Hammond|handclap|choir|CHORUS/i);
-    assert.doesNotMatch(style, /Billboard|Lose Yourself|Brooklyn Tabernacle/i);
-    assert.ok(style.length <= 1100);
+    assert.match(style, /gospel/i);
+    assert.match(style, /singer 1 Jeser Mathieu/i);
+    assert.match(style, /singer 2 Veridian Echoes/i);
+    assert.match(style, /organ\+choir|gospel\+choir|chorus=singer2/i);
+    assert.doesNotMatch(style, /Billboard|Lose Yourself|Brooklyn Tabernacle|SATB|Hammond B3/i);
+    assert.ok(style.length <= 420, `duo style trop long: ${style.length}`);
   });
 
   it("tags same-sex avec contraste baritone/tenor", () => {
@@ -296,7 +296,7 @@ Hello her`,
     assert.equal(body.bpm, ACE_DUO_BPM_CAP);
     assert.match(body.style, /singer 1 Jeser Mathieu \(male\)/i);
     assert.match(body.style, /singer 2 ZAHRA \(female\)/i);
-    assert.match(body.style, /dry clear lead vocal|dry natural|clear diction/i);
+    assert.match(body.style, /dry clear vocals|dry natural|clear natural|voices clear/i);
     assert.doesNotMatch(body.style, /singer 1 male rap lead AND singer 2 female melodic/i);
     assert.doesNotMatch(body.style, /Eminem/i);
     assert.doesNotMatch(body.lyrics, /^\(Jeser Mathieu\)$/m);
@@ -323,7 +323,7 @@ Hey`,
         instruments: ["drums", "bass", "synths"],
       },
     });
-    assert.match(body.style, /ONE song only|single production lane/i);
+    assert.match(body.style, /ONE (production )?lane|duet,/i);
     assert.match(body.style, /singer 1 Ava \(female\)/i);
     assert.match(body.style, /singer 2 Leo \(male\)/i);
     assert.match(body.lyrics, /\[singer 1: female\]/i);

@@ -19,6 +19,7 @@ import {
   buildLabAceStepBody,
   snapshotAceGenParams,
 } from "./body.js";
+import { resolveAceStepStyleCaption } from "./styleCaption.js";
 import {
   testAceStep,
   wakeAceStepPipeline,
@@ -117,6 +118,31 @@ export async function startAceStep(keys, {
   let pickReason = pick.reason;
   let active = String(catalog.activeModel || "").trim();
   const wantSft = isAceStepSftModel(pick.modelId) && !labMode;
+
+  // Caption LLM AVANT l’arbiter SFT (qui stoppe LLM/Wan local).
+  let styleCaption = null;
+  if (!labMode) {
+    styleCaption = await resolveAceStepStyleCaption(keys, {
+      style: prompt,
+      language,
+      styleLock,
+      artist,
+      featArtist: artist?.featArtist,
+      lyrics,
+      preview,
+      labMode: false,
+    });
+    console.info(
+      "[acestep] style",
+      styleCaption.source,
+      `${styleCaption.style.length}c`,
+      styleCaption.source === "llm"
+        ? "compressed"
+        : styleCaption.source === "cache"
+          ? "hit"
+          : "no-llm",
+    );
+  }
 
   // SFT : file d’attente arbitre + stop LLM/Wan pour libérer la VRAM avant le switch DiT.
   if (wantSft) {
@@ -290,6 +316,18 @@ export async function startAceStep(keys, {
       overrides: labOverrides,
     });
   } else {
+    const caption =
+      styleCaption ||
+      (await resolveAceStepStyleCaption(keys, {
+        style: prompt,
+        language,
+        styleLock,
+        artist,
+        featArtist: artist?.featArtist,
+        lyrics,
+        preview,
+        labMode: false,
+      }));
     body = buildAceStepBody({
       title,
       style: prompt,
@@ -306,7 +344,23 @@ export async function startAceStep(keys, {
       styleLock,
       artist,
       featArtist: artist?.featArtist,
+      styleOverride: caption.style,
     });
+    if (body && typeof body === "object") {
+      body._styleSource = caption.source;
+    }
+    if (!styleCaption) {
+      console.info(
+        "[acestep] style",
+        caption.source,
+        `${caption.style.length}c`,
+        caption.source === "llm"
+          ? "compressed"
+          : caption.source === "cache"
+            ? "hit"
+            : "no-llm",
+      );
+    }
   }
 
   console.info(
@@ -360,6 +414,7 @@ export async function startAceStep(keys, {
     gpu,
     lab: labMode,
     duo,
+    styleSource: body._styleSource || null,
   });
   return {
     generationId: jobId,

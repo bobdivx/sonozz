@@ -150,6 +150,7 @@ export async function runTrackBackgroundJob(job) {
           progress: Math.max(8, Math.min(96, Number(p.percent) || 12)),
           message: p.message || (preview ? "Extrait…" : "Génération audio…"),
           phase: p.phase || "running",
+          musicKind: p.musicKind || getJob(id)?.musicKind || undefined,
           model: p.model || p.modelLabel || undefined,
           modelLabel: p.modelLabel || undefined,
           gpu: p.gpu || undefined,
@@ -195,7 +196,7 @@ export async function runTrackBackgroundJob(job) {
     }
 
     if (result?.audioUrl) {
-      patchJob(id, { progress: 88, message: "Persistance audio S3…" });
+      patchJob(id, { progress: 88, phase: "saving", message: "Persistance audio S3…" });
       try {
         const persisted = await persistAudioRemote(result.audioUrl, projectId);
         if (persisted?.audioUrl) {

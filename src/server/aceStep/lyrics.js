@@ -41,9 +41,8 @@ export function aceDuoVocalLanguageStyleBit(leadLang, featLang) {
   const a = resolveAceVocalLanguage(leadLang);
   const b = resolveAceVocalLanguage(featLang);
   if (a === b) return aceVocalLanguageStyleBit(a);
-  const aName = languagePrompt(a);
-  const bName = languagePrompt(b);
-  return `bilingual duet: singer 1 sings in ${aName} (${a}), singer 2 sings in ${bName} (${b}); each singer stays in their own language`;
+  // Court : la version longue mange le budget style (700) avec le casting duo.
+  return `bilingual: singer 1 ${a}, singer 2 ${b}`;
 }
 
 export function lyricsForAceStepPreview(text) {

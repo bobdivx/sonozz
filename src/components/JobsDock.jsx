@@ -24,6 +24,7 @@ import { bootJobRunner, dismissJob } from "../lib/jobRunner.js";
 import { api } from "../lib/apiClient.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
 import StudioGpuMeter from "./StudioGpuMeter.jsx";
+import TrackGenProgress from "./TrackGenProgress.jsx";
 
 /** Un seul poll album pour sidebar + mobile (sinon 2× GET /api/projects). */
 let albumSyncTimer = null;
@@ -116,21 +117,42 @@ function JobsList({ visible, active, recent }) {
                   <TypeIcon type={job.type} />
                   <span class="truncate">{job.label}</span>
                 </a>
-                <p class="mt-0.5 line-clamp-2 text-[10px] leading-snug text-base-content/55">
-                  {job.modelLabel || job.model
-                    ? `${job.modelLabel || job.model} · ${job.message}`
-                    : job.message}
-                </p>
-                {job.status === "running" && job.gpu ? (
-                  <StudioGpuMeter className="mt-1" gpu={job.gpu} />
+                {!(job.status === "running" && job.type === "track") ? (
+                  <p class="mt-0.5 line-clamp-2 text-[10px] leading-snug text-base-content/55">
+                    {job.modelLabel || job.model
+                      ? `${job.modelLabel || job.model} · ${job.message}`
+                      : job.message}
+                  </p>
                 ) : null}
-                {job.status === "running" && (
-                  <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-base-300">
-                    <div
-                      class="h-full bg-primary transition-all"
-                      style={{ width: `${Math.max(4, job.progress || 0)}%` }}
+                {job.status === "running" && job.type === "track" && typeof job.progress === "number" ? (
+                  <div class="mt-1.5">
+                    <TrackGenProgress
+                      compact
+                      progress={{
+                        percent: job.progress,
+                        message: job.message,
+                        phase: job.phase,
+                        musicKind: job.musicKind,
+                        model: job.model,
+                        modelLabel: job.modelLabel,
+                        gpu: job.gpu,
+                      }}
                     />
                   </div>
+                ) : (
+                  <>
+                    {job.status === "running" && job.gpu ? (
+                      <StudioGpuMeter className="mt-1" gpu={job.gpu} />
+                    ) : null}
+                    {job.status === "running" && (
+                      <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-base-300">
+                        <div
+                          class="h-full bg-primary transition-all"
+                          style={{ width: `${Math.max(4, job.progress || 0)}%` }}
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
               <button

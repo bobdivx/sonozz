@@ -28,10 +28,10 @@ import { loadKeys, saveKeysAsync, ensureKeysHydrated, isStudioEnabled } from "..
 import { persistAudioRemote, playableAudioSrc } from "../../lib/audioResolve.js";
 import { api } from "../../lib/apiClient.js";
 import MusicArrangePanel from "../MusicArrangePanel.jsx";
+import TrackGenProgress from "../TrackGenProgress.jsx";
 import FeatArtistPicker from "../FeatArtistPicker.jsx";
 import SongGenModelsPanel from "../SongGenModelsPanel.jsx";
 import AceStepModelsPanel from "../AceStepModelsPanel.jsx";
-import StudioGpuMeter from "../StudioGpuMeter.jsx";
 import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import { normalizeMusicArrange, musicArrangeFromStyleLock, isDefaultMusicArrange } from "../../lib/musicArrange.js";
 import { buildSunoPrompt } from "../../lib/sunoPrompt.js";
@@ -1133,20 +1133,7 @@ export default function TracksStep({
       ) : null}
 
       {loading && typeof progress?.percent === "number" && (
-        <div class="space-y-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2.5" aria-live="polite">
-          <div class="h-2 overflow-hidden rounded-full bg-base-300">
-            <div
-              class="h-full rounded-full bg-primary transition-[width] duration-500"
-              style={{ width: `${Math.max(4, Math.min(100, progress.percent))}%` }}
-            />
-          </div>
-          <p class="text-xs text-base-content/70">
-            {[progress.modelLabel || progress.model, progress.message]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
-          <StudioGpuMeter gpu={progress.gpu} />
-        </div>
+        <TrackGenProgress progress={progress} />
       )}
       {!hasLyricsText && (
         <p class="text-sm text-warning">

@@ -3,15 +3,50 @@ import {
   soloizeFeatVocalForDuo,
   contrastSameSexVocalHints,
   isGospelFeatLock,
-  sisterActGospelProductionLine,
   aceStepSameSexDuoNegatives,
   aceLeadVocalPhrase,
-  aceOrganicVocalGuard,
 } from "./vocalLock.js";
 
+/** Genre lead raccourci (évite « Afro-trap Électro-Oriental » × 4 dans le prompt). */
+function shortGenre(raw, fallback = "hip hop") {
+  const g = String(raw || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!g) return fallback;
+  const first = g.split(/[/×,+]| feat\.?/i)[0].trim();
+  // Un seul libellé court (Afro-trap, Hip Hop, R&B…)
+  const token = first.split(/\s+/).slice(0, 2).join(" ");
+  if (token.length <= 18) return token || fallback;
+  return first.split(/\s+/)[0].slice(0, 18) || fallback;
+}
+
+function shortBed(leadGenre) {
+  const g = leadGenre.toLowerCase();
+  if (/trap|drill|hip.?hop|rap|afro/.test(g)) return "808, trap drums, pads";
+  if (/r&?b|soul/.test(g)) return "drums, bass, keys, pads";
+  if (/gospel/.test(g)) return "drums, bass, piano, organ";
+  if (/rock|metal/.test(g)) return "drums, bass, guitars";
+  if (/indie|folk|pop|acoustic/.test(g)) return "guitar, bass, drums, keys";
+  if (/electro|edm|synth|oriental/.test(g)) return "808, synths, drums, pads";
+  return "drums, bass, keys, pads";
+}
+
+/** Assemble des phrases sans couper au milieu (plafond dure). */
+function joinBudget(parts, max) {
+  let out = "";
+  for (const raw of parts) {
+    const p = String(raw || "").trim();
+    if (!p) continue;
+    const next = out ? `${out}. ${p}` : p;
+    if (next.length > max) break;
+    out = next;
+  }
+  return out;
+}
+
 /**
- * Style ACE-Step duo : UNE seule lane de prod (lead) + 2 voix.
- * Prompt court — trop de bits commerciaux / fusion / DNA → ACE colle 2 morceaux.
+ * Style ACE-Step duo — DURCI COURT (≤~380c, phrases entières).
+ * Les pavés Sister Act / fusion / DNA → mur de bruit + troncature à 700.
  */
 export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock, styleBase } = {}) {
   const a = vocalLockForArtist(lead);
@@ -20,70 +55,56 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
   b = soloizeFeatVocalForDuo(b);
 
   const contrast = contrastSameSexVocalHints(a, b);
-  const genreBlob = String(
-    a.genre || styleLock?.genreSummary || genreSummary || styleBase || "",
-  ).trim();
-  const leadTimbre =
-    contrast.leadHint || aceLeadVocalPhrase(a, genreBlob) || a.voiceHint;
-  const featTimbre =
-    contrast.featHint || aceLeadVocalPhrase(b, b.genre || genreBlob) || b.voiceHint;
   const lock = styleLock && typeof styleLock === "object" ? styleLock : null;
+  const leadGenre = shortGenre(
+    a.genre || lock?.genreSummary || genreSummary || styleBase,
+    "hip hop",
+  );
+  const featGospel = isGospelFeatLock(b) || /gospel|soul|choir|church/i.test(`${b.genre || ""}`);
+  const g1 = contrast.leadTag || a.genderCode || "lead";
+  const g2 = contrast.featTag || b.genderCode || "feat";
 
-  const leadGenre = String(
-    a.genre || lock?.genreSummary || genreSummary || styleBase || "hip hop",
-  )
+  // Voix très courtes — les pavés « intelligible lyrics » mangent le budget.
+  const leadVoice = featGospel
+    ? `dry ${g1} rap`
+    : (contrast.leadHint || aceLeadVocalPhrase(a, leadGenre) || "dry natural voice")
+        .replace(/,?\s*intelligible lyrics/gi, "")
+        .replace(/dry studio take/gi, "dry")
+        .slice(0, 48);
+  const featVoice = featGospel
+    ? "gospel lead, choir on hooks only"
+    : (contrast.featHint || aceLeadVocalPhrase(b, b.genre || leadGenre) || "dry natural voice")
+        .replace(/,?\s*intelligible lyrics/gi, "")
+        .replace(/dry studio take/gi, "dry")
+        .slice(0, 48);
+
+  const bed = featGospel
+    ? `${shortBed(leadGenre)}; chorus + organ/choir`
+    : shortBed(leadGenre);
+
+  const moodBit = String(mood || lock?.mood || a.mood || "")
     .trim()
-    .slice(0, 80);
-  const featGenre = String(b.genre || "").trim().slice(0, 60);
-  const moodBit = String(mood || lock?.mood || a.mood || "").trim().slice(0, 60);
-  const vocalGuard = aceOrganicVocalGuard(a, genreBlob);
+    .slice(0, 20);
 
-  // Verses = lane lead ; hooks gospel = vrai arrangement Sister Act (pas une touche soft).
-  const genreNorm = leadGenre.toLowerCase();
-  const featGospel = isGospelFeatLock(b) || /gospel|soul/i.test(featGenre);
-  let bed = "808 bass, boom-bap drums, hi-hats, sparse piano, synth pads";
-  if (/trap|drill/.test(genreNorm)) bed = "808 bass, trap drums, hi-hats, dark pads, melodic hook";
-  else if (/r&?b|soul/.test(genreNorm)) bed = "drum kit, bass, electric piano, pads";
-  else if (/gospel/.test(genreNorm)) bed = "live drums, bass, piano, Hammond organ, handclaps, gospel choir";
-  else if (/rock|metal/.test(genreNorm)) bed = "drums, bass, guitars, pads";
-  if (featGospel && !/gospel/.test(genreNorm)) {
-    bed = `VERSES: ${bed}. CHORUS/HOOK/BRIDGE: ${sisterActGospelProductionLine()}`;
-  }
+  const sameSexBit =
+    contrast.sameSex && !featGospel
+      ? `distinct voices; ${aceStepSameSexDuoNegatives()}`
+      : null;
 
-  const fusion = featGospel
-    ? `TRUE hip-hop × Sister Act gospel: ${leadGenre} RAP verses (singer 1, dry hip-hop beat); then FULL church-gospel choruses owned by singer 2 (${b.name}) with choir answering — audible genre switch on hooks (organ, claps, choir), still ONE song not two glued tracks`
-    : featGenre && !genreNorm.includes(featGenre.toLowerCase().slice(0, 6))
-      ? `ONE song only: ${leadGenre} production throughout; ${b.name} brings ${featGenre} vocal color on hooks — never switch to a second genre mid-track`
-      : `ONE song only: coherent ${leadGenre} arrangement from intro to outro`;
-
-  const sameSex = contrast.sameSex
-    ? featGospel
-      ? `CRITICAL: singer 1 rap on verses; singer 2 = Sister Act gospel LEAD on every Chorus/Hook/Bridge (choir answers singer 2 only); keep rapper and gospel lead distinct; ${aceStepSameSexDuoNegatives()}`
-      : `CRITICAL same-sex duet: singer 1 = ${contrast.leadTag}, singer 2 = ${contrast.featTag}; NEVER blend into one voice; call-and-response on hooks only (never stacked unison); ${aceStepSameSexDuoNegatives()}`
-    : null;
-
-  return [
+  // Priorité : identité + band + singers + singers. Mood / sameSex optionnels.
+  const must = [
     featGospel
-      ? `${leadGenre} featuring Sister Act style gospel — church choir energy on hooks, clean mix`
-      : `${leadGenre} duet hit — single production lane, full band, clean mix, not two songs glued together`,
-    `instruments: ${bed}`,
-    fusion,
-    moodBit || null,
-    sameSex,
-    vocalGuard || null,
-    `singer 1 ${a.name} (${contrast.leadTag || a.genderCode || "lead"}): ${leadTimbre}`.slice(
-      0,
-      220,
-    ),
-    `singer 2 ${b.name} (${contrast.featTag || b.genderCode || "feat"}): ${featTimbre}`.slice(
-      0,
-      240,
-    ),
+      ? `${leadGenre} duet, gospel hooks, ONE clean song`
+      : `${leadGenre} duet, ONE lane, full band, clean mix`,
+    `band: ${bed}`,
+    "verse lean → thicker chorus → thin bridge → big final chorus",
+    `singer 1 ${a.name} (${g1}): ${leadVoice}`,
+    `singer 2 ${b.name} (${g2}): ${featVoice}`,
     featGospel
-      ? `obey tags: verses = singer 1 rap over hip-hop; Chorus/Bridge = singer 2 gospel lead + Sister Act choir/organ/claps; choir never sings the rap verses`
-      : `obey [singer 1]/[singer 2] tags; both voices intelligible; no anonymous choir as singer 2`,
-  ]
-    .filter(Boolean)
-    .join(". ")
-    .slice(0, 1100);
+      ? "verses=singer1; chorus=singer2 gospel; no two songs glued"
+      : "obey [singer 1]/[singer 2]; voices clear",
+  ];
+  const optional = [moodBit, sameSexBit];
+
+  return joinBudget([...must, ...optional], 380);
 }

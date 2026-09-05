@@ -412,6 +412,7 @@ export default function Dashboard() {
           model: job.model || null,
           modelLabel: job.modelLabel || null,
           phase: job.phase || null,
+          musicKind: job.musicKind || null,
         });
       }
       const becameTerminal =
@@ -615,6 +616,7 @@ export default function Dashboard() {
           progress: Math.max(8, Math.min(96, Number(p.percent) || 35)),
           message: p.message || `Génération ${stepLabel}…`,
           phase: p.phase || undefined,
+          musicKind: p.musicKind || undefined,
           model: p.model || undefined,
           modelLabel: p.modelLabel || undefined,
           gpu: p.gpu || undefined,
@@ -627,8 +629,8 @@ export default function Dashboard() {
 
       // Persiste immédiatement l’audio Replicate sur S3 (sinon expire ~1 h)
       if (key === "track" && result?.audioUrl) {
-        patchJob(stepJobId, { progress: 70, message: "Persistance audio S3…" });
-        setStepProgress({ percent: 70, message: "Persistance audio S3…" });
+        patchJob(stepJobId, { progress: 70, phase: "saving", message: "Persistance audio S3…" });
+        setStepProgress({ percent: 70, phase: "saving", message: "Persistance audio S3…" });
         try {
           const saved = await persistAudioRemote(result.audioUrl, projectId || "anon");
           if (saved?.audioUrl) {

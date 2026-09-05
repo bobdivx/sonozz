@@ -24,7 +24,6 @@ import {
   buildAceStepDuoStyle,
   vocalLockForArtist,
   aceLeadVocalPhrase,
-  aceOrganicVocalGuard,
   resolveDuoLanguages,
 } from "../../lib/featArtist.js";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
@@ -93,6 +92,7 @@ export function snapshotAceGenParams(body, extras = {}) {
     audioCoverStrength: b.audioCoverStrength ?? null,
     coverNoiseStrength: b.coverNoiseStrength ?? null,
     style: String(b.style || "").slice(0, 900) || null,
+    styleSource: extras.styleSource || b._styleSource || null,
     lyrics: String(b.lyrics || b.prompt || "").slice(0, 2500) || null,
     instruction: b.instruction ? String(b.instruction).slice(0, 400) : null,
     gpu: gpu
@@ -199,6 +199,149 @@ export function buildLabAceStepBody({
   return body;
 }
 
+/** Plafond caption ACE — au-delà = troncature / mur de bruit. */
+export const ACE_STYLE_CAP = 700;
+
+/**
+ * Assemble le style ACE déterministe (squelette / fallback LLM).
+ * @returns {{ style: string, langCode: string, duo: boolean, bilingual: boolean, brief: object }}
+ */
+export function assembleAceStepStyle({
+  style = "",
+  language = "fr",
+  styleLock = null,
+  artist = null,
+  featArtist = null,
+  lyrics = "",
+} = {}) {
+  const lead = artist && typeof artist === "object" ? artist : null;
+  const feat = normalizeFeatArtist(featArtist || lead?.featArtist);
+  const isDuo = Boolean(feat?.name);
+  const styleBase = String(style || "");
+  const lyricsClean = String(lyrics || "");
+  const qualityFloor = aceStepProductionQualityFloor({ duo: isDuo });
+  const sectionDyn = aceStepSectionDynamicsCompact({ duo: isDuo });
+  const duoLangs = isDuo ? resolveDuoLanguages(lead, feat, language) : null;
+  const langCode = duoLangs?.bilingual
+    ? duoLangs.leadLang
+    : resolveAceVocalLanguage(language, lyricsClean);
+  const langBit = duoLangs?.bilingual
+    ? aceDuoVocalLanguageStyleBit(duoLangs.leadLang, duoLangs.featLang)
+    : aceVocalLanguageStyleBit(langCode);
+  const leadLock = vocalLockForArtist(lead);
+
+  let styleFinal;
+  if (isDuo) {
+    const duoStyle = buildAceStepDuoStyle(lead || { name: "Lead" }, feat, {
+      genreSummary: styleLock?.genreSummary || lead?.genre,
+      mood: styleLock?.mood || lead?.mood,
+      styleLock,
+      styleBase,
+    });
+    styleFinal = [langBit, duoStyle || composeAceStepStyle(styleBase, styleLock), qualityFloor]
+      .filter(Boolean)
+      .join(". ")
+      .slice(0, ACE_STYLE_CAP);
+  } else {
+    const gender =
+      leadLock?.genderCode === "female"
+        ? "female lead vocal"
+        : leadLock?.genderCode === "male"
+          ? "male lead vocal"
+          : "lead vocal";
+    const genre =
+      String(styleLock?.genreSummary || lead?.genre || styleBase || "pop")
+        .trim()
+        .slice(0, 120) || "pop";
+    const mood = String(styleLock?.mood || lead?.mood || "")
+      .trim()
+      .slice(0, 40);
+    const arrange = normalizeMusicArrange(lead?.musicArrange);
+    const bandBed = aceStepBandBedCompact(styleLock, arrange);
+    const densityBit =
+      arrange.density === "dense"
+        ? "rich full band; chorus denser than verse"
+        : arrange.density === "sparse"
+          ? "space around vocals but always guitar+bass+drums+keys; chorus adds layers"
+          : "open mix; every section changes instrumentation, chorus thicker than verse";
+    const finger =
+      Array.isArray(arrange.features) && arrange.features.includes("fingerpicked guitar");
+    const leadInstru = String(arrange.leadInstrument || "").trim();
+    const leadInstruBit = finger
+      ? "acoustic fingerpicked guitar audible in verses and choruses"
+      : leadInstru
+        ? `${leadInstru} audible throughout`
+        : null;
+    const voiceBit = aceLeadVocalPhrase(leadLock, genre);
+    styleFinal = [
+      `${genre}, ${gender}`,
+      bandBed,
+      langBit,
+      voiceBit,
+      sectionDyn,
+      mood || null,
+      densityBit,
+      leadInstruBit,
+      qualityFloor,
+    ]
+      .filter(Boolean)
+      .join(". ")
+      .slice(0, ACE_STYLE_CAP);
+  }
+
+  const brief = {
+    duo: isDuo,
+    bilingual: Boolean(duoLangs?.bilingual),
+    leadLang: duoLangs?.leadLang || langCode,
+    featLang: duoLangs?.featLang || null,
+    lead: lead
+      ? {
+          name: lead.name,
+          gender: leadLock?.genderCode || lead.gender,
+          genre: styleLock?.genreSummary || lead.genre,
+          mood: styleLock?.mood || lead.mood,
+        }
+      : null,
+    feat: feat
+      ? {
+          name: feat.name,
+          gender: vocalLockForArtist(feat)?.genderCode || feat.gender,
+          genre: feat.genre,
+          language: feat.language,
+        }
+      : null,
+    instruments: Array.isArray(styleLock?.instruments)
+      ? styleLock.instruments.slice(0, 6)
+      : null,
+    skeleton: styleFinal,
+    maxChars: 650,
+    mustKeep: [
+      "full multi-instrument band",
+      "never drums-only",
+      "dry clear natural vocals",
+      "section dynamics (verse lean → thicker chorus → bridge → biggest final chorus)",
+      isDuo ? "singer 1 / singer 2 distinct" : "lead vocal clear",
+      duoLangs?.bilingual ? `bilingual singer1=${duoLangs.leadLang} singer2=${duoLangs.featLang}` : null,
+    ].filter(Boolean),
+    avoid: [
+      "vocoder",
+      "heavy autotune",
+      "digital distortion",
+      "Sister Act essay",
+      "conflicting multi-genre paragraphs",
+      "truncated mid-sentence",
+    ],
+  };
+
+  return {
+    style: styleFinal,
+    langCode,
+    duo: isDuo,
+    bilingual: Boolean(duoLangs?.bilingual),
+    brief,
+  };
+}
+
 export function buildAceStepBody({
   title,
   style,
@@ -215,6 +358,8 @@ export function buildAceStepBody({
   styleLock,
   artist = null,
   featArtist = null,
+  /** Caption déjà résolu (LLM ou squelette) — saute le ré-assemblage. */
+  styleOverride = null,
 }) {
   const infer = aceStepInferenceForModel(modelId);
   const duration = pickAceStepDurationSec({ preview, durationSec });
@@ -254,88 +399,19 @@ export function buildAceStepBody({
   }
 
   const styleBase = String(style || "");
-  // Style Lab : COURT (≤700). Band + dynamics TÔT ; polish en queue.
-  const qualityFloor = aceStepProductionQualityFloor({ duo: isDuo });
-  const sectionDyn = aceStepSectionDynamicsCompact({ duo: isDuo });
-  const duoLangs = isDuo ? resolveDuoLanguages(lead, feat, language) : null;
-  // API ACE = une seule vocalLanguage ; en bilingue on garde le lead + consignes style.
-  const langCode = duoLangs?.bilingual
-    ? duoLangs.leadLang
-    : resolveAceVocalLanguage(language, lyricsClean);
-  const langBit = duoLangs?.bilingual
-    ? aceDuoVocalLanguageStyleBit(duoLangs.leadLang, duoLangs.featLang)
-    : aceVocalLanguageStyleBit(langCode);
-  const leadLock = vocalLockForArtist(lead);
-  const STYLE_CAP = 700;
-  let styleFinal;
-  if (isDuo) {
-    const genreBlob = String(styleLock?.genreSummary || lead?.genre || styleBase || "").trim();
-    const duoStyle = buildAceStepDuoStyle(lead || { name: "Lead" }, feat, {
-      genreSummary: styleLock?.genreSummary || lead?.genre,
-      mood: styleLock?.mood || lead?.mood,
-      styleLock,
-      styleBase,
-    });
-    const vocalGuard = aceOrganicVocalGuard(leadLock, genreBlob);
-    const bandBed = aceStepBandBedCompact(styleLock, normalizeMusicArrange(lead?.musicArrange));
-    // Casting + band + arc tôt — polish tronqué en dernier.
-    styleFinal = [
-      langBit,
-      duoStyle || composeAceStepStyle(styleBase, styleLock),
-      bandBed,
-      sectionDyn,
-      vocalGuard,
-      qualityFloor,
-    ]
-      .filter(Boolean)
-      .join(". ")
-      .slice(0, STYLE_CAP);
-  } else {
-    const gender =
-      leadLock?.genderCode === "female"
-        ? "female lead vocal"
-        : leadLock?.genderCode === "male"
-          ? "male lead vocal"
-          : "lead vocal";
-    const genre =
-      String(styleLock?.genreSummary || lead?.genre || styleBase || "pop")
-        .trim()
-        .slice(0, 120) || "pop";
-    const mood =
-      String(styleLock?.mood || lead?.mood || "").trim().slice(0, 40);
-    const arrange = normalizeMusicArrange(lead?.musicArrange);
-    const bandBed = aceStepBandBedCompact(styleLock, arrange);
-    const densityBit =
-      arrange.density === "dense"
-        ? "rich full band; chorus denser than verse"
-        : arrange.density === "sparse"
-          ? "space around vocals but always guitar+bass+drums+keys; chorus adds layers"
-          : "open mix; every section changes instrumentation, chorus thicker than verse";
-    const finger =
-      Array.isArray(arrange.features) && arrange.features.includes("fingerpicked guitar");
-    const leadInstru = String(arrange.leadInstrument || "").trim();
-    const leadInstruBit = finger
-      ? "acoustic fingerpicked guitar audible in verses and choruses"
-      : leadInstru
-        ? `${leadInstru} audible throughout`
-        : null;
-    const voiceBit = aceLeadVocalPhrase(leadLock, genre);
-    // Genre → band → voix → arc → densité ; polish court en queue.
-    styleFinal = [
-      `${genre}, ${gender}`,
-      bandBed,
-      langBit,
-      voiceBit,
-      sectionDyn,
-      mood || null,
-      densityBit,
-      leadInstruBit,
-      qualityFloor,
-    ]
-      .filter(Boolean)
-      .join(". ")
-      .slice(0, STYLE_CAP);
-  }
+  const assembled = assembleAceStepStyle({
+    style: styleBase,
+    language,
+    styleLock,
+    artist: lead,
+    featArtist: feat,
+    lyrics: lyricsClean,
+  });
+  const STYLE_CAP = ACE_STYLE_CAP;
+  const styleFinal = String(styleOverride || assembled.style || "")
+    .trim()
+    .slice(0, STYLE_CAP);
+  const langCode = assembled.langCode;
 
   let steps = infer.inferenceSteps;
   let guidance = infer.guidanceScale;
@@ -382,10 +458,10 @@ export function buildAceStepBody({
       body.guidanceScale = ACE_SFT_GUIDANCE;
     }
   } else {
-    // text2music : band + arc (sinon ACE → drums-only / boucle plate).
+    // text2music : consignes COURTES (pavés → mur de bruit ACE).
     body.instruction = isDuo
-      ? "Full multi-instrument band required (never drums-only); section dynamics: lean verse → thicker chorus → contrasting bridge → biggest final chorus; obey [singer 1]/[singer 2]:"
-      : "Full multi-instrument band required throughout (guitar, bass, drums, keys/pads — never drums-only, never single-instrument loop); section dynamics: verse guitar+bass+light drums → pre-chorus adds layers → thick chorus → thin bridge → biggest final chorus:";
+      ? "ONE clean duet song, full band (never drums-only); verses lean, chorus thicker; obey [singer 1]/[singer 2]; no digital distortion:"
+      : "Full multi-instrument band (guitar, bass, drums, keys — never drums-only); verse lean → thicker chorus → thin bridge → biggest final chorus; no digital distortion:";
   }
   return body;
 }

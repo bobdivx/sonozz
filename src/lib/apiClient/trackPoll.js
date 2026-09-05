@@ -1,6 +1,23 @@
 import { loadKeys } from "../keys.js";
 import { request, sleep, formatElapsed, shortModelLabel, toAbortSignal } from "./core.js";
 
+/** Traduit les stages bruts ACE / Studio en labels FR courts. */
+function humanizeAceStage(stage, fallback = "") {
+  const s = String(stage || "").trim().toLowerCase();
+  if (!s) return fallback;
+  if (/queue|pending|waiting|file/.test(s)) return "En file GPU…";
+  if (/load|switch|download|init|warm/.test(s)) return "Chargement DiT…";
+  if (/style|caption|prompt/.test(s)) return "Préparation style…";
+  if (/infer|sampl|denois|generat|diffus|step/.test(s)) return "Inférence audio…";
+  if (/decode|vocoder|render|export|encode|write|save/.test(s)) return "Rendu / export…";
+  if (/upload|transfer/.test(s)) return "Transfert audio…";
+  // Stage déjà lisible
+  if (s.length < 64 && !/^https?:/i.test(s)) {
+    return stage.charAt(0).toUpperCase() + stage.slice(1);
+  }
+  return fallback || "Génération…";
+}
+
 /** Pourcentage affiché — SongGen reste à ~35 % pendant le long infer ; on lisse avec l’ETA. */
 function formatTrackProgress(tick = {}) {
   let percent = Number(tick.progress);
@@ -28,9 +45,10 @@ function formatTrackProgress(tick = {}) {
     percent = Math.min(30, 5 + Math.floor(elapsed / 4));
   }
 
-  // Message court : pas de VRAM ni modèle (affichés par StudioGpuMeter)
   let message = msg || (status === "pending" ? "En file…" : "Génération…");
-  if (stage && !msg) message = stage;
+  if (!msg && stage) message = humanizeAceStage(stage, message);
+  else if (msg && stage && msg === stage) message = humanizeAceStage(stage, msg);
+
   if (elapsed > 0) {
     const eta =
       estimated > elapsed
@@ -57,6 +75,42 @@ function formatTrackProgress(tick = {}) {
 }
 
 /**
+ * Pendant le POST start ACE (bloquant : style IA + arbiter + switch DiT),
+ * anime les étapes UX côté client.
+ */
+async function awaitAceStartWithPhases(startPromise, onProgress, baseProgress = {}, signal) {
+  const startedAt = Date.now();
+  const schedule = [
+    { at: 0, percent: 12, phase: "style", message: "Style caption (IA)…" },
+    { at: 2500, percent: 14, phase: "gpu-queue", message: "File GPU · libération VRAM…" },
+    { at: 7000, percent: 16, phase: "loading-model", message: "Chargement modèle DiT…" },
+    { at: 20000, percent: 18, phase: "loading-model", message: "Chargement DiT encore en cours…" },
+    { at: 60000, percent: 20, phase: "loading-model", message: "SFT long — patiente encore…" },
+  ];
+  let idx = 0;
+  const emit = () => {
+    const elapsed = Date.now() - startedAt;
+    while (idx + 1 < schedule.length && elapsed >= schedule[idx + 1].at) idx += 1;
+    const step = schedule[idx];
+    onProgress?.({
+      ...baseProgress,
+      percent: step.percent,
+      phase: step.phase,
+      musicKind: "acestep",
+      message: `${step.message} ${formatElapsed(Math.round(elapsed / 1000))}`,
+    });
+  };
+  emit();
+  const timer = setInterval(emit, 1200);
+  try {
+    return await startPromise;
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+
+/**
  * Avant start ACE : probe VRAM + charge le DiT voulu avec retours live
  * (évite le silence UX pendant un switch SFT de plusieurs minutes).
  */
@@ -77,6 +131,7 @@ async function prepareAceStepClient(payload, onProgress, signal) {
   onProgress?.({
     percent: 3,
     phase: "probe",
+    musicKind: "acestep",
     message: "Connexion ACE-Step · lecture VRAM…",
   });
   throwIfAborted();
@@ -89,6 +144,7 @@ async function prepareAceStepClient(payload, onProgress, signal) {
     onProgress?.({
       percent: 4,
       phase: "probe",
+      musicKind: "acestep",
       message: `ACE-Step : ${String(e.message || e).slice(0, 120)}`,
     });
     return null;
@@ -106,6 +162,7 @@ async function prepareAceStepClient(payload, onProgress, signal) {
   onProgress?.({
     percent: 5,
     phase: "probe",
+    musicKind: "acestep",
     model: active || targetId || null,
     modelLabel: shortModelLabel(active || targetId) || null,
     gpu,
@@ -119,6 +176,7 @@ async function prepareAceStepClient(payload, onProgress, signal) {
   onProgress?.({
     percent: 6,
     phase: "loading-model",
+    musicKind: "acestep",
     model: targetId,
     modelLabel: targetLabel,
     gpu,
@@ -153,6 +211,7 @@ async function prepareAceStepClient(payload, onProgress, signal) {
     onProgress?.({
       percent: Math.min(11, 6 + Math.floor(secs / 30)),
       phase: "loading-model",
+      musicKind: "acestep",
       model: targetId,
       modelLabel: targetLabel,
       gpu: nowGpu,
@@ -171,6 +230,7 @@ async function prepareAceStepClient(payload, onProgress, signal) {
       onProgress?.({
         percent: 10,
         phase: "loading-model",
+        musicKind: "acestep",
         model: targetId,
         modelLabel: targetLabel,
         gpu: nowGpu,
@@ -229,17 +289,27 @@ export async function trackWithPoll(payload = {}, onProgress, opts = {}) {
       draft: opts.draft,
     };
   } else {
-    onProgress?.({
-      percent: 11,
-      phase: "starting",
+    const baseProgress = {
       model: prepared?.model || null,
       modelLabel: shortModelLabel(prepared?.model) || null,
       gpu: prepared?.gpu || null,
-      message: isPreview
-        ? `Lancement extrait${prepared?.model ? ` · ${shortModelLabel(prepared.model)}` : ""}…`
-        : `Lancement génération${prepared?.model ? ` · ${shortModelLabel(prepared.model)}` : ""}…`,
-    });
-    started = await request("/api/track", { ...payload, action: "start" }, { signal });
+    };
+    const startReq = request("/api/track", { ...payload, action: "start" }, { signal });
+    // ACE : le start serveur fait style IA + arbiter + éventuel switch SFT (long).
+    const provider = String(loadKeys()?.musicProvider || "").trim();
+    if (provider === "acestep" || prepared) {
+      started = await awaitAceStartWithPhases(startReq, onProgress, baseProgress, signal);
+    } else {
+      onProgress?.({
+        percent: 11,
+        phase: "starting",
+        ...baseProgress,
+        message: isPreview
+          ? `Lancement extrait${prepared?.model ? ` · ${shortModelLabel(prepared.model)}` : ""}…`
+          : `Lancement génération${prepared?.model ? ` · ${shortModelLabel(prepared.model)}` : ""}…`,
+      });
+      started = await startReq;
+    }
     throwIfAborted();
     opts.onStarted?.(started);
   }
@@ -255,7 +325,7 @@ export async function trackWithPoll(payload = {}, onProgress, opts = {}) {
   const startedGpu = started.gpu || prepared?.gpu || null;
 
   onProgress?.({
-    percent: 12,
+    percent: 22,
     phase: "generating",
     model: startedModel,
     modelLabel: shortModelLabel(startedModel) || started.quality || null,
@@ -312,6 +382,7 @@ export async function trackWithPoll(payload = {}, onProgress, opts = {}) {
           percent: 100,
           phase: "done",
           model: startedModel,
+          musicKind: started.musicKind,
           message: isPreview || tick.track.isPreview ? "Extrait prêt" : "Audio prêt",
         });
         return tick.track;

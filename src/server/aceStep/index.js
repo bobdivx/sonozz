@@ -54,7 +54,16 @@ export {
   snapshotAceGenParams,
   buildLabAceStepBody,
   buildAceStepBody,
+  assembleAceStepStyle,
+  ACE_STYLE_CAP,
 } from "./body.js";
+
+export {
+  ACE_STYLE_TARGET,
+  sanitizeAceStyleCaption,
+  resolveAceStepStyleCaption,
+  clearAceStyleCaptionCache,
+} from "./styleCaption.js";
 
 export {
   ensureAceGpuSlot,

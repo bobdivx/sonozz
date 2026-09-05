@@ -159,6 +159,22 @@ html[data-sonozz-fill-viewport] #root-app {
   box-shadow: 0 0 12px color-mix(in oklab, var(--p, #c9a227) 45%, transparent);
 }
 
+@keyframes track-gen-step-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--p, #c9a227) 45%, transparent);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--p, #c9a227) 0%, transparent);
+    transform: scale(1.06);
+  }
+}
+
+.track-gen-step-active {
+  animation: track-gen-step-pulse 1.5s ease-in-out infinite;
+}
+
 @keyframes cover-glow {
   0%,
   100% {
