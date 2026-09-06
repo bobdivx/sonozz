@@ -1,5 +1,22 @@
 import { KEY_FIELDS } from "./schema.js";
 import { isFlagOn, MUSIC_PROVIDERS } from "./studios.js";
+import {
+  DEFAULT_ACESTEP_BASE,
+  DEFAULT_GPU_ARBITER,
+  DEFAULT_GPU_ARBITER_LAN,
+  DEFAULT_SONGGEN_BASE,
+  DEFAULT_WAN2GP_BASE,
+  DEFAULT_OLLAMA_BASE,
+} from "./urls.js";
+
+export {
+  DEFAULT_ACESTEP_BASE,
+  DEFAULT_GPU_ARBITER,
+  DEFAULT_GPU_ARBITER_LAN,
+  DEFAULT_SONGGEN_BASE,
+  DEFAULT_WAN2GP_BASE,
+  DEFAULT_OLLAMA_BASE,
+} from "./urls.js";
 
 const RETIRED_GEMINI_MODELS = new Set([
   "gemini-1.5-flash",
@@ -12,11 +29,7 @@ const RETIRED_GEMINI_MODELS = new Set([
 ]);
 
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
-const DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "llama3.2";
-const DEFAULT_SONGGEN_BASE = "http://127.0.0.1:7860";
-const DEFAULT_ACESTEP_BASE = "https://ace.briseteia.me";
-const DEFAULT_WAN2GP_BASE = "http://127.0.0.1:7860";
 
 const ACE_STEP_MODELS = [
   "acestep-v15-xl-turbo",
@@ -36,6 +49,7 @@ export const EMPTY_KEYS = () => {
   base.songGenEnabled = "1";
   base.replicateEnabled = "1";
   base.aceStepBaseUrl = DEFAULT_ACESTEP_BASE;
+  base.gpuArbiterUrl = DEFAULT_GPU_ARBITER;
   base.aceStepPreferredModel = "";
   base.songGenBaseUrl = DEFAULT_SONGGEN_BASE;
   base.songGenPreferredModel = "";
@@ -69,6 +83,15 @@ export function migrateKeys(keys) {
   next.replicateEnabled = isFlagOn(next.replicateEnabled, true) ? "1" : "0";
   if (!next.aceStepBaseUrl?.trim()) {
     next.aceStepBaseUrl = DEFAULT_ACESTEP_BASE;
+  }
+  {
+    const arb = String(next.gpuArbiterUrl || "").trim().replace(/\/+$/, "");
+    // Vide ou ancien défaut LAN → tunnel public
+    if (!arb || /^https?:\/\/10\.1\.0\.88:8790$/i.test(arb)) {
+      next.gpuArbiterUrl = DEFAULT_GPU_ARBITER;
+    } else {
+      next.gpuArbiterUrl = arb;
+    }
   }
   const acePref = String(next.aceStepPreferredModel || "").trim();
   next.aceStepPreferredModel = ACE_STEP_MODELS.includes(acePref) ? acePref : "";

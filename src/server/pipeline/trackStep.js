@@ -18,6 +18,8 @@ import {
   cancelAceStep,
   isAceStepMusicProvider,
   resolveAceVocalLanguage,
+  isAceStepSftModel,
+  probeAceNoiseWall,
 } from "../aceStep.js";
 import { isLanguageOkForProvider, songGenLanguageHint } from "../../lib/studio.js";
 import {
@@ -273,7 +275,7 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
 
   // Fige / backfill le timbre (extrait vocal ou dernier audio) avant le prompt.
   try {
-    const { ensureTrackArtistsTimbre } = await import("./artistTimbre.js");
+    const { ensureTrackArtistsTimbre } = await import("../artistTimbre.js");
     const ensured = await ensureTrackArtistsTimbre(keys, artist);
     if (ensured?.artist) artist = ensured.artist;
     if (ensured?.report?.lead && !ensured.report.lead.skipped) {
@@ -501,6 +503,35 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
 
   const base = draft && typeof draft === "object" ? draft : {};
   const isPreview = Boolean(base.isPreview);
+
+  // SFT peut renvoyer HTTP OK + mur de bruit. Probe AVANT persist (flux poll client).
+  if (
+    kind === "acestep" &&
+    !isPreview &&
+    !base.aceNoiseRetry &&
+    isAceStepSftModel(base.aceStepModel || base.aceGen?.model) &&
+    tick.url
+  ) {
+    try {
+      const probe = await probeAceNoiseWall(keys, tick.url);
+      if (probe?.noiseWall) {
+        console.warn(
+          "[acestep] pollTrack mur de bruit SFT — refuse persist:",
+          probe.reason || "noiseWall",
+        );
+        throw new Error(
+          `ACE_NOISE_WALL: SFT inutilisable (${probe.reason || "mur de bruit"}). Retry Turbo BF16.`,
+        );
+      }
+      if (probe) {
+        console.info("[acestep] pollTrack probe OK (pas de mur de bruit)");
+      }
+    } catch (e) {
+      if (/ACE_NOISE_WALL/i.test(String(e?.message || ""))) throw e;
+      console.warn("[acestep] pollTrack probe ignoré:", e?.message || e);
+    }
+  }
+
   const persisted = await persistGeneratedAudio(
     tick.url,
     base.artist || "anon",

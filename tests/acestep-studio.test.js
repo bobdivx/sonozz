@@ -14,6 +14,9 @@ import {
   pickAceStepDurationSec,
   ACE_FULL_DURATION_MIN,
   ACE_FULL_DURATION_MAX,
+  ACE_SFT_DURATION_MAX,
+  ACE_SFT_STEPS,
+  ACE_TIMESTEP_SHIFT,
   aceStepVramHeadroomGb,
   aceStepMinResidentVramGb,
   isAceStepGhostLoad,
@@ -39,8 +42,8 @@ describe("ACE-Step Studio client", () => {
     assert.equal(turbo.guidanceScale, 0);
     assert.equal(turbo.isTurbo, true);
     const sft = aceStepInferenceForModel("acestep-v15-xl-sft");
-    assert.equal(sft.inferenceSteps, 50);
-    assert.equal(sft.guidanceScale, 5.5);
+    assert.equal(sft.inferenceSteps, ACE_SFT_STEPS);
+    assert.equal(sft.guidanceScale, 5.0);
     assert.equal(sft.isTurbo, false);
     const body = buildAceStepBody({
       title: "t",
@@ -50,6 +53,7 @@ describe("ACE-Step Studio client", () => {
     });
     assert.equal(body.inferenceSteps, 8);
     assert.equal(body.guidanceScale, 0);
+    assert.equal(body.shift, ACE_TIMESTEP_SHIFT);
   });
 
   it("lab body : overrides manuels + défauts historiques", () => {
@@ -224,13 +228,14 @@ describe("ACE-Step Studio client", () => {
       modelId: "acestep-v15-xl-sft",
       preview: false,
     });
-    assert.equal(sft.inferenceSteps, 50);
-    assert.equal(sft.guidanceScale, 5.5);
+    assert.equal(sft.inferenceSteps, ACE_SFT_STEPS);
+    assert.equal(sft.guidanceScale, 5.0);
+    assert.equal(sft.shift, ACE_TIMESTEP_SHIFT);
     assert.equal(sft.enableNormalization, true);
     assert.equal(sft.normalizationDb, -2.5);
     assert.equal(sft.mp3Bitrate, "320k");
-    assert.match(sft.style, /NOT one flat loop|thick chorus|chorus thicker than verse|dry clear lead vocal/i);
-    assert.ok(sft.duration >= ACE_FULL_DURATION_MIN && sft.duration <= ACE_FULL_DURATION_MAX);
+    assert.match(sft.style, /thicker chorus|biggest final|full band|clear diction/i);
+    assert.ok(sft.duration >= 110 && sft.duration <= ACE_SFT_DURATION_MAX);
     assert.equal(sft.referenceAudioUrl, undefined);
     assert.equal(sft.taskType, undefined);
 
@@ -242,16 +247,23 @@ describe("ACE-Step Studio client", () => {
       modelId: "acestep-v15-xl-sft",
       durationSec: 200,
     });
-    assert.equal(fixed.duration, 200);
+    // SFT : plafonné (200 → 150) pour éviter mur de bruit sur titres longs.
+    assert.equal(fixed.duration, ACE_SFT_DURATION_MAX);
   });
 
   it("tire une durée commerciale aléatoire si non fournie", () => {
     assert.equal(pickAceStepDurationSec({ preview: true }), 30);
     assert.equal(pickAceStepDurationSec({ preview: false, durationSec: 195 }), 195);
+    assert.equal(
+      pickAceStepDurationSec({ preview: false, durationSec: 200, sft: true }),
+      ACE_SFT_DURATION_MAX,
+    );
     const a = pickAceStepDurationSec({ preview: false });
     const b = pickAceStepDurationSec({ preview: false });
     assert.ok(a >= ACE_FULL_DURATION_MIN && a <= ACE_FULL_DURATION_MAX);
     assert.ok(b >= ACE_FULL_DURATION_MIN && b <= ACE_FULL_DURATION_MAX);
+    const sftA = pickAceStepDurationSec({ preview: false, sft: true });
+    assert.ok(sftA >= 110 && sftA <= ACE_SFT_DURATION_MAX);
   });
 
   it("indie pop organique : voix dry courte, pas de pavé conversational → vocoder", () => {
@@ -283,15 +295,17 @@ describe("ACE-Step Studio client", () => {
         },
       },
     });
-    assert.match(body.style, /clear natural male vocal/i);
-    assert.ok(body.style.length <= 700, `style trop long: ${body.style.length}`);
-    assert.match(body.style, /full band always|never drums-only/i);
-    assert.match(body.style, /NOT one flat loop|guitar\+bass|biggest final chorus/i);
-    assert.match(body.style, /dry clear lead vocal|light compression|natural dynamics/i);
-    assert.match(body.style, /fingerpicked guitar|acoustic guitar/i);
+    assert.match(body.style, /male lead vocal/i);
+    assert.ok(body.style.length <= 400, `style trop long: ${body.style.length}`);
+    assert.match(body.style, /full band/i);
+    assert.match(body.style, /thicker chorus|biggest final/i);
+    assert.match(body.style, /clear diction|clear sung/i);
+    assert.match(body.style, /acoustic guitar/i);
     assert.doesNotMatch(body.style, /conversational/i);
     assert.doesNotMatch(body.style, /no vocoder|no autotune/i);
-    assert.match(body.instruction, /never drums-only|Full multi-instrument/i);
+    // text2music solo : instruction courte (pas de pavé).
+    assert.ok(body.instruction && body.instruction.length < 80);
+    assert.match(body.instruction, /style caption|sing lyrics/i);
   });
 
   it("envoie le preview titre phare en cover (source + référence)", () => {
@@ -312,13 +326,12 @@ describe("ACE-Step Studio client", () => {
     assert.match(body.referenceAudioTitle, /Condemnation Contagion/);
     assert.equal(body.audioCoverStrength, 0.5);
     assert.equal(body.coverNoiseStrength, 0.35);
-    assert.equal(body.guidanceScale, 5.5);
+    assert.equal(body.guidanceScale, 5.0);
     assert.equal(body.enableNormalization, true);
     assert.equal(body.normalizationDb, -2.5);
     assert.equal(body.mp3Bitrate, "320k");
-    assert.match(body.instruction, /peak headroom|no clipping|full band mix|polished commercial/i);
-    assert.match(body.instruction, /chorus instrumentation lifts|final chorus biggest/i);
-    assert.match(body.style, /section dynamics|thicker chorus|chorus lift|chorus thicker than verse|dry clear lead vocal/i);
+    assert.match(body.instruction, /Clear lead vocal|thicker chorus|keep groove/i);
+    assert.match(body.style, /section dynamics|thicker chorus|chorus lift|chorus thicker than verse|dry clear lead vocal|verse lean/i);
 
     const turbo = buildAceStepBody({
       title: "Echoes",

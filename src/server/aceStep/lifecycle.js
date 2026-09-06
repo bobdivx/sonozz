@@ -9,7 +9,7 @@ import {
   pickAceStepModel,
 } from "./models.js";
 import {
-  DEFAULT_GPU_ARBITER,
+  resolveGpuArbiterUrl,
   aceFetch,
   withAuth,
   normalizeModels,
@@ -18,34 +18,70 @@ import {
 
 /** Réveille ACE via l’arbitre GPU Demeter — soft si déjà up (évite systemd restart / 502).
  *  `exclusive: true` → acquire avec file d’attente + start (stop LLM/Wan) pour SFT / gros DiT.
+ *  Si l’arbiter est down (fetch failed) → bypass (ACE peut déjà tourner) plutôt que bloquer SFT.
  */
 export async function ensureAceGpuSlot(
   keys,
   { timeoutMs = 120_000, exclusive = false } = {},
 ) {
-  const arbiter = String(keys?.gpuArbiterUrl || process.env.GPU_ARBITER_URL || DEFAULT_GPU_ARBITER)
-    .trim()
-    .replace(/\/+$/, "");
+  const arbiter = resolveGpuArbiterUrl(keys);
   if (!arbiter) return { ok: false, skipped: true };
 
   const timeoutSec = Math.min(exclusive ? 600 : 120, Math.max(30, Math.round(timeoutMs / 1000)));
+  const isUnreachable = (err) =>
+    /fetch failed|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT|AbortError|timeout|network|socket/i.test(
+      String(err?.message || err || ""),
+    );
 
   try {
     // Gros DiT (SFT) : toujours passer par la file — libère LLM/Wan, attend Steam, etc.
     if (exclusive) {
       console.info("[acestep] GPU arbiter · acquire exclusif ace (file + stop LLM/Wan)…");
-      const res = await fetch(`${arbiter}/acquire`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slot: "ace",
-          owner: "sonozz-sft",
-          timeout_s: timeoutSec,
-          start: true,
-        }),
-        signal: AbortSignal.timeout(Math.min(timeoutMs + 10_000, 620_000)),
-      });
-      const data = await res.json().catch(() => ({}));
+      let lastErr = null;
+      let data = {};
+      let res = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          res = await fetch(`${arbiter}/acquire`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              slot: "ace",
+              owner: "sonozz-sft",
+              timeout_s: timeoutSec,
+              start: true,
+            }),
+            signal: AbortSignal.timeout(Math.min(timeoutMs + 10_000, 620_000)),
+          });
+          data = await res.json().catch(() => ({}));
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          console.warn(
+            `[acestep] arbiter acquire ${attempt}/3:`,
+            e?.message || e,
+          );
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+      }
+      if (lastErr) {
+        if (isUnreachable(lastErr)) {
+          console.warn(
+            "[acestep] arbiter injoignable — bypass exclusif, on continue SFT si ACE up",
+          );
+          return {
+            ok: true,
+            skipped: true,
+            arbiterDown: true,
+            arbiter,
+            exclusive: false,
+            error: String(lastErr?.message || lastErr),
+            data: { message: "arbiter-unreachable-bypass" },
+          };
+        }
+        return { ok: false, arbiter, error: String(lastErr?.message || lastErr) };
+      }
       if (!res.ok || data?.ok === false) {
         const err = data?.error || data?.message || `HTTP ${res.status}`;
         if (err === "steam_priority" || /steam/i.test(String(data?.message || ""))) {
@@ -138,6 +174,17 @@ export async function ensureAceGpuSlot(
     const data = await res.json().catch(() => ({}));
     return { ok: res.ok && data?.ok !== false, arbiter, data };
   } catch (e) {
+    if (isUnreachable(e)) {
+      console.warn("[acestep] arbiter injoignable — bypass:", e?.message || e);
+      return {
+        ok: true,
+        skipped: true,
+        arbiterDown: true,
+        arbiter,
+        error: String(e?.message || e),
+        data: { message: "arbiter-unreachable-bypass" },
+      };
+    }
     return { ok: false, arbiter, error: String(e?.message || e) };
   }
 }

@@ -1,3 +1,14 @@
+import {
+  DEFAULT_ACESTEP_BASE,
+  DEFAULT_GPU_ARBITER,
+  DEFAULT_GPU_ARBITER_LAN,
+  DEFAULT_SONGGEN_BASE,
+  DEFAULT_OLLAMA_BASE,
+  DOCS_ACE_STEP,
+  DOCS_SONGGEN,
+  DOCS_REPLICATE_TOKENS,
+} from "./urls.js";
+
 export const KEY_FIELDS = [
   {
     group: "IA",
@@ -16,7 +27,7 @@ export const KEY_FIELDS = [
       {
         id: "ollamaBaseUrl",
         label: "URL Ollama",
-        placeholder: "http://127.0.0.1:11434",
+        placeholder: DEFAULT_OLLAMA_BASE,
         help: "Doit être joignable depuis le serveur Astro (souvent localhost en dev).",
         required: false,
         inputType: "url",
@@ -96,11 +107,20 @@ export const KEY_FIELDS = [
       {
         id: "aceStepBaseUrl",
         label: "URL ACE-Step Studio",
-        placeholder: "https://ace.briseteia.me",
-        help: "Express ACE (:8001 / tunnel). Gradio Python tourne en :7865 sur Demeter. LAN : http://10.1.0.88:8001",
+        placeholder: DEFAULT_ACESTEP_BASE,
+        help: `Express ACE (:8001 / tunnel). Gradio Python tourne en :7865 sur Demeter.`,
         required: false,
         inputType: "url",
-        url: "https://github.com/timoncool/ACE-Step-Studio",
+        url: DOCS_ACE_STEP,
+      },
+      {
+        id: "gpuArbiterUrl",
+        label: "URL GPU Arbiter",
+        placeholder: DEFAULT_GPU_ARBITER,
+        help: `File GPU Demeter (exclusif SFT, stop LLM/Wan). Tunnel public recommandé. LAN : ${DEFAULT_GPU_ARBITER_LAN}`,
+        required: false,
+        inputType: "url",
+        url: DEFAULT_GPU_ARBITER,
       },
       {
         id: "aceStepPreferredModel",
@@ -119,11 +139,11 @@ export const KEY_FIELDS = [
       {
         id: "songGenBaseUrl",
         label: "URL SongGeneration Studio",
-        placeholder: "http://10.1.0.88:42014",
+        placeholder: DEFAULT_SONGGEN_BASE,
         help: "Doit être joignable depuis le serveur Astro. Ex. Home Server Pinokio sur Demeter.",
         required: false,
         inputType: "url",
-        url: "https://github.com/BazedFrog/SongGeneration-Studio",
+        url: DOCS_SONGGEN,
       },
       {
         id: "replicateApiToken",
@@ -131,7 +151,7 @@ export const KEY_FIELDS = [
         placeholder: "r8_...",
         help: "MiniMax (si générateur = Replicate). Aussi images Flux et Seedance. Billing recommandé.",
         required: false,
-        url: "https://replicate.com/account/api-tokens",
+        url: DOCS_REPLICATE_TOKENS,
       },
     ],
   },

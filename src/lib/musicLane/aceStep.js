@@ -8,8 +8,8 @@ import { artefactGuardsFromLock, metalBandInstruments } from "./metal.js";
  */
 export function aceStepProductionQualityFloor({ duo = false } = {}) {
   return duo
-    ? "dry clear vocals, light compression, natural dynamics, peak headroom, no clipping"
-    : "dry clear lead vocal, light compression, natural dynamics, peak headroom, no clipping";
+    ? "clear sung lyrics, airy mix, warm guitar"
+    : "clear sung lyrics every word intelligible, airy mix, warm guitar";
 }
 
 /**
@@ -52,15 +52,15 @@ export function aceStepBandBedCompact(lock = null, arrange = null) {
     } else if (/metal|hardcore|punk/.test(genre)) {
       band = metalBandInstruments().slice(0, 5);
     } else if (/indie|folk|acoustic|singer|americana|dream pop|chamber/.test(genre)) {
-      band = ["acoustic guitar", "electric bass", "drum kit", "piano", "warm pads"];
+      band = ["warm organic acoustic guitar", "electric bass", "drum kit", "piano", "warm pads"];
     } else if (/rock|grunge/.test(genre)) {
-      band = ["drum kit", "bass guitar", "rhythm guitars", "lead guitar", "cymbals"];
+      band = ["drum kit", "bass guitar", "warm organic rhythm guitars", "expressive lead guitar", "cymbals"];
     } else if (/afro|dancehall|reggae|amapiano/.test(genre)) {
-      band = ["drums", "bass", "guitar", "keys", "percussion"];
+      band = ["drums", "bass", "organic guitar", "keys", "percussion"];
     } else if (/pop|radio|ballad/.test(genre)) {
-      band = ["drums", "bass", "keys", "guitars", "pads"];
+      band = ["drums", "bass", "keys", "warm organic guitars", "pads"];
     } else {
-      band = ["drums", "bass", "guitars", "keys", "pads"];
+      band = ["drums", "bass", "warm organic guitars", "keys", "pads"];
     }
   }
 
@@ -69,7 +69,7 @@ export function aceStepBandBedCompact(lock = null, arrange = null) {
     band = [lead, ...band].slice(0, 5);
   }
 
-  return `full band always: ${band.join(", ")} — never drums-only, never single-instrument loop`;
+  return `full band: ${band.join(", ")}`;
 }
 
 /**

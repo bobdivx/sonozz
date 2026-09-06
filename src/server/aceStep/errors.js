@@ -13,8 +13,9 @@ export function isAceVramError(err) {
   return ACE_VRAM_RE.test(raw);
 }
 
-/** Modèle de secours léger après NaN / OOM. */
-export const ACE_FALLBACK_LIGHT_MODEL = "marcorez8/acestep-v15-xl-turbo-bf16";
+export function isAceNoiseWallError(err) {
+  return /ACE_NOISE_WALL/i.test(String(err?.message || err || ""));
+}
 
 const GRADIO_CACHE_ERROR_RE =
   /not uploaded by a user|check_in_upload_folder|InvalidPathError|gradio cache dir/i;

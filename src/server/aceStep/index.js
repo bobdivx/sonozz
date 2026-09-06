@@ -16,6 +16,8 @@ export {
   ACE_STEP_ENGINE_DIT_IDS,
   ACE_SFT_GUIDANCE,
   ACE_NORMALIZATION_DB,
+  ACE_TIMESTEP_SHIFT,
+  ACE_SFT_STEPS,
   ACE_STEP_MODELS,
   ACE_FALLBACK_LIGHT_MODEL,
   resolveAceStepBaseUrl,
@@ -33,6 +35,7 @@ export {
 
 export {
   DEFAULT_GPU_ARBITER,
+  resolveGpuArbiterUrl,
   POLL_MS,
   MAX_POLLS,
   aceStepLanHint,
@@ -50,7 +53,9 @@ export {
   ACE_COVER_NOISE_DUO,
   ACE_FULL_DURATION_MIN,
   ACE_FULL_DURATION_MAX,
+  ACE_SFT_DURATION_MAX,
   pickAceStepDurationSec,
+  asciiFoldAceStyle,
   snapshotAceGenParams,
   buildLabAceStepBody,
   buildAceStepBody,
@@ -91,6 +96,7 @@ export {
 export {
   isAceNanLatentsError,
   isAceVramError,
+  isAceNoiseWallError,
   isGradioReferenceCacheError,
   isUnusableAceReferenceError,
   looksLikeAudioBuffer,
@@ -113,3 +119,5 @@ export {
   cancelAceStep,
   generateMusicWithAceStep,
 } from "./generate.js";
+
+export { probeAceNoiseWall } from "./noiseProbe.js";

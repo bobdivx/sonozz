@@ -439,7 +439,7 @@ export async function trackWithPoll(payload = {}, onProgress, opts = {}) {
     if (
       started?.musicKind === "acestep" &&
       !payload?.aceLightRetry &&
-      /ACE_NAN_LATENTS|VRAM insuffisante|NaN or Inf latents|out of memory/i.test(
+      /ACE_NAN_LATENTS|ACE_NOISE_WALL|VRAM insuffisante|NaN or Inf latents|out of memory|mur de bruit/i.test(
         String(e?.message || ""),
       )
     ) {
@@ -448,7 +448,9 @@ export async function trackWithPoll(payload = {}, onProgress, opts = {}) {
         phase: "retry",
         model: "marcorez8/acestep-v15-xl-turbo-bf16",
         modelLabel: "XL Turbo BF16",
-        message: "GPU saturé / NaN — relance en Turbo BF16 (léger)…",
+        message: /ACE_NOISE_WALL|mur de bruit/i.test(String(e?.message || ""))
+          ? "SFT mur de bruit — relance en Turbo BF16…"
+          : "GPU saturé / NaN — relance en Turbo BF16 (léger)…",
       });
       return trackWithPoll(
         {

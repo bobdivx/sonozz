@@ -45,6 +45,16 @@ describe("enforceAceStyleLocks", () => {
     assert.match(out, /guitar|full band|bass|drums/i);
   });
 
+  it("ne duplique pas le préfixe genre", () => {
+    const out = enforceAceStyleLocks(
+      "female lead vocal, woman singer, clear diction. Afro-trap. Female lead vocal, woman singer, clear diction. full band.",
+      { lead: { gender: "female" } },
+    );
+    const hits = out.match(/female lead vocal/gi) || [];
+    assert.equal(hits.length, 1, out);
+    assert.ok(out.length <= 360, `trop long: ${out.length}`);
+  });
+
   it("mustKeep genre dans le brief assemble", () => {
     const a = assembleAceStepStyle({
       style: "pop",
@@ -53,7 +63,7 @@ describe("enforceAceStyleLocks", () => {
       styleLock: { genreSummary: "Indie Pop" },
       lyrics: "bonjour le monde",
     });
-    assert.ok(a.brief.mustKeep.some((m) => /female lead/i.test(m)));
+    assert.ok(a.brief.mustKeep.some((m) => /female/i.test(m)));
     assert.match(a.style, /female lead vocal/i);
   });
 });

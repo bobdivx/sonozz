@@ -1,73 +1,58 @@
 /**
  * Règles ACE-Step style caption — source unique.
- * Utilisées par le squelette (assemble), le prompt LLM, et enforceAceStyleLocks.
+ * Éditer ICI pour changer le comportement qualité.
  *
- * Éditer ICI pour changer le comportement qualité (genre, clarté, full band…).
+ * Principe : caption COURT, sans doublons. Les pavés → mur de bruit ACE.
  */
 
 /** Plafond hard ACE (troncature côté moteur au-delà). */
 export const ACE_STYLE_CAP = 700;
 
-/** Cible LLM (marge sous le plafond). */
-export const ACE_STYLE_TARGET = 650;
-
-/** Solo déjà court → pas de compress LLM. */
-export const ACE_STYLE_LLM_SKIP_MAX = 520;
-
 /** Bump si les règles changent (invalide le cache mémoire). */
-export const ACE_STYLE_RULES_VERSION = 2;
+export const ACE_STYLE_RULES_VERSION = 5;
 
-/** Interdits récurrents (vocoder, mash genre, etc.). */
+/** Cible caption — au-delà ACE sature (noise wall). */
+export const ACE_STYLE_TARGET = 360;
+
+/** Solo déjà sous la cible → pas de compress LLM. */
+export const ACE_STYLE_LLM_SKIP_MAX = 320;
+
 export const ACE_STYLE_AVOID = [
   "vocoder",
-  "heavy autotune",
-  "digital distortion",
-  "muffled distant vocal",
-  "Sister Act essay",
-  "conflicting multi-genre paragraphs",
-  "truncated mid-sentence",
-  "drums-only / sparse one-instrument loop",
+  "autotune",
+  "artificial vocal",
+  "muffled vocal",
+  "synthetic guitar",
+  "muddy mix",
+  "drums-only",
+  "multi-genre mash",
+  "repeated gender phrases",
 ];
 
-/** Bits toujours exigés (hors genre vocal dynamique). */
+/** MustKeep LLM — très court. */
 export const ACE_STYLE_MUST_CORE = [
-  "full multi-instrument band",
-  "never drums-only",
-  "dry clear natural vocals, intelligible lyrics",
-  "section dynamics (verse lean → thicker chorus → bridge → biggest final chorus)",
+  "full band once",
+  "clear sung lyrics",
+  "airy mix",
+  "verse lean → thicker chorus → biggest final",
 ];
 
-export const ACE_STYLE_FALLBACK_CLARITY =
-  "clear articulate vocals, intelligible lyrics";
+export const ACE_STYLE_FALLBACK_CLARITY = "clear sung lyrics";
+export const ACE_STYLE_FALLBACK_BAND = "full band: guitar, bass, drums, keys";
+export const ACE_STYLE_FALLBACK_MIX = "airy mix";
 
-export const ACE_STYLE_FALLBACK_BAND =
-  "full band always: guitar, bass, drums, keys";
-
-/** Préfixe genre — ACE pondère le début du caption. */
 export function aceGenderHardPrefix(genderCode) {
-  if (genderCode === "female") {
-    return "female lead vocal, woman singer, clear articulate female voice";
-  }
-  if (genderCode === "male") {
-    return "male lead vocal, man singer, clear articulate male voice";
-  }
+  if (genderCode === "female") return "female lead vocal, woman singer, clear diction";
+  if (genderCode === "male") return "male lead vocal, man singer, clear diction";
   return null;
 }
 
 export function aceGenderMustKeep(genderCode) {
-  if (genderCode === "female") {
-    return "female lead vocal, woman singer (HARD — never male / man singer)";
-  }
-  if (genderCode === "male") {
-    return "male lead vocal, man singer (HARD — never female / woman singer)";
-  }
+  if (genderCode === "female") return "female lead once at start (never male)";
+  if (genderCode === "male") return "male lead once at start (never female)";
   return null;
 }
 
-/**
- * Liste mustKeep / avoid pour le brief LLM + logs.
- * @param {{ genderCode?: string|null, duo?: boolean, bilingualBit?: string|null }} opts
- */
 export function buildAceStyleBriefLocks({
   genderCode = null,
   duo = false,
@@ -77,34 +62,25 @@ export function buildAceStyleBriefLocks({
     mustKeep: [
       aceGenderMustKeep(genderCode),
       ...ACE_STYLE_MUST_CORE,
-      duo ? "singer 1 / singer 2 distinct with correct genders" : "lead vocal clear and prominent",
+      duo ? "singer 1 / singer 2 distinct" : null,
       bilingualBit || null,
     ].filter(Boolean),
     avoid: [...ACE_STYLE_AVOID],
   };
 }
 
-/**
- * Règles textuelles injectées dans le prompt LLM (anglais = langue ACE).
- */
 export function aceStyleLlmRulesBlock(brief = {}) {
   const must = (brief.mustKeep || []).join("; ");
   const avoid = (brief.avoid || ACE_STYLE_AVOID).join("; ");
-  return `Rules (non-negotiable):
-- One coherent commercial song description in English.
+  return `Rules:
+- Output ONE short English style caption (~${ACE_STYLE_TARGET} chars max, prefer ~300).
 - Keep MUST: ${must}.
 - Avoid: ${avoid}.
-- HARD gender: if lead.gender is female, caption MUST START with "${aceGenderHardPrefix("female")}" and NEVER say male/man singer. If male, START with "${aceGenderHardPrefix("male")}".
-- Name guitars/bass/drums/keys early; full band always.
-- Dry clear natural vocals, intelligible lyrics (no vocoder, no muffled/distant vocal).
-- Dynamics in few words: verse lean → thicker chorus → thin bridge → biggest final chorus.
-- If duo: singer 1 / singer 2 roles + genders briefly.
-- If bilingual: singer 1 lang + singer 2 lang briefly.
-- One production lane only — do NOT invent a second genre mid-track.
-- Do NOT truncate mid-word or mid-sentence.`;
+- Start with gender ONCE: "${aceGenderHardPrefix(brief?.lead?.gender) || "lead vocal"}" — never repeat it.
+- Then: genre, full band, clear lyrics, airy mix, section dynamics — each ONCE.
+- No essays, no duplicate sentences, no second genre.`;
 }
 
-/** Corrige les mentions de genre opposées dans un caption. */
 export function rewriteOppositeGender(text, genderCode) {
   let s = String(text || "");
   if (genderCode === "female") {
@@ -126,10 +102,45 @@ export function rewriteOppositeGender(text, genderCode) {
   return s;
 }
 
-/**
- * Nettoie + valide un caption (longueur, pas de troncature évidente).
- * @returns {string|null}
- */
+/** Retire toutes les phrases genre (partout) pour en remettre une seule en tête. */
+export function stripGenderPhrases(text) {
+  return String(text || "")
+    .replace(
+      /\b(female|male) lead vocal(?:,?\s*(?:woman|man) singer)?(?:,?\s*clear(?:\s+articulate)?(?:\s+(?:female|male))?\s+(?:voice|diction))?\b\.?\s*/gi,
+      "",
+    )
+    .replace(/\b(woman|man) singer,?\s*clear diction\b\.?\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Dé-duplique les clauses séparées par des points. */
+export function dedupeStyleClauses(text) {
+  const parts = String(text || "")
+    .split(/\.\s+/)
+    .map((p) => p.trim().replace(/\.+$/, ""))
+    .filter(Boolean);
+  const seen = [];
+  const out = [];
+  for (const p of parts) {
+    const key = p
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+    if (!key || key.length < 8) {
+      out.push(p);
+      continue;
+    }
+    const dup = seen.some(
+      (k) => k === key || (key.length > 20 && (k.includes(key) || key.includes(k))),
+    );
+    if (dup) continue;
+    seen.push(key);
+    out.push(p);
+  }
+  return out.length ? `${out.join(". ")}.` : "";
+}
+
 export function sanitizeAceStyleCaption(raw, { max = ACE_STYLE_CAP } = {}) {
   let s = String(raw || "")
     .trim()
@@ -143,13 +154,13 @@ export function sanitizeAceStyleCaption(raw, { max = ACE_STYLE_CAP } = {}) {
     const lastDot = cut.lastIndexOf(". ");
     s = lastDot > 80 ? cut.slice(0, lastDot + 1).trim() : cut.trim();
   }
-  if (s.length < 48 || s.length > max) return null;
+  if (s.length < 40 || s.length > max) return null;
   if (/\b(sin|lyr|intelligib|chorus=sin|singer)$/i.test(s)) return null;
   return s;
 }
 
 /**
- * Réinjecte genre / clarté / full band si le LLM (ou le cache) les a dilués.
+ * Genre en tête une seule fois + dé-dupe + plafond cible.
  */
 export function enforceAceStyleLocks(caption, brief = {}) {
   let s = String(caption || "")
@@ -160,28 +171,30 @@ export function enforceAceStyleLocks(caption, brief = {}) {
   const g = brief?.lead?.gender;
   const prefix = aceGenderHardPrefix(g);
   s = rewriteOppositeGender(s, g);
+  s = stripGenderPhrases(s);
 
   if (prefix) {
-    s = s
-      .replace(
-        /^(female|male) lead vocal(?:,?\s*(?:woman|man) singer)?(?:,?\s*clear articulate (?:female|male) voice)?\.?\s*/i,
-        "",
-      )
-      .trim();
-    s = `${prefix}. ${s}`;
+    s = `${prefix}. ${s}`.replace(/\s+/g, " ").trim();
   }
 
-  if (!/\b(clear|intelligible|articulate)\b/i.test(s)) {
-    s = `${s.replace(/\.\s*$/, "")}. ${ACE_STYLE_FALLBACK_CLARITY}`;
+  s = dedupeStyleClauses(s);
+
+  if (!/\b(clear|intelligible|diction)\b/i.test(s)) {
+    s = `${s.replace(/\.\s*$/, "")}. ${ACE_STYLE_FALLBACK_CLARITY}.`;
   }
   if (!/\b(full band|guitar|bass|drums)\b/i.test(s)) {
-    s = `${s.replace(/\.\s*$/, "")}. ${ACE_STYLE_FALLBACK_BAND}`;
+    s = `${s.replace(/\.\s*$/, "")}. ${ACE_STYLE_FALLBACK_BAND}.`;
+  }
+  if (!/\b(airy|open mix)\b/i.test(s)) {
+    s = `${s.replace(/\.\s*$/, "")}. ${ACE_STYLE_FALLBACK_MIX}.`;
   }
 
-  s = s.replace(/\s+/g, " ").trim();
-  if (s.length > ACE_STYLE_CAP) {
-    const cut = sanitizeAceStyleCaption(s, { max: ACE_STYLE_CAP });
-    s = cut || s.slice(0, ACE_STYLE_CAP).trim();
+  s = dedupeStyleClauses(s.replace(/\s+/g, " ").trim());
+
+  const max = ACE_STYLE_TARGET;
+  if (s.length > max) {
+    const cut = sanitizeAceStyleCaption(s, { max });
+    s = cut || s.slice(0, max).trim();
   }
   return s;
 }

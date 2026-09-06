@@ -467,7 +467,7 @@ JSON strict: { "names": [string, string, string, string], "name": string, "aka":
 
   // Timbre figé dès la création IA — sans obliger l’utilisateur à enregistrer sa voix.
   try {
-    const { lockSynthesizedTimbre, ensureArtistTimbre } = await import("./artistTimbre.js");
+    const { lockSynthesizedTimbre, ensureArtistTimbre } = await import("../artistTimbre.js");
     if (isSelf && selfVoiceSample && keys?.geminiApiKey) {
       const analyzed = await ensureArtistTimbre(keys, profile, { force: true });
       if (analyzed?.artist) profile = analyzed.artist;

@@ -6,6 +6,15 @@ import {
   Radio,
   XCircle,
 } from "lucide-preact";
+import {
+  DEFAULT_ACESTEP_BASE,
+  DEFAULT_GPU_ARBITER,
+  DEFAULT_GPU_ARBITER_LAN,
+  DEFAULT_SONGGEN_BASE,
+  DOCS_ACE_STEP,
+  DOCS_SONGGEN,
+  DOCS_REPLICATE_TOKENS,
+} from "../lib/keys/urls.js";
 import { saveKeysAsync, isStudioEnabled, keysAfterStudioToggle } from "../lib/keys.js";
 import { api } from "../lib/apiClient.js";
 import AceStepModelsPanel from "./AceStepModelsPanel.jsx";
@@ -17,21 +26,21 @@ const STUDIOS = [
     title: "ACE-Step Studio",
     kind: "local",
     blurb: "Local Pinokio — voix + toutes langues, jusqu’à ~8 min.",
-    docs: "https://github.com/timoncool/ACE-Step-Studio",
+    docs: DOCS_ACE_STEP,
   },
   {
     id: "songgen",
     title: "SongGeneration Studio",
     kind: "local",
     blurb: "Local Pinokio — chante surtout EN / ZH (FR via MiniMax).",
-    docs: "https://github.com/BazedFrog/SongGeneration-Studio",
+    docs: DOCS_SONGGEN,
   },
   {
     id: "replicate",
     title: "MiniMax (Replicate)",
     kind: "cloud",
     blurb: "Cloud — toutes langues. Token aussi utilisé pour Flux et Seedance.",
-    docs: "https://replicate.com/account/api-tokens",
+    docs: DOCS_REPLICATE_TOKENS,
   },
 ];
 
@@ -493,11 +502,35 @@ export default function MusicStudiosPanel({ keys, onChange, onKeysReplace }) {
                   <input
                     type="url"
                     class="input input-bordered w-full bg-base-100 font-mono text-sm"
-                    placeholder="http://127.0.0.1:3001"
+                    placeholder={DEFAULT_ACESTEP_BASE}
                     value={keys.aceStepBaseUrl || ""}
                     onInput={(e) => onChange("aceStepBaseUrl", e.currentTarget.value)}
                     onBlur={() => void probeAce()}
                   />
+                </label>
+                <label class="form-control w-full max-w-xl">
+                  <span class="mb-1 flex items-center justify-between text-sm">
+                    URL GPU Arbiter
+                    <a
+                      href={DEFAULT_GPU_ARBITER}
+                      target="_blank"
+                      rel="noreferrer"
+                      class="inline-flex items-center gap-1 text-xs text-secondary hover:underline"
+                    >
+                      Dashboard <ExternalLink size={12} />
+                    </a>
+                  </span>
+                  <input
+                    type="url"
+                    class="input input-bordered w-full bg-base-100 font-mono text-sm"
+                    placeholder={DEFAULT_GPU_ARBITER}
+                    value={keys.gpuArbiterUrl || ""}
+                    onInput={(e) => onChange("gpuArbiterUrl", e.currentTarget.value)}
+                  />
+                  <span class="mt-1 text-xs text-base-content/50">
+                    File GPU (exclusif SFT). Tunnel public recommandé ; LAN Demeter :{" "}
+                    {DEFAULT_GPU_ARBITER_LAN}
+                  </span>
                 </label>
                 {st.status === "ok" && (
                   <AceStepModelsPanel
@@ -534,7 +567,7 @@ export default function MusicStudiosPanel({ keys, onChange, onKeysReplace }) {
                   <input
                     type="url"
                     class="input input-bordered w-full bg-base-100 font-mono text-sm"
-                    placeholder="http://127.0.0.1:7860"
+                    placeholder={DEFAULT_SONGGEN_BASE}
                     value={keys.songGenBaseUrl || ""}
                     onInput={(e) => onChange("songGenBaseUrl", e.currentTarget.value)}
                     onBlur={() => void probeSong()}

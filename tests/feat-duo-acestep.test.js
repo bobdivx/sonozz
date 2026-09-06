@@ -359,7 +359,7 @@ hook line`,
     });
     assert.equal(body.taskType, "cover");
     assert.ok(body.audioCoverStrength < 0.4);
-    assert.match(body.instruction, /chorus instrumentation lifts|final chorus biggest/i);
+    assert.match(body.instruction, /Obey \[singer 1\]|Clear lead vocal|keep groove/i);
   });
 
   it("langues différentes → style bilingue, vocalLanguage = lead", () => {

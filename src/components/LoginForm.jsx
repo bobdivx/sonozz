@@ -23,16 +23,19 @@ export default function LoginForm({
   next = "/",
   error = "",
   errorCode = "",
+  initialEmail = "",
   oidcConfigured = false,
   passwordConfigured = true,
   preferSso = false,
 }) {
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(String(initialEmail || ""));
   const [ssoLinked, setSsoLinked] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(!preferSso);
 
   const queryError = ERROR_MESSAGES[errorCode] || "";
   const alert = error || queryError;
+  const ssoRequired =
+    alert === SSO_PASSWORD_BLOCKED || errorCode === "sso_config";
 
   useEffect(() => {
     const value = email.trim().toLowerCase();
@@ -57,8 +60,9 @@ export default function LoginForm({
     };
   }, [email, oidcConfigured]);
 
-  const hidePassword = ssoLinked;
-  const ssoFirst = preferSso || hidePassword;
+  // Compte SSO connu (API ou erreur serveur) → masquer le mot de passe.
+  const hidePassword = ssoLinked || ssoRequired;
+  const ssoFirst = preferSso || hidePassword || ssoRequired;
 
   const ssoButton = oidcConfigured ? (
     <a
@@ -67,6 +71,18 @@ export default function LoginForm({
     >
       Continuer avec Pocket ID
     </a>
+  ) : null;
+
+  const ssoMissingConfig = !oidcConfigured && hidePassword ? (
+    <p class="rounded-md bg-warning/15 px-3 py-2 text-sm text-warning" role="status">
+      {SSO_PASSWORD_BLOCKED}. Le SSO n’est pas configuré sur ce serveur (variables{" "}
+      <code class="text-xs">OIDC_ISSUER</code>, <code class="text-xs">OIDC_CLIENT_ID</code>,{" "}
+      <code class="text-xs">OIDC_CLIENT_SECRET</code> manquantes). Utilise{" "}
+      <a class="underline" href="https://sonozz.briseteia.me/login">
+        sonozz.briseteia.me
+      </a>{" "}
+      ou ajoute-les au <code class="text-xs">.env</code> local.
+    </p>
   ) : null;
 
   const passwordForm = passwordConfigured && !hidePassword ? (
@@ -107,7 +123,7 @@ export default function LoginForm({
         />
       </label>
 
-      {alert && (
+      {alert && !ssoRequired && (
         <p class="rounded-md bg-error/15 px-3 py-2 text-sm text-error" role="alert">
           {alert}
         </p>
@@ -133,9 +149,13 @@ export default function LoginForm({
           onInput={(e) => setEmail(e.currentTarget.value)}
         />
       </label>
-      <p class="rounded-md bg-warning/15 px-3 py-2 text-sm text-warning" role="status">
-        {SSO_PASSWORD_BLOCKED}
-      </p>
+      {oidcConfigured ? (
+        <p class="rounded-md bg-warning/15 px-3 py-2 text-sm text-warning" role="status">
+          {SSO_PASSWORD_BLOCKED} — utilise le bouton ci-dessus.
+        </p>
+      ) : (
+        ssoMissingConfig
+      )}
     </div>
   ) : null;
 
@@ -166,7 +186,12 @@ export default function LoginForm({
       )}
       {!ssoFirst && divider}
       {!ssoFirst && ssoButton}
-      {hidePassword && alert && (
+      {!oidcConfigured && !hidePassword && passwordConfigured && (
+        <p class="text-center text-xs text-base-content/40">
+          Pocket ID non configuré en local (OIDC_* absentes).
+        </p>
+      )}
+      {hidePassword && alert && alert !== SSO_PASSWORD_BLOCKED && (
         <p class="rounded-md bg-error/15 px-3 py-2 text-sm text-error" role="alert">
           {alert}
         </p>

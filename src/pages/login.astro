@@ -31,6 +31,7 @@ if (session) {
 }
 
 let error = "";
+let postedEmail = "";
 const passwordConfigured = isAuthConfigured();
 const oidcConfigured = isOidcConfigured();
 const preferSso = Astro.cookies.get(SSO_HINT_COOKIE)?.value === "1";
@@ -43,6 +44,7 @@ if (Astro.request.method === "POST") {
     const email = String(form.get("email") || "").trim();
     const password = String(form.get("password") || "");
     const formNext = safeNext(String(form.get("next") || next));
+    postedEmail = email;
 
     if (!email || !password) {
       error = "Email et mot de passe requis";
@@ -64,6 +66,8 @@ if (Astro.request.method === "POST") {
     }
   }
 }
+
+const forceSsoUi = error === SSO_PASSWORD_BLOCKED;
 ---
 
 <Layout title="SONOZZ — Connexion" description="Connexion au studio SONOZZ.">
@@ -116,9 +120,10 @@ if (Astro.request.method === "POST") {
       next={next}
       error={error}
       errorCode={errorCode}
+      initialEmail={postedEmail}
       oidcConfigured={oidcConfigured}
       passwordConfigured={passwordConfigured}
-      preferSso={preferSso && oidcConfigured}
+      preferSso={(preferSso || forceSsoUi) && oidcConfigured}
     />
   </div>
 </Layout>

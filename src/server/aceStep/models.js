@@ -23,12 +23,16 @@ export const ACE_STEP_ENGINE_DIT_IDS = [
 
 /** Métadonnées affichage / steps (hors moteur). */
 /**
- * CFG SFT/Base : 6.5–7 « over-saturate » le rendu (harsh, dense).
- * 5.5 = assez fidèle au prompt, plus d’air dans le mix.
+ * CFG SFT/Base : docs ACE ≈ 5–9 (défaut HF 7).
+ * 5.0 = un peu plus d’air ; shift=3 reste critique pour la stabilité.
  * Peak norm Studio défaut −1 dBFS = master trop hot → −2.5 dB de headroom.
  */
-export const ACE_SFT_GUIDANCE = 5.5;
+export const ACE_SFT_GUIDANCE = 5.0;
 export const ACE_NORMALIZATION_DB = -2.5;
+/** Timestep shift — docs ACE : 3.0 (défaut API 1.0 = distribution pourrie). */
+export const ACE_TIMESTEP_SHIFT = 3.0;
+/** Steps SFT : docs recommandent 32–64 ; 50+ sur VRAM juste → collapse fréquent. */
+export const ACE_SFT_STEPS = 32;
 
 export const ACE_STEP_MODELS = [
   {
@@ -41,7 +45,7 @@ export const ACE_STEP_MODELS = [
   {
     id: "acestep-v15-xl-sft",
     label: "XL SFT",
-    steps: 50,
+    steps: ACE_SFT_STEPS,
     guidance: ACE_SFT_GUIDANCE,
     vramGb: 20,
   },
@@ -62,7 +66,7 @@ export const ACE_STEP_MODELS = [
   {
     id: "acestep-v15-xl-base",
     label: "XL Base",
-    steps: 50,
+    steps: ACE_SFT_STEPS,
     guidance: ACE_SFT_GUIDANCE,
     vramGb: 20,
   },
@@ -70,7 +74,7 @@ export const ACE_STEP_MODELS = [
   {
     id: "acestep-v15-xl-merge-sft-turbo",
     label: "XL Merge",
-    steps: 50,
+    steps: ACE_SFT_STEPS,
     guidance: ACE_SFT_GUIDANCE,
     vramGb: 16,
     engineKnown: false,
@@ -140,7 +144,7 @@ export function aceStepInferenceForModel(modelId) {
     };
   }
   return {
-    inferenceSteps: isTurbo ? 8 : 50,
+    inferenceSteps: isTurbo ? 8 : ACE_SFT_STEPS,
     guidanceScale: isTurbo ? 0 : ACE_SFT_GUIDANCE,
     isTurbo,
   };
@@ -154,9 +158,8 @@ export function listAceStepSwitchableModels(catalogModels = []) {
 }
 
 /**
- * Choisit le DiT à envoyer : préférence user (si Gradio), sinon actif, sinon premier préchargé.
- * Ignore les IDs ghost UI (Merge, etc.).
- * SFT est autorisé si préféré ; la porte VRAM (résidence GPU) est appliquée après switch.
+ * Choisit le DiT : preview/same-sex → Turbo ; sinon préférence user (SFT respecté).
+ * Porte VRAM / résidence appliquée après switch dans generate.js.
  */
 export function isAceStepSftModel(modelId) {
   const id = String(modelId || "");
@@ -173,9 +176,8 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
   const allSwitchableIds = new Set(switchable.map((m) => m.id));
   const duo = Boolean(opts?.duo);
   const sameSexDuo = Boolean(opts?.sameSexDuo);
-  // Preview / duo same-sex / indie organique : Turbo d’abord (SFT → mash / vocoder fréquent).
-  const preferTurbo = Boolean(opts?.preferTurbo || opts?.preview || sameSexDuo);
   const forceId = String(opts?.forceModelId || "").trim();
+  const preview = Boolean(opts?.preview);
 
   const turboBf16Short = "acestep-v15-xl-turbo-bf16";
   const turboBf16 = "marcorez8/acestep-v15-xl-turbo-bf16";
@@ -193,7 +195,8 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
     return null;
   };
 
-  if (preferTurbo) {
+  // Extrait / duo same-sex : Turbo d’abord (stabilité). Complet + préférence SFT = SFT.
+  if (preview || sameSexDuo) {
     const id =
       pickReady(turboBf16Short, turboBf16, turbo) ||
       pickReady(sft) ||
@@ -203,13 +206,11 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
       modelId: id,
       reason: sameSexDuo
         ? `duo same-sex · ${aceStepModelLabel(id)} (Turbo privilégié)`
-        : opts?.preview || opts?.preferTurbo
-          ? `preview · ${aceStepModelLabel(id)} (Turbo privilégié)`
-          : `pipeline · ${aceStepModelLabel(id)} (Turbo privilégié)`,
+        : `preview · ${aceStepModelLabel(id)} (Turbo privilégié)`,
     };
   }
 
-  // Préférence utilisateur = priorité (SFT inclus — porte VRAM après switch).
+  // Préférence utilisateur = priorité absolue sur le complet (SFT inclus).
   if (preferredId && isAceStepEngineDit(preferredId)) {
     return {
       modelId: preferredId,
@@ -217,6 +218,19 @@ export function pickAceStepModel(catalog = {}, opts = {}) {
         ? `forcé · ${aceStepModelLabel(preferredId)}${duo ? " · duo" : ""}`
         : `forcé · ${aceStepModelLabel(preferredId)} (téléchargement possible)`,
       needsResidentGate: isAceStepSftModel(preferredId),
+    };
+  }
+
+  // preferTurbo optionnel (lab / callers) seulement s’il n’y a PAS de préférence.
+  if (opts?.preferTurbo) {
+    const id =
+      pickReady(turboBf16Short, turboBf16, turbo) ||
+      pickReady(sft) ||
+      readyIds[0] ||
+      turboBf16Short;
+    return {
+      modelId: id,
+      reason: `pipeline · ${aceStepModelLabel(id)} (Turbo privilégié)`,
     };
   }
 

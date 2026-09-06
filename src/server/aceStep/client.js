@@ -3,11 +3,23 @@ import {
   aceStepModelLabel,
   isAceStepEngineDit,
 } from "./models.js";
+import { DEFAULT_GPU_ARBITER } from "../../lib/keys/urls.js";
 
-export const DEFAULT_GPU_ARBITER = "http://10.1.0.88:8790";
+export { DEFAULT_GPU_ARBITER };
 export const POLL_MS = 3000;
 export const MAX_POLLS = 400;
 const AUTH_USER = "sonozz";
+
+/** URL arbitre GPU (Paramètres → Morceaux), sinon env, sinon tunnel public. */
+export function resolveGpuArbiterUrl(keys) {
+  const fromKeys = String(keys?.gpuArbiterUrl || "").trim().replace(/\/+$/, "");
+  if (fromKeys) return fromKeys;
+  const fromEnv = String(process.env.GPU_ARBITER_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (fromEnv) return fromEnv;
+  return DEFAULT_GPU_ARBITER;
+}
 
 const tokenCache = new Map();
 

@@ -5,6 +5,7 @@ import {
   isAceStepSftModel,
   pickAceStepModel,
   ACE_FALLBACK_LIGHT_MODEL,
+  ACE_TIMESTEP_SHIFT,
 } from "./models.js";
 import {
   POLL_MS,
@@ -31,6 +32,7 @@ import {
   ensureAceStepVram,
   isAceStepGhostLoad,
   aceStepMinResidentVramGb,
+  aceStepVramHeadroomGb,
 } from "./lifecycle.js";
 import {
   isAceHostedAudioUrl,
@@ -39,8 +41,10 @@ import {
 import {
   isAceNanLatentsError,
   isAceVramError,
+  isAceNoiseWallError,
   isUnusableAceReferenceError,
 } from "./errors.js";
+import { probeAceNoiseWall } from "./noiseProbe.js";
 import {
   normalizeFeatArtist,
   vocalLockForArtist,
@@ -91,33 +95,36 @@ export async function startAceStep(keys, {
       featLock?.genderCode &&
       leadLock.genderCode === featLock.genderCode,
   );
-  // SFT → vocoder fréquent sur indie/folk/acoustic ; Turbo plus stable (comme preview / same-sex).
-  const organicBlob = [
-    artist?.genre,
-    styleLock?.genreSummary,
-    ...(Array.isArray(styleLock?.genres) ? styleLock.genres : []),
-    prompt,
-  ]
-    .filter(Boolean)
-    .join(" ");
-  const organicPreferTurbo =
-    /indie|folk|acoustic|singer[- ]?songwriter|ballad|americana|dream pop|chamber pop|soft rock/i.test(
-      organicBlob,
-    ) && !/metal|trap|drill|edm|techno|hyperpop|industrial|\bebm\b/i.test(organicBlob);
-  const pick = pickAceStepModel(catalog, {
-    // Lab : pas de préférence settings. Pipeline : respecte SFT préféré + porte VRAM après.
-    preferredId: labMode
-      ? null
-      : String(keys?.aceStepPreferredModel || "").trim() || null,
+  // Complet : SFT XL = mur de bruit récurrent sur ce GPU malgré params OK.
+  // Préférence SFT ignorée en pipeline → Turbo. Lab / forceAceModelId pour forcer SFT.
+  const preferredRaw = labMode
+    ? null
+    : String(keys?.aceStepPreferredModel || "").trim() || null;
+  const skipSftPreferred =
+    Boolean(preferredRaw) &&
+    isAceStepSftModel(preferredRaw) &&
+    !labMode &&
+    !forceModelId &&
+    !preview;
+  if (skipSftPreferred) {
+    console.warn(
+      "[acestep] préférence SFT ignorée en Complet (mur de bruit récurrent) → Turbo. Lab pour tester SFT.",
+    );
+  }
+  let pick = pickAceStepModel(catalog, {
+    preferredId: skipSftPreferred ? null : preferredRaw,
     duo,
     sameSexDuo,
-    preferTurbo: (!labMode && (Boolean(preview) || organicPreferTurbo)) || undefined,
+    preferTurbo: skipSftPreferred ? true : undefined,
     preview: Boolean(preview) && !labMode,
     forceModelId,
   });
   let pickReason = pick.reason;
+  if (skipSftPreferred && /turbo/i.test(String(pick.modelId || ""))) {
+    pickReason = `pipeline · ${aceStepModelLabel(pick.modelId)} (SFT contourné)`;
+  }
   let active = String(catalog.activeModel || "").trim();
-  const wantSft = isAceStepSftModel(pick.modelId) && !labMode;
+  let wantSft = isAceStepSftModel(pick.modelId) && !labMode;
 
   // Caption LLM AVANT l’arbiter SFT (qui stoppe LLM/Wan local).
   let styleCaption = null;
@@ -146,7 +153,7 @@ export async function startAceStep(keys, {
 
   // SFT : file d’attente arbitre + stop LLM/Wan pour libérer la VRAM avant le switch DiT.
   if (wantSft) {
-    const slot = await ensureAceGpuSlot(keys, {
+    let slot = await ensureAceGpuSlot(keys, {
       timeoutMs: 300_000,
       exclusive: true,
     });
@@ -156,20 +163,90 @@ export async function startAceStep(keys, {
           "GPU prioritaire Steam — l’arbitre bloque ACE. Ferme le jeu puis réessaie.",
       );
     }
-    if (!slot.ok && !slot.skipped) {
-      console.warn("[acestep] acquire exclusif SFT:", slot.error || slot.data);
+    // Arbiter down / skip : on continue en SFT (ACE souvent déjà up via tunnel).
+    if (slot.arbiterDown || (slot.skipped && slot.ok)) {
+      console.warn(
+        "[acestep] SFT sans exclusif arbiter —",
+        slot.data?.message || slot.error || "bypass",
+        "· libération VRAM locale…",
+      );
+      try {
+        await ensureAceStepVram(keys, { modelId: pick.modelId, skipSwitch: true });
+      } catch (e) {
+        console.warn("[acestep] libération VRAM:", e?.message || e);
+      }
+    } else if (!slot.ok && !slot.skipped) {
+      console.warn("[acestep] acquire exclusif SFT (1/2):", slot.error || slot.data);
+      await new Promise((r) => setTimeout(r, 4000));
+      slot = await ensureAceGpuSlot(keys, {
+        timeoutMs: 180_000,
+        exclusive: true,
+      });
+      if (slot.arbiterDown || (slot.skipped && slot.ok)) {
+        console.warn("[acestep] SFT sans exclusif arbiter (retry) — on continue");
+      } else if (!slot.ok && !slot.skipped) {
+        // Refus explicite arbiter (pas un réseau down) → erreur claire.
+        throw new Error(
+          `SFT : arbitre GPU a refusé l’exclusif (${String(slot.error || slot.data || "?").slice(0, 160)}). ` +
+            `Libère Steam/LLM/Wan ou corrige l’arbiter. Pas de bascule Turbo.`,
+        );
+      } else {
+        console.info(
+          "[acestep] GPU arbiter SFT…",
+          slot.data?.message || "ok",
+          slot.data?.vram_used_mib != null ? `· ${slot.data.vram_used_mib} MiB` : "",
+        );
+      }
     } else {
       console.info(
         "[acestep] GPU arbiter SFT…",
         slot.data?.message || "ok",
         slot.data?.vram_used_mib != null ? `· ${slot.data.vram_used_mib} MiB` : "",
       );
-      // Laisse la VRAM retomber après stop LLM/Wan avant de charger SFT (~20 Go).
-      for (let i = 0; i < 15; i++) {
-        const g = await readAceStepGpu(keys);
-        if (g.freeGb != null && g.freeGb >= 16) break;
-        await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    // Avant switch : assez de free pour CHARGER SFT (≥14).
+    // Si SFT déjà résident (~12 Go used) : seulement la marge diffusion (headroom).
+    const loadFreeMin = 14;
+    const residentMin = aceStepMinResidentVramGb(pick.modelId);
+    const headroomMin = aceStepVramHeadroomGb(pick.modelId);
+    let freeGb = null;
+    let usedGb = null;
+    for (let i = 0; i < 30; i++) {
+      const g = await readAceStepGpu(keys);
+      freeGb = g.freeGb;
+      usedGb = g.usedGb;
+      const resident = usedGb != null && usedGb >= residentMin;
+      if (resident) {
+        if (freeGb != null && freeGb >= headroomMin) break;
+      } else if (freeGb != null && freeGb >= loadFreeMin) {
+        break;
       }
+      if (i === 10 || i === 20) {
+        try {
+          await ensureAceStepVram(keys, {
+            modelId: pick.modelId,
+            skipSwitch: true,
+          });
+        } catch (e) {
+          console.warn("[acestep] libération VRAM SFT:", e?.message || e);
+        }
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    const resident = usedGb != null && usedGb >= residentMin;
+    if (resident) {
+      if (freeGb != null && freeGb < headroomMin) {
+        throw new Error(
+          `SFT : marge VRAM trop juste (libre ${freeGb} Go < ${headroomMin}). ` +
+            `Stoppe LiteLLM / autres apps GPU sur https://gpu.briseteia.me puis relance.`,
+        );
+      }
+    } else if (freeGb != null && freeGb < loadFreeMin) {
+      throw new Error(
+        `SFT refusé : seulement ${freeGb} Go libres pour charger (cible ≥${loadFreeMin}). ` +
+          `Sur https://gpu.briseteia.me clique Release / stoppe LiteLLM, Pinokio No LM, puis relance.`,
+      );
     }
   }
 
@@ -230,13 +307,17 @@ export async function startAceStep(keys, {
         );
       }
     }
-    // Ready ≠ VRAM résidente — attendre le seuil SFT (≥14 Go).
+    // Ready ≠ VRAM résidente — sans poids GPU = mur de bruit quasi sûr.
     if (wantSft) {
       const resident = await waitForAceStepResidentVram(keys, pick.modelId, {
         budgetMs: 180_000,
       });
       if (!resident.ok) {
-        console.warn("[acestep]", resident.message);
+        throw new Error(
+          resident.message ||
+            `SFT pas résident GPU (seuil ≥${aceStepMinResidentVramGb(pick.modelId)} Go). ` +
+              `Relance ACE / Release sur l’arbitre, puis réessaie.`,
+        );
       }
     }
   }
@@ -374,6 +455,7 @@ export async function startAceStep(keys, {
     `active=${active || "?"}`,
     `steps=${body.inferenceSteps}`,
     `cfg=${body.guidanceScale}`,
+    `shift=${body.shift ?? ACE_TIMESTEP_SHIFT}`,
     `lang=${body.vocalLanguage}`,
     `dur=${body.duration}s`,
     `bpm=${body.bpm || "?"}`,
@@ -381,6 +463,7 @@ export async function startAceStep(keys, {
     `str=${body.audioCoverStrength ?? "-"}`,
     body.sourceAudioUrl ? "src=ON" : "src=OFF",
     refUrl ? `ref=${String(referenceAudioTitle || "").slice(0, 40) || "audio"}` : "ref=OFF",
+    `caption=${String(body.style || "").slice(0, 120).replace(/\s+/g, " ")}…`,
   );
 
   let created;
@@ -555,11 +638,15 @@ export async function generateMusicWithAceStep(keys, opts = {}) {
       return run({ referenceAudioUrl: "" });
     }
     if (
-      (isAceNanLatentsError(e) || isAceVramError(e)) &&
-      !opts.forceModelId &&
-      opts.forceModelId !== ACE_FALLBACK_LIGHT_MODEL
+      (isAceNanLatentsError(e) || isAceVramError(e) || isAceNoiseWallError(e)) &&
+      String(opts.forceModelId || "") !== ACE_FALLBACK_LIGHT_MODEL
     ) {
-      console.warn("[acestep] NaN/VRAM — retry Turbo BF16:", e.message);
+      console.warn(
+        "[acestep]",
+        isAceNoiseWallError(e) ? "mur de bruit SFT" : "NaN/VRAM",
+        "— retry Turbo BF16:",
+        e.message,
+      );
       try {
         await switchAceStepModel(keys, ACE_FALLBACK_LIGHT_MODEL);
       } catch (sw) {
@@ -568,6 +655,7 @@ export async function generateMusicWithAceStep(keys, opts = {}) {
       return run({
         forceModelId: ACE_FALLBACK_LIGHT_MODEL,
         referenceAudioUrl: "",
+        skipNoiseProbe: true,
       });
     }
     throw e;
@@ -580,6 +668,28 @@ async function generateMusicWithAceStepOnce(keys, opts = {}) {
     await new Promise((r) => setTimeout(r, POLL_MS));
     const tick = await pollAceStep(keys, started.generationId);
     if (tick.done) {
+      const usedSft =
+        isAceStepSftModel(started.model) && !opts.labMode && !opts.skipNoiseProbe;
+      if (usedSft && tick.url) {
+        try {
+          const probe = await probeAceNoiseWall(keys, tick.url);
+          if (probe?.noiseWall) {
+            console.warn(
+              "[acestep] probe mur de bruit SFT:",
+              probe.reason || "noiseWall=true",
+            );
+            throw new Error(
+              `ACE_NOISE_WALL: SFT a renvoyé un mur de bruit (${probe.reason || "inutilisable"}). Retry Turbo BF16.`,
+            );
+          }
+          if (probe) {
+            console.info("[acestep] probe audio OK (pas de mur de bruit)");
+          }
+        } catch (e) {
+          if (isAceNoiseWallError(e)) throw e;
+          console.warn("[acestep] probe audio ignoré:", e?.message || e);
+        }
+      }
       return {
         url: tick.url,
         provider: tick.provider,
