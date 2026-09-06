@@ -1,12 +1,12 @@
-import { json, error, readBody } from "../../../../server/http.js";
+import { json, error, readBody } from "../../../server/http.js";
 import {
   createSessionToken,
   SESSION_COOKIE,
   sessionCookieOptions,
-} from "../../../../server/auth.js";
-import { acceptInvitation, findPendingInviteByToken } from "../../../../server/invites.js";
-import { ROLE_MEMBER } from "../../../../server/users.js";
-import { SSO_HINT_COOKIE, oidcCookieOptions } from "../../../../server/oidc.js";
+} from "../../../server/auth.js";
+import { acceptInvitation, findPendingInviteByToken } from "../../../server/invites.js";
+import { ROLE_MEMBER } from "../../../server/users.js";
+import { SSO_HINT_COOKIE, oidcCookieOptions } from "../../../server/oidc.js";
 
 export const prerender = false;
 
