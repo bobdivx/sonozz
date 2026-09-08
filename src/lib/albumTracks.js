@@ -13,6 +13,20 @@ export function albumHasWorkLeft(album) {
   );
 }
 
+/** Nombre de pistes encore à générer pour atteindre targetCount. */
+export function albumMissingCount(album, targetCount) {
+  const tracks = album?.tracks || [];
+  const target = Math.min(
+    12,
+    Math.max(tracks.length, Number(targetCount || album?.targetCount) || tracks.length || 0),
+  );
+  return Math.max(0, target - tracks.length);
+}
+
+export function albumNeedsMoreTracks(album, targetCount) {
+  return albumMissingCount(album, targetCount) > 0;
+}
+
 export function albumDoneCount(album) {
   return (album?.tracks || []).filter((t) => t.status === "done").length;
 }

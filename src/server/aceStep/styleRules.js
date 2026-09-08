@@ -9,7 +9,7 @@
 export const ACE_STYLE_CAP = 700;
 
 /** Bump si les règles changent (invalide le cache mémoire). */
-export const ACE_STYLE_RULES_VERSION = 6;
+export const ACE_STYLE_RULES_VERSION = 7;
 
 /** Cible caption — au-delà ACE sature (noise wall). */
 export const ACE_STYLE_TARGET = 360;
@@ -59,6 +59,7 @@ export function buildAceStyleBriefLocks({
   genderCode = null,
   duo = false,
   bilingualBit = null,
+  trackArc = null,
 } = {}) {
   return {
     mustKeep: [
@@ -66,14 +67,17 @@ export function buildAceStyleBriefLocks({
       ...ACE_STYLE_MUST_CORE,
       duo ? "singer 1 / singer 2 distinct" : null,
       bilingualBit || null,
+      trackArc ? "keep this track's instrumentArc verbatim once" : null,
     ].filter(Boolean),
     avoid: [...ACE_STYLE_AVOID],
+    trackArc: trackArc || null,
   };
 }
 
 export function aceStyleLlmRulesBlock(brief = {}) {
   const must = (brief.mustKeep || []).join("; ");
   const avoid = (brief.avoid || ACE_STYLE_AVOID).join("; ");
+  const trackArc = String(brief?.trackArc || "").trim();
   return `Rules:
 - Output ONE short English style caption (~${ACE_STYLE_TARGET} chars max, prefer ~300).
 - Keep MUST: ${must}.
@@ -81,6 +85,7 @@ export function aceStyleLlmRulesBlock(brief = {}) {
 - Start with gender ONCE: "${aceGenderHardPrefix(brief?.lead?.gender) || "lead vocal"}" — never repeat it.
 - Then: genre, full band, clear lyrics, airy mix, instrument-layer section arc — each ONCE.
 - Name which layers enter/exit (verse sparse → chorus adds guitar/keys/pads) — "thicker" alone is not enough.
+${trackArc ? `- Include this track instrument plan once: "${trackArc.slice(0, 200)}"` : ""}
 - No essays, no duplicate sentences, no second genre.`;
 }
 

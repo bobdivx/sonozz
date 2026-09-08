@@ -282,6 +282,7 @@ export async function runAlbumJob({
           title: working.album.title || plan.albumTitle || working.album.title,
           concept: working.album.concept || plan.concept || "",
           withFeats: Boolean(withFeats || project.album?.withFeats),
+          targetCount: total,
           jobId,
           live: {
             percent: 8,
@@ -309,6 +310,63 @@ export async function runAlbumJob({
         message: "Tracklist prête — génération des titres…",
         label: plan.albumTitle ? `Album · ${plan.albumTitle}` : `Album · ${total} titres`,
       });
+    } else {
+      // Reprise : compléter jusqu’à targetCount si des singles ont été ajoutés / taille augmentée
+      const gap = Math.max(0, total - (working.album.tracks || []).length);
+      if (gap > 0) {
+        await setAlbumLive(6, `Planification de ${gap} titre${gap > 1 ? "s" : ""} manquant${gap > 1 ? "s" : ""}…`, {
+          persistNow: true,
+        });
+        const plan = await api.albumPlan({
+          artist: project.artist,
+          lyrics: project.lyrics,
+          track: project.track,
+          count: gap,
+        });
+        if (abortState.aborted) throw Object.assign(new Error("Album annulé"), { name: "AbortError" });
+
+        const startIndex = (working.album.tracks || []).length + 1;
+        const plannedTracks = (plan.tracks || []).slice(0, gap).map((t, i) => ({
+          id: `${createAlbumTrackId()}_pad_${i}`,
+          index: startIndex + i,
+          role: "album",
+          theme: t.theme,
+          workingTitle: t.workingTitle || `Piste ${startIndex + i}`,
+          trackRole: t.trackRole || undefined,
+          lyrics: null,
+          track: null,
+          status: "pending",
+        }));
+        const withAssignedFeats =
+          withFeats || working.album?.withFeats
+            ? assignAlbumAutoFeats(plannedTracks, featArtists)
+            : plannedTracks;
+
+        working = {
+          ...working,
+          album: {
+            ...working.album,
+            targetCount: total,
+            title: working.album.title || plan.albumTitle || working.album.title,
+            concept: working.album.concept || plan.concept || working.album.concept || "",
+            tracks: [...working.album.tracks, ...withAssignedFeats],
+            updatedAt: new Date().toISOString(),
+          },
+        };
+        syncWorking(working);
+        await persistAlbum({
+          stepKey: "album",
+          eventType: "album",
+          message: `Album · ${gap} titre${gap > 1 ? "s" : ""} ajouté${gap > 1 ? "s" : ""} à la tracklist`,
+        });
+        lastLivePersistAt = Date.now();
+      } else if (working.album.targetCount !== total) {
+        working = {
+          ...working,
+          album: { ...working.album, targetCount: total, updatedAt: new Date().toISOString() },
+        };
+        syncWorking(working);
+      }
     }
 
     await ensureAlbumArtwork();
@@ -432,12 +490,20 @@ export async function runAlbumJob({
       }
 
       let trackI;
+      let variation;
       try {
         const albumTotalForArc = albumTotal;
-        const usedRoles = (getWorking?.() || working).album.tracks
-          .filter((t) => t.id !== slot.id && t.sonicRole)
-          .map((t) => t.sonicRole);
-        const variation = applySonicVariation({
+        const siblings = (getWorking?.() || working).album.tracks.filter(
+          (t) => t.id !== slot.id,
+        );
+        const usedRoles = siblings.filter((t) => t.sonicRole).map((t) => t.sonicRole);
+        const usedLeads = siblings
+          .map((t) => t.musicArrange?.leadInstrument || t.leadInstrument)
+          .filter(Boolean);
+        const usedDrums = siblings.map((t) => t.musicArrange?.drums).filter(Boolean);
+        const usedFeatures = siblings.flatMap((t) => t.musicArrange?.features || []);
+        const usedArcs = siblings.map((t) => t.instrumentArc).filter(Boolean);
+        variation = applySonicVariation({
           musicArrange: project.musicArrange,
           styleLock: project.artist?.styleLock,
           role: slot.trackRole || (slot.role === "lead" ? "single" : undefined),
@@ -446,7 +512,11 @@ export async function runAlbumJob({
           trackIndex: slot.index,
           trackTotal: albumTotalForArc,
           usedRoles,
+          usedLeads,
+          usedDrums,
+          usedFeatures,
         });
+        // Pas d’instrumentArc figé ici : le serveur (LLM) affine pour anti-clone album.
         mark({
           sonicRole: variation.sonicRole,
           musicArrange: variation.musicArrange,
@@ -454,13 +524,27 @@ export async function runAlbumJob({
         trackI = await api.track(
           {
             lyrics: lyricsI,
-            artist: artistWithSonicVariation(
-              {
-                ...project.artist,
-                featArtist: slotFeat || null,
-              },
-              variation,
-            ),
+            artist: {
+              ...artistWithSonicVariation(
+                {
+                  ...project.artist,
+                  featArtist: slotFeat || null,
+                },
+                variation,
+              ),
+              // Force le serveur à (re)générer un arc unique pour ce titre.
+              instrumentArc: undefined,
+              forceFreshInstrumentPlan: true,
+              trackRoleForced: variation.sonicRole,
+              albumTrackRole: variation.sonicRole,
+              albumTrackIndex: slot.index,
+              albumTrackTotal: albumTotalForArc,
+              usedSonicRoles: usedRoles,
+              usedLeads,
+              usedDrums,
+              usedFeatures,
+              usedInstrumentArcs: usedArcs,
+            },
           },
           (p) => {
             if (abortState.aborted) return;
@@ -515,6 +599,9 @@ export async function runAlbumJob({
         track: trackI,
         status: trackI?.audioUrl ? "done" : "error",
         error: trackI?.audioUrl ? undefined : "Pas d’audio",
+        sonicRole: trackI?.sonicRole || variation?.sonicRole,
+        instrumentArc: trackI?.instrumentArc || undefined,
+        musicArrange: trackI?.musicArrange || variation?.musicArrange,
       });
 
       try {

@@ -27,6 +27,7 @@ import {
   resolveDuoLanguages,
 } from "../../lib/featArtist.js";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
+import { composeInstrumentArc, normalizeSonicRole } from "../../lib/sonicVariation.js";
 import {
   ACE_STYLE_CAP,
   ACE_STYLE_TARGET,
@@ -296,14 +297,21 @@ export function assembleAceStepStyle({
       .slice(0, 32);
     const arrange = normalizeMusicArrange(lead?.musicArrange);
     const bandBed = aceStepBandBedCompact(styleLock, arrange);
-    const sectionArc = aceStepSectionDynamicsShort({ duo: false });
+    // Arc PAR PISTE (sonicRole / LLM) — sinon fallback générique.
+    const trackArc =
+      String(lead?.instrumentArc || "").trim() ||
+      (normalizeSonicRole(lead?.sonicRole)
+        ? composeInstrumentArc(lead.sonicRole, arrange)
+        : "") ||
+      aceStepSectionDynamicsShort({ duo: false });
+    const albumContrast = String(lead?.albumContrastBit || "").trim() || null;
     // Caption minimal — doublons / pavés → mur de bruit ACE.
-    // Arc INSTRUMENTAL explicite (pas seulement « thicker ») — sinon boucle plate.
     styleFinal = [
       `${genre}. ${gender}`,
       bandBed,
       langBit,
-      sectionArc,
+      trackArc,
+      albumContrast,
       mood || null,
     ]
       .filter(Boolean)
@@ -335,6 +343,8 @@ export function assembleAceStepStyle({
     instruments: Array.isArray(styleLock?.instruments)
       ? styleLock.instruments.slice(0, 6)
       : null,
+    trackArc: String(lead?.instrumentArc || "").trim() || null,
+    sonicRole: normalizeSonicRole(lead?.sonicRole) || null,
     skeleton: styleFinal,
     maxChars: ACE_STYLE_TARGET,
     ...buildAceStyleBriefLocks({
@@ -343,6 +353,7 @@ export function assembleAceStepStyle({
       bilingualBit: duoLangs?.bilingual
         ? `bilingual singer1=${duoLangs.leadLang} singer2=${duoLangs.featLang}`
         : null,
+      trackArc: String(lead?.instrumentArc || "").trim() || null,
     }),
   };
 

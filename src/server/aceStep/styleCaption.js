@@ -37,6 +37,8 @@ function cacheKey(brief) {
     lead: brief?.lead,
     feat: brief?.feat,
     instruments: brief?.instruments,
+    trackArc: brief?.trackArc,
+    sonicRole: brief?.sonicRole,
     skeleton: brief?.skeleton,
     maxChars: brief?.maxChars,
   });
@@ -69,6 +71,8 @@ ${JSON.stringify(
     instruments: brief?.instruments,
     leadLang: brief?.leadLang,
     featLang: brief?.featLang,
+    sonicRole: brief?.sonicRole,
+    trackInstrumentArc: brief?.trackArc,
   },
   null,
   0,

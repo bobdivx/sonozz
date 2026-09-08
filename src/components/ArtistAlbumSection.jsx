@@ -4,7 +4,14 @@ import AlbumAutonomePanel from "./AlbumAutonomePanel.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, isStudioEnabled } from "../lib/keys.js";
-import { emptyProject, isTrackAudioFinal, studioHref, artistAlbumHref } from "../lib/studio.js";
+import {
+  emptyProject,
+  isTrackAudioFinal,
+  studioHref,
+  artistAlbumHref,
+  createAlbumId,
+  createAlbumTrackId,
+} from "../lib/studio.js";
 import { cancelAlbumJob, startAlbumJob } from "../lib/jobRunner.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
 import { albumsApi } from "../lib/albumsApi.js";
@@ -12,6 +19,7 @@ import {
   albumStudioHref,
   cancelledAlbumState,
   ensureAlbumTrackProject,
+  albumHasWorkLeft,
 } from "../lib/albumTracks.js";
 
 /**
@@ -33,6 +41,11 @@ export default function ArtistAlbumSection({
   seedConcept = "",
   seedTargetCount = null,
   onAutoStarted,
+  onAlbumDeleted,
+  /** Singles libres (hors albums) pouvant être déplacés dans cet album. */
+  availableSingles = [],
+  /** Après ajout/retrait : rafraîchir le catalogue parent. */
+  onAlbumChanged,
 }) {
   const leadCandidates = createOnly
     ? releases.filter((r) => r.hasAudio && r.hasLyrics && !r.albumStatus && !r.albumLeadId)
@@ -56,6 +69,7 @@ export default function ArtistAlbumSection({
   const [canGenerateAudio, setCanGenerateAudio] = useState(false);
   const [showConfirmOverwrite, setShowConfirmOverwrite] = useState(false);
   const [pendingAlbumSize, setPendingAlbumSize] = useState(8);
+  const [addSingleBusy, setAddSingleBusy] = useState(false);
 
   const albumWorkingRef = useRef(null);
   const autoStartedRef = useRef(false);
@@ -100,6 +114,8 @@ export default function ArtistAlbumSection({
         setProject({ ...emptyProject(), ...(saved.project || {}) });
         setSeed(saved.seed || {});
         if (saved.project?.album) mirrorAlbumJob(saved.project.album, saved.id);
+        const tc = saved.project?.album?.targetCount || seedTargetCount;
+        if (tc) setAlbumSize(Number(tc) || 8);
       } catch (e) {
         if (!cancelled) setError(e.message || "Projet lead introuvable");
       } finally {
@@ -179,10 +195,165 @@ export default function ArtistAlbumSection({
   async function clearAlbum() {
     cancelAlbum();
     const base = albumWorkingRef.current || project;
-    if (!base?.album) return;
-    const next = { ...base, album: null };
-    syncAlbumWorking(next);
-    await persist(next, { stepKey: "album", eventType: "album", message: "Album effacé" });
+    if (base?.album) {
+      const next = { ...base, album: null };
+      syncAlbumWorking(next);
+      await persist(next, { stepKey: "album", eventType: "album", message: "Album effacé" });
+    }
+    if (dbAlbumId) {
+      await albumsApi.deleteAlbum(dbAlbumId);
+      onAlbumDeleted?.(dbAlbumId);
+    }
+  }
+
+  function buildLeadTrackEntry(base, leadProjectId) {
+    return (
+      (base?.album?.tracks || []).find((t) => t.role === "lead") || {
+        id: createAlbumTrackId(),
+        index: 1,
+        role: "lead",
+        theme: base?.lyrics?.theme || base?.track?.title || "",
+        workingTitle: base?.lyrics?.title || base?.track?.title || "Lead",
+        lyrics: base?.lyrics || null,
+        track: base?.track || null,
+        projectId: leadProjectId,
+        status: "done",
+      }
+    );
+  }
+
+  function ensureAlbumSkeleton(base) {
+    if (base?.album?.tracks?.length) return base;
+    const leadTrack = buildLeadTrackEntry(base, projectId);
+    return {
+      ...base,
+      album: {
+        id: dbAlbumId || base?.album?.id || createAlbumId(),
+        title: seedTitle || base?.album?.title || leadTrack.workingTitle || "Album",
+        concept: seedConcept || base?.album?.concept || "",
+        targetCount: seedTargetCount || albumSize || base?.album?.targetCount || 8,
+        status: base?.album?.status || "draft",
+        cover: base?.album?.cover || null,
+        tracks: [leadTrack],
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  async function addSingleToAlbum(releaseId) {
+    if (!releaseId || !projectId || addSingleBusy) return;
+    if (project?.album?.status === "running") {
+      setError("Arrête d’abord la génération en cours.");
+      return;
+    }
+    setAddSingleBusy(true);
+    setError("");
+    try {
+      const { project: saved } = await api.getProject(releaseId);
+      if (!saved?.id) throw new Error("Single introuvable");
+      const single = { ...emptyProject(), ...(saved.project || {}) };
+      if (!single.lyrics || !isTrackAudioFinal(single.track)) {
+        throw new Error("Le single doit avoir paroles + audio complet.");
+      }
+
+      let base = ensureAlbumSkeleton(albumWorkingRef.current || project);
+      const already = (base.album.tracks || []).some(
+        (t) => t.projectId === releaseId || (t.role === "lead" && releaseId === projectId),
+      );
+      if (already) throw new Error("Ce titre est déjà dans l’album.");
+
+      const index = (base.album.tracks || []).length + 1;
+      const entry = {
+        id: createAlbumTrackId(),
+        index,
+        role: "album",
+        theme: single.lyrics?.theme || "",
+        workingTitle: single.lyrics?.title || single.track?.title || `Piste ${index}`,
+        lyrics: single.lyrics,
+        track: single.track,
+        projectId: releaseId,
+        status: "done",
+        featArtist: single.featArtist || null,
+        fromSingle: true,
+      };
+
+      const tracks = [...(base.album.tracks || []), entry];
+      const targetCount = Math.max(
+        Number(base.album.targetCount) || albumSize || 8,
+        tracks.length,
+        albumSize || 0,
+      );
+      const next = {
+        ...base,
+        album: {
+          ...base.album,
+          tracks,
+          targetCount,
+          status:
+            base.album.status === "running"
+              ? "running"
+              : albumHasWorkLeft({ tracks }) || tracks.length < targetCount
+                ? base.album.status === "done"
+                  ? "cancelled"
+                  : base.album.status || "draft"
+                : "done",
+          updatedAt: new Date().toISOString(),
+        },
+      };
+
+      await api.saveProject({
+        id: releaseId,
+        project: {
+          ...single,
+          albumMeta: {
+            albumId: next.album.id,
+            albumTitle: next.album.title || "",
+            leadProjectId: projectId,
+            trackId: entry.id,
+            index,
+            theme: entry.theme,
+            fromSingle: true,
+          },
+        },
+        seed: saved.seed || {},
+        event: {
+          stepKey: "album",
+          eventType: "album-track",
+          message: `Ajouté à l’album « ${next.album.title || "album"} »`,
+        },
+      });
+
+      syncAlbumWorking(next);
+      await persist(next, {
+        stepKey: "album",
+        eventType: "album-track",
+        message: `Album · single « ${entry.workingTitle} » ajouté`,
+      });
+
+      if (dbAlbumId) {
+        await albumsApi.addTrack(dbAlbumId, {
+          projectId: releaseId,
+          role: "member",
+          index,
+          workingTitle: entry.workingTitle,
+          theme: entry.theme,
+          status: "done",
+        });
+        await albumsApi
+          .updateAlbum(dbAlbumId, {
+            targetCount,
+            status: next.album.status === "done" ? "done" : next.album.status || "draft",
+          })
+          .catch(() => {});
+      }
+
+      setAlbumSize(targetCount);
+      onAlbumChanged?.(dbAlbumId || next.album.id);
+    } catch (e) {
+      setError(e.message || "Impossible d’ajouter ce single");
+    } finally {
+      setAddSingleBusy(false);
+    }
   }
 
   async function removeTrack(trackId) {
@@ -208,12 +379,16 @@ export default function ArtistAlbumSection({
       album: {
         ...base.album,
         tracks,
-        targetCount: tracks.length,
+        targetCount: Math.max(Number(base.album.targetCount) || tracks.length, tracks.length),
         status:
           base.album.status === "running" && stillPending
             ? "running"
             : doneCount > 0
-              ? "done"
+              ? tracks.length >= (base.album.targetCount || tracks.length) && !stillPending
+                ? "done"
+                : base.album.status === "running"
+                  ? "cancelled"
+                  : base.album.status
               : base.album.status === "running"
                 ? "cancelled"
                 : base.album.status,
@@ -221,14 +396,44 @@ export default function ArtistAlbumSection({
       },
     };
     syncAlbumWorking(next);
-    await persist(
-      next,
-      {
-        stepKey: "album",
-        eventType: "album-track",
-        message: `Album · piste retirée`,
-      },
-    );
+    await persist(next, {
+      stepKey: "album",
+      eventType: "album-track",
+      message: `Album · piste retirée`,
+    });
+
+    if (dbAlbumId && entry.projectId) {
+      try {
+        const album = await albumsApi.getAlbum(dbAlbumId);
+        const dbTrack = (album.tracks || []).find((t) => t.projectId === entry.projectId);
+        if (dbTrack?.id) await albumsApi.deleteTrack(dbTrack.id);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (entry.projectId && entry.role !== "lead") {
+      try {
+        const { project: saved } = await api.getProject(entry.projectId);
+        if (saved?.project?.albumMeta) {
+          const { albumMeta: _drop, ...rest } = saved.project;
+          await api.saveProject({
+            id: entry.projectId,
+            project: rest,
+            seed: saved.seed,
+            event: {
+              stepKey: "album",
+              eventType: "album-track",
+              message: "Retiré de l’album",
+            },
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    onAlbumChanged?.(dbAlbumId || base.album?.id);
   }
 
   async function runAlbumGeneration(totalCount = 8, { resume = false } = {}) {
@@ -316,6 +521,103 @@ export default function ArtistAlbumSection({
     }
   }
 
+  async function seedMemberTracks(memberProjectIds = [], prefs = {}) {
+    let base = ensureAlbumSkeleton(albumWorkingRef.current || project);
+    const preferredTitle = String(prefs.title || "").trim();
+    const preferredConcept = String(prefs.concept || "").trim();
+    if (preferredTitle || preferredConcept) {
+      base = {
+        ...base,
+        album: {
+          ...base.album,
+          ...(preferredTitle ? { title: preferredTitle } : {}),
+          ...(preferredConcept ? { concept: preferredConcept } : {}),
+        },
+      };
+    }
+
+    const existingIds = new Set(
+      (base.album.tracks || []).map((t) => t.projectId).filter(Boolean),
+    );
+    const tracks = [...(base.album.tracks || [])];
+
+    for (const releaseId of memberProjectIds) {
+      if (!releaseId || existingIds.has(releaseId) || releaseId === projectId) continue;
+      try {
+        const { project: saved } = await api.getProject(releaseId);
+        if (!saved?.id) continue;
+        const single = { ...emptyProject(), ...(saved.project || {}) };
+        if (!single.lyrics || !isTrackAudioFinal(single.track)) continue;
+
+        const index = tracks.length + 1;
+        const entry = {
+          id: createAlbumTrackId(),
+          index,
+          role: "album",
+          theme: single.lyrics?.theme || "",
+          workingTitle: single.lyrics?.title || single.track?.title || `Piste ${index}`,
+          lyrics: single.lyrics,
+          track: single.track,
+          projectId: releaseId,
+          status: "done",
+          featArtist: single.featArtist || null,
+          fromSingle: true,
+        };
+        tracks.push(entry);
+        existingIds.add(releaseId);
+
+        await api.saveProject({
+          id: releaseId,
+          project: {
+            ...single,
+            albumMeta: {
+              albumId: base.album.id,
+              albumTitle: base.album.title || preferredTitle || "",
+              leadProjectId: projectId,
+              trackId: entry.id,
+              index,
+              theme: entry.theme,
+              fromSingle: true,
+            },
+          },
+          seed: saved.seed || {},
+          event: {
+            stepKey: "album",
+            eventType: "album-track",
+            message: `Ajouté à l’album « ${base.album.title || preferredTitle || "album"} »`,
+          },
+        });
+      } catch {
+        /* single optionnel */
+      }
+    }
+
+    const targetCount = Math.max(
+      Number(prefs.targetCount) || albumSize || 8,
+      tracks.length,
+    );
+    const next = {
+      ...base,
+      album: {
+        ...base.album,
+        tracks: tracks.map((t, i) => ({ ...t, index: i + 1 })),
+        targetCount,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    syncAlbumWorking(next);
+    await persist(next, {
+      stepKey: "album",
+      eventType: "album",
+      message:
+        memberProjectIds.length > 0
+          ? `Album · ${memberProjectIds.length} single${memberProjectIds.length > 1 ? "s" : ""} inclus`
+          : "Album · tracklist initialisée",
+    });
+    setAlbumSize(targetCount);
+    return next;
+  }
+
   // Démarre la génération (modal ou brouillon jamais lancé) — progression dans la carte.
   useEffect(() => {
     if (autoStartedRef.current || bootLoading || !project || !projectId) return;
@@ -343,6 +645,9 @@ export default function ArtistAlbumSection({
     }
 
     autoStartedRef.current = true;
+    const memberProjectIds = Array.isArray(autoStart?.memberProjectIds)
+      ? autoStart.memberProjectIds.filter(Boolean)
+      : [];
     const total =
       autoStart?.targetCount ||
       seedTargetCount ||
@@ -352,14 +657,31 @@ export default function ArtistAlbumSection({
     if (autoStart?.targetCount || seedTargetCount) {
       setAlbumSize(autoStart?.targetCount || seedTargetCount);
     }
-    startAlbumCreation(total, false, {
+
+    const prefs = {
       title: autoStart?.title || seedTitle || project.album?.title || "",
       concept: autoStart?.concept || seedConcept || project.album?.concept || "",
       dbAlbumId: autoStart?.albumId || dbAlbumId || null,
+      targetCount: total,
       withFeats: Boolean(autoStart?.withFeats),
       featArtists: Array.isArray(autoStart?.featArtists) ? autoStart.featArtists : [],
-    });
-    onAutoStarted?.();
+    };
+
+    (async () => {
+      try {
+        if (memberProjectIds.length > 0) {
+          await seedMemberTracks(memberProjectIds, prefs);
+          startAlbumCreation(total, true, prefs);
+        } else {
+          startAlbumCreation(total, false, prefs);
+        }
+      } catch (e) {
+        setError(e.message || "Impossible de démarrer l’album");
+        autoStartedRef.current = false;
+      } finally {
+        onAutoStarted?.();
+      }
+    })();
   }, [
     bootLoading,
     project,
@@ -434,6 +756,16 @@ export default function ArtistAlbumSection({
     leadCandidates.find((r) => r.id === leadId)?.trackTitle ||
     "";
 
+  const albumProjectIds = new Set(
+    (project?.album?.tracks || [])
+      .map((t) => t.projectId)
+      .filter(Boolean)
+      .concat(projectId ? [projectId] : []),
+  );
+  const singlesToAdd = (availableSingles || []).filter(
+    (s) => s?.id && !albumProjectIds.has(s.id) && s.hasAudio && s.hasLyrics,
+  );
+
   return (
     <>
       <section
@@ -495,11 +827,18 @@ export default function ArtistAlbumSection({
           }
           leadTitle={leadTitle}
           onGenerate={runAlbumGeneration}
-          onResume={() => runAlbumGeneration(albumSize, { resume: true })}
+          onResume={(size) =>
+            runAlbumGeneration(size || albumSize || project?.album?.targetCount || 8, {
+              resume: true,
+            })
+          }
           onCancel={cancelAlbum}
           onClear={clearAlbum}
           onRemoveTrack={removeTrack}
           onOpenTrack={openTrack}
+          onAddSingle={addSingleToAlbum}
+          availableSingles={singlesToAdd}
+          addSingleBusy={addSingleBusy}
           studioHref={embedded ? null : studioHref(projectId, "tracks")}
           manageMode={Boolean(pinnedLeadId || project?.album)}
         />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { Users, X } from "lucide-preact";
+import { Library, Users, X } from "lucide-preact";
 import { albumsApi } from "../lib/albumsApi.js";
 import { featPoolFromCatalog } from "../lib/albumAutoFeats.js";
 
@@ -11,6 +11,7 @@ export default function AlbumCreationModal({
   onCreate,
 }) {
   const [leadId, setLeadId] = useState(leadCandidates[0]?.id || "");
+  const [memberIds, setMemberIds] = useState([]);
   const [title, setTitle] = useState("");
   const [concept, setConcept] = useState("");
   const [albumSize, setAlbumSize] = useState(8);
@@ -21,7 +22,9 @@ export default function AlbumCreationModal({
   const [error, setError] = useState("");
 
   const selectedLead = leadCandidates.find((c) => c.id === leadId);
+  const memberCandidates = leadCandidates.filter((c) => c.id && c.id !== leadId);
   const canUseFeats = featPool.length > 0;
+  const minSizeFromMembers = 1 + memberIds.length;
 
   useEffect(() => {
     let cancelled = false;
@@ -54,6 +57,24 @@ export default function AlbumCreationModal({
     if (!canUseFeats && withFeats) setWithFeats(false);
   }, [canUseFeats, withFeats]);
 
+  useEffect(() => {
+    setMemberIds((prev) => prev.filter((id) => id !== leadId));
+  }, [leadId]);
+
+  useEffect(() => {
+    if (albumSize < minSizeFromMembers) {
+      setAlbumSize(Math.min(12, minSizeFromMembers));
+    }
+  }, [minSizeFromMembers, albumSize]);
+
+  function toggleMember(id) {
+    setMemberIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length + 1 >= 12) return prev;
+      return [...prev, id];
+    });
+  }
+
   async function handleCreate(e) {
     e?.preventDefault?.();
     e?.stopPropagation?.();
@@ -67,7 +88,10 @@ export default function AlbumCreationModal({
     setError("");
 
     try {
-      const targetCount = Math.min(12, Math.max(3, Number(albumSize) || 8));
+      const targetCount = Math.min(
+        12,
+        Math.max(3, Math.max(Number(albumSize) || 8, minSizeFromMembers)),
+      );
       const albumTitle =
         title.trim() || selectedLead?.trackTitle || selectedLead?.title || "Album";
       const albumConcept = concept.trim();
@@ -79,6 +103,19 @@ export default function AlbumCreationModal({
         targetCount,
       });
 
+      const selectedMembers = memberCandidates.filter((c) => memberIds.includes(c.id));
+      for (let i = 0; i < selectedMembers.length; i++) {
+        const m = selectedMembers[i];
+        await albumsApi.addTrack(album.id, {
+          projectId: m.id,
+          role: "member",
+          index: i + 2,
+          workingTitle: m.trackTitle || m.title || "",
+          theme: m.theme || "",
+          status: "done",
+        });
+      }
+
       if (onCreate) {
         onCreate({
           album,
@@ -86,6 +123,7 @@ export default function AlbumCreationModal({
           title: albumTitle,
           concept: albumConcept,
           targetCount,
+          memberProjectIds: selectedMembers.map((m) => m.id),
           withFeats: Boolean(withFeats && canUseFeats),
           featArtists: withFeats && canUseFeats ? featPool : [],
         });
@@ -125,7 +163,7 @@ export default function AlbumCreationModal({
           Créer un nouvel album
         </h2>
         <p class="mt-2 text-sm text-base-content/60">
-          Chaque album est indépendant. Créer un nouvel album ne supprime pas les albums existants.
+          Choisis un lead, déplace d’autres singles dedans si tu veux, puis complète avec de nouveaux titres.
         </p>
 
         <form class="mt-6 space-y-4" onSubmit={handleCreate}>
@@ -156,6 +194,45 @@ export default function AlbumCreationModal({
             </span>
           </label>
 
+          {memberCandidates.length > 0 && (
+            <div class="rounded-2xl border border-base-content/10 bg-base-300/30 p-4">
+              <p class="flex items-center gap-1.5 text-sm font-medium">
+                <Library size={14} class="text-primary" />
+                Singles à inclure
+              </p>
+              <p class="mt-1 text-xs text-base-content/55">
+                Coche les singles déjà prêts à déplacer dans cet album. Le reste sera généré.
+              </p>
+              <ul class="mt-3 max-h-40 space-y-2 overflow-y-auto">
+                {memberCandidates.map((c) => {
+                  const checked = memberIds.includes(c.id);
+                  return (
+                    <li key={c.id}>
+                      <label class="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-base-100/60">
+                        <input
+                          type="checkbox"
+                          class="checkbox checkbox-primary checkbox-sm"
+                          checked={checked}
+                          disabled={loading}
+                          onChange={() => toggleMember(c.id)}
+                        />
+                        <span class="min-w-0 truncate text-sm">
+                          {c.trackTitle || c.title || c.id}
+                        </span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+              {memberIds.length > 0 && (
+                <p class="mt-2 text-xs text-base-content/55">
+                  {memberIds.length} single{memberIds.length > 1 ? "s" : ""} + lead
+                  {` → ${minSizeFromMembers} titre${minSizeFromMembers > 1 ? "s" : ""} déjà prêts`}
+                </p>
+              )}
+            </div>
+          )}
+
           <label class="block w-full">
             <span class="mb-1.5 block text-sm text-base-content/60">Titre de l'album (optionnel)</span>
             <input
@@ -185,14 +262,17 @@ export default function AlbumCreationModal({
             <input
               type="number"
               class="input input-bordered w-full"
-              min={3}
+              min={Math.max(3, minSizeFromMembers)}
               max={12}
               value={albumSize}
               onInput={(e) => setAlbumSize(Number(e.currentTarget.value) || 8)}
               disabled={loading}
             />
             <span class="mt-1 block text-xs text-base-content/55">
-              Entre 3 et 12 titres (lead inclus)
+              Entre {Math.max(3, minSizeFromMembers)} et 12 titres (lead + singles inclus)
+              {minSizeFromMembers > 1
+                ? ` — ${Math.max(0, albumSize - minSizeFromMembers)} à générer`
+                : ""}
             </span>
           </label>
 
@@ -241,6 +321,8 @@ export default function AlbumCreationModal({
             >
               {loading ? (
                 <span class="loading loading-spinner loading-sm" />
+              ) : memberIds.length > 0 ? (
+                "Créer et compléter"
               ) : (
                 "Créer et lancer"
               )}

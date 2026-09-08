@@ -74,7 +74,12 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     styleLockInstruments: styleLock?.instruments,
     styleLock,
   });
-  const arrangeBits = packed.customFragments || [];
+  const arrangeBits = [
+    ...(packed.customFragments || []),
+    artist?.instrumentArc
+      ? String(artist.instrumentArc).slice(0, 200)
+      : null,
+  ].filter(Boolean);
   const genreBlob = styleLockGenreBlob(styleLock, [artist?.genre, lyrics?.title, lyrics?.theme]);
   const metal = isMetalLane(genreBlob);
   // Arrangement (chœur…) EN TÊTE pour MiniMax aussi + qualité production
@@ -253,6 +258,9 @@ function assembleTrackResult({
     provider,
     hasVocals,
     sunoPrompt,
+    sonicRole: artist?.sonicRole || null,
+    instrumentArc: artist?.instrumentArc || null,
+    musicArrange: arr || artist?.musicArrange || null,
     note: audioUrl
       ? noteReady
       : "Métadonnées + prompt Suno prêts — audio manquant jusqu’à import ou provider audio.",
@@ -272,6 +280,43 @@ export async function startTrack({ keys, lyrics, artist, preview = false, skipSt
     );
   }
   artist = withResolvedArtistGender(artist);
+
+  // Plan instrumental PAR PISTE (LLM si dispo, sinon rôle déterministe).
+  try {
+    const { resolveTrackInstrumentPlan } = await import("../trackInstrumentPlan.js");
+    const plan = await resolveTrackInstrumentPlan(keys, {
+      artist,
+      lyrics,
+      musicArrange: artist?.musicArrange,
+      title: lyrics?.title || "",
+      // Rôle imposé seulement si album / UI l’a figé (pas un hash client).
+      explicitRole: artist?.trackRoleForced || artist?.albumTrackRole || null,
+      trackIndex: artist?.albumTrackIndex ?? null,
+      trackTotal: artist?.albumTrackTotal ?? null,
+      usedRoles: Array.isArray(artist?.usedSonicRoles) ? artist.usedSonicRoles : [],
+      usedLeads: Array.isArray(artist?.usedLeads) ? artist.usedLeads : [],
+      usedDrums: Array.isArray(artist?.usedDrums) ? artist.usedDrums : [],
+      usedFeatures: Array.isArray(artist?.usedFeatures) ? artist.usedFeatures : [],
+      usedArcs: Array.isArray(artist?.usedInstrumentArcs)
+        ? artist.usedInstrumentArcs
+        : [],
+      skipLlm: Boolean(preview),
+      preview: Boolean(preview),
+    });
+    if (plan?.artist) artist = plan.artist;
+    if (plan?.source) {
+      console.info(
+        "[track] instrument plan",
+        plan.source,
+        plan.variation?.sonicRole || "—",
+        plan.variation?.instrumentArc
+          ? `${String(plan.variation.instrumentArc).length}c`
+          : "",
+      );
+    }
+  } catch (e) {
+    console.warn("[track] instrument plan:", e?.message || e);
+  }
 
   // Fige / backfill le timbre (extrait vocal ou dernier audio) avant le prompt.
   try {

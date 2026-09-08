@@ -1,7 +1,13 @@
-import { Ban, Library, RotateCcw, Trash2 } from "lucide-preact";
+import { Ban, Library, Plus, RotateCcw, Trash2 } from "lucide-preact";
 import { useEffect, useState } from "preact/hooks";
 import { ALBUM_SIZES } from "../lib/studio.js";
-import { albumHasWorkLeft, albumNeedsCover, isAlbumStale } from "../lib/albumTracks.js";
+import {
+  albumHasWorkLeft,
+  albumMissingCount,
+  albumNeedsCover,
+  albumNeedsMoreTracks,
+  isAlbumStale,
+} from "../lib/albumTracks.js";
 
 function albumStatusLabel(st) {
   if (st === "done") return "OK";
@@ -31,23 +37,46 @@ export default function AlbumAutonomePanel({
   onClear,
   onRemoveTrack,
   onOpenTrack,
+  onAddSingle,
+  availableSingles = [],
+  addSingleBusy = false,
   studioHref = null,
   manageMode = false,
 }) {
   const albumRunning = album?.status === "running";
   const albumTracks = Array.isArray(album?.tracks) ? album.tracks : [];
   const albumDoneCount = albumTracks.filter((t) => t.status === "done").length;
+  const missingCount = albumMissingCount(album, albumSize);
+  const needsMore = albumNeedsMoreTracks(album, albumSize);
+  const hasWorkLeft = albumHasWorkLeft(album);
   const canResume =
     Boolean(onResume) &&
     !albumRunning &&
-    (albumHasWorkLeft(album) || albumNeedsCover(album));
+    Boolean(album) &&
+    (hasWorkLeft || albumNeedsCover(album) || needsMore);
+  const [singleId, setSingleId] = useState("");
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!albumRunning) return undefined;
     const id = window.setInterval(() => setTick((n) => n + 1), 15000);
     return () => window.clearInterval(id);
   }, [albumRunning]);
+  useEffect(() => {
+    if (!singleId) return;
+    if (!availableSingles.some((s) => s.id === singleId)) setSingleId("");
+  }, [availableSingles, singleId]);
   const stale = isAlbumStale(album);
+  const canAddSingle =
+    Boolean(onAddSingle) && !albumRunning && availableSingles.length > 0;
+
+  let resumeLabel = "Reprendre";
+  if (needsMore && !hasWorkLeft) {
+    resumeLabel = `Compléter (${missingCount} manquant${missingCount > 1 ? "s" : ""})`;
+  } else if (hasWorkLeft) {
+    resumeLabel = `Reprendre (${albumDoneCount} OK)`;
+  } else if (albumNeedsCover(album)) {
+    resumeLabel = "Générer la jaquette";
+  }
 
   return (
     <div class="space-y-4 rounded-2xl border border-primary/25 bg-primary/5 p-4">
@@ -66,7 +95,7 @@ export default function AlbumAutonomePanel({
           </p>
           <p class="mt-1 text-xs text-base-content/60">
             {manageMode
-              ? "Ajoute, retire, reprends une génération ou ouvre chaque piste dans le Studio."
+              ? "Ajoute des singles existants, retire des pistes, puis complète la génération."
               : (
                 <>
                   À partir du single lead
@@ -126,14 +155,12 @@ export default function AlbumAutonomePanel({
         {canResume && (
           <button
             type="button"
-            class="btn btn-outline btn-sm gap-2"
+            class="btn btn-primary btn-sm gap-2"
             disabled={loading}
-            onClick={() => onResume?.()}
+            onClick={() => onResume?.(albumSize)}
           >
             <RotateCcw size={14} />
-            {albumHasWorkLeft(album)
-              ? `Reprendre (${albumDoneCount} OK)`
-              : "Générer la jaquette"}
+            {resumeLabel}
           </button>
         )}
         {album && !albumRunning && (
@@ -153,6 +180,46 @@ export default function AlbumAutonomePanel({
         )}
       </div>
 
+      {canAddSingle && (
+        <div class="flex flex-wrap items-end gap-2 rounded-xl border border-base-content/10 bg-base-100/50 p-3">
+          <label class="form-control min-w-[12rem] flex-1">
+            <span class="label-text mb-1 text-xs text-base-content/55">
+              Ajouter un single existant
+            </span>
+            <select
+              class="select select-bordered select-sm bg-base-100"
+              value={singleId}
+              disabled={addSingleBusy}
+              onChange={(e) => setSingleId(e.currentTarget.value)}
+            >
+              <option value="">Choisir un single…</option>
+              {availableSingles.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.trackTitle || s.title || s.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            class="btn btn-outline btn-sm gap-1"
+            disabled={addSingleBusy || !singleId}
+            onClick={() => {
+              if (!singleId) return;
+              void onAddSingle?.(singleId);
+              setSingleId("");
+            }}
+          >
+            {addSingleBusy ? (
+              <span class="loading loading-spinner loading-xs" />
+            ) : (
+              <Plus size={14} />
+            )}
+            Ajouter à l’album
+          </button>
+        </div>
+      )}
+
       {progress?.message && (
         <div class="space-y-1">
           <p class="text-xs text-base-content/60">{progress.message}</p>
@@ -169,6 +236,9 @@ export default function AlbumAutonomePanel({
         <p class="text-xs text-base-content/55">
           <span class="font-medium text-base-content/80">{album.title}</span>
           {album.concept ? ` — ${album.concept}` : ""}
+          {albumTracks.length > 0
+            ? ` · ${albumTracks.length}/${album.targetCount || albumSize} titres`
+            : ""}
         </p>
       )}
       {album?.coverError && !album?.cover?.imageUrl && (
@@ -188,6 +258,9 @@ export default function AlbumAutonomePanel({
                   {entry.lyrics?.title || entry.workingTitle || entry.theme || "Sans titre"}
                   {entry.role === "lead" ? (
                     <span class="badge badge-primary badge-xs ml-2">Lead</span>
+                  ) : null}
+                  {entry.projectId && entry.status === "done" && entry.role !== "lead" ? (
+                    <span class="badge badge-ghost badge-xs ml-2">Single</span>
                   ) : null}
                   {entry.featArtist?.name || entry.featuring ? (
                     <span class="badge badge-secondary badge-xs ml-2">

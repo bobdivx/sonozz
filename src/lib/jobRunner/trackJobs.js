@@ -4,7 +4,6 @@ import { emptyProject, studioHref } from "../studio.js";
 import { persistAudioRemote } from "../audioResolve.js";
 import { stripClipsForDb, normalizeProjectClips } from "../clipsModel.js";
 import { appendVersion, normalizeProjectVersions } from "../versionsModel.js";
-import { applySonicVariation, artistWithSonicVariation } from "../sonicVariation.js";
 import { trackAborts } from "./state.js";
 import { ensureRunning } from "./runnerCore.js";
 
@@ -113,36 +112,31 @@ export async function runTrackBackgroundJob(job) {
   });
 
   try {
-    const variation = applySonicVariation({
-      musicArrange: project.musicArrange,
-      styleLock: project.artist?.styleLock,
-      role:
-        project.sonicRole ||
-        project.albumMeta?.trackRole ||
-        (project.albumMeta?.index === 1 ? "single" : undefined),
-      title: project.lyrics?.title || project.track?.title || "",
-      artistKey: project.artist?.slug || project.artist?.name || "",
-      trackIndex: project.albumMeta?.index ?? null,
-      trackTotal: null,
-    });
-    // Fige l’arrangement / rôle sur le projet pour les régénérations cohérentes.
-    project = {
-      ...project,
-      musicArrange: variation.musicArrange,
-      sonicRole: variation.sonicRole,
-    };
+    // Solo : le serveur choisit le plan (LLM si dispo). Album : rôle déjà imposé côté album job.
+    const albumForced =
+      project.albumMeta?.trackRole ||
+      (project.albumMeta?.index === 1 ? "single" : null) ||
+      null;
+    const forcedRole = project.sonicRoleLocked
+      ? project.sonicRole
+      : albumForced || null;
 
     let result = await api.track(
       {
         preview,
         lyrics: project.lyrics,
-        artist: artistWithSonicVariation(
-          {
-            ...project.artist,
-            featArtist: project.featArtist || null,
-          },
-          variation,
-        ),
+        artist: {
+          ...project.artist,
+          featArtist: project.featArtist || null,
+          musicArrange: project.musicArrange || project.artist?.musicArrange,
+          // Régénération : conserver le plan déjà figé.
+          sonicRole: project.sonicRole || undefined,
+          instrumentArc: project.instrumentArc || undefined,
+          trackRoleForced: forcedRole || undefined,
+          albumTrackRole: albumForced || undefined,
+          albumTrackIndex: project.albumMeta?.index ?? undefined,
+          albumTrackTotal: project.albumMeta?.total ?? undefined,
+        },
       },
       (p) => {
         if (!p || abortState.aborted || !getJob(id)) return;
@@ -161,6 +155,15 @@ export async function runTrackBackgroundJob(job) {
         onStarted: (started) => {
           if (!started?.generationId) return;
           try {
+            const d = started.draft || {};
+            if (d.sonicRole || d.instrumentArc || d.musicArrange) {
+              project = {
+                ...project,
+                sonicRole: d.sonicRole || project.sonicRole,
+                instrumentArc: d.instrumentArc || project.instrumentArc,
+                musicArrange: d.musicArrange || project.musicArrange,
+              };
+            }
             patchJob(id, {
               generationId: started.generationId,
               musicKind: started.musicKind || null,
@@ -229,7 +232,20 @@ export async function runTrackBackgroundJob(job) {
     }
 
     const next = stripClipsForDb(
-      normalizeProjectVersions(normalizeProjectClips(appendVersion(project, "track", result))),
+      normalizeProjectVersions(
+        normalizeProjectClips(
+          appendVersion(
+            {
+              ...project,
+              sonicRole: result?.sonicRole || project.sonicRole || null,
+              instrumentArc: result?.instrumentArc || project.instrumentArc || null,
+              musicArrange: result?.musicArrange || project.musicArrange || null,
+            },
+            "track",
+            result,
+          ),
+        ),
+      ),
     );
     await api.saveProject({
       id: projectId,

@@ -34,6 +34,7 @@ import {
   uniqueGenreLabels,
 } from "../lib/studio.js";
 import { organizeArtistReleases } from "../lib/albumTracks.js";
+import { albumsApi } from "../lib/albumsApi.js";
 import { playTracks } from "../lib/playEngine.js";
 import {
   currentPlayTrack,
@@ -294,6 +295,8 @@ export default function ArtistHub({ slug }) {
   const [createTrackBusy, setCreateTrackBusy] = useState(false);
   const [deleteReleaseBusy, setDeleteReleaseBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleteAlbumBusy, setDeleteAlbumBusy] = useState(false);
+  const [pendingDeleteAlbum, setPendingDeleteAlbum] = useState(null);
   const [regenerateTrackBusy, setRegenerateTrackBusy] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -307,7 +310,12 @@ export default function ArtistHub({ slug }) {
   const [openAlbumId, setOpenAlbumId] = useState(initialHash.albumId);
 
   // Helper pour savoir si une action quelconque est en cours (pour UI non-critique)
-  const anyBusy = refreshStatsBusy || createTrackBusy || deleteReleaseBusy || regenerateTrackBusy;
+  const anyBusy =
+    refreshStatsBusy ||
+    createTrackBusy ||
+    deleteReleaseBusy ||
+    deleteAlbumBusy ||
+    regenerateTrackBusy;
   const [playSession, setPlaySession] = useState(() =>
     typeof window === "undefined" ? { queue: [], playing: false, index: 0 } : readPlaySession(),
   );
@@ -583,6 +591,63 @@ export default function ArtistHub({ slug }) {
   function requestDeleteRelease(release) {
     if (!release?.id || deleteReleaseBusy) return;
     setPendingDelete(release);
+  }
+
+  function requestDeleteAlbum(album) {
+    if (!album?.id || deleteAlbumBusy) return;
+    setPendingDeleteAlbum(album);
+  }
+
+  async function confirmDeleteAlbum(album) {
+    if (!album?.id) return;
+    const label = album.title || "cet album";
+    setPendingDeleteAlbum(null);
+    setDeleteAlbumBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      await albumsApi.deleteAlbum(album.id);
+      const leadId = album.lead?.id;
+      if (leadId) {
+        try {
+          const { project: saved } = await api.getProject(leadId);
+          if (saved?.project?.album) {
+            await api.saveProject({
+              id: leadId,
+              project: { ...saved.project, album: null },
+              seed: saved.seed,
+              event: {
+                stepKey: "album",
+                eventType: "album",
+                message: "Album supprimé",
+              },
+            });
+          }
+        } catch {
+          /* lead optionnel */
+        }
+      }
+      if (openAlbumId === album.id) {
+        setOpenAlbumId("");
+        if (typeof history !== "undefined") {
+          history.replaceState(null, "", "#titres");
+        }
+      }
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              albums: (prev.albums || []).filter((a) => a.id !== album.id),
+            }
+          : prev,
+      );
+      setMsg(`Album « ${label} » supprimé — les titres restent en singles`);
+      void load();
+    } catch (e) {
+      setError(e.message || "Suppression de l’album impossible");
+    } finally {
+      setDeleteAlbumBusy(false);
+    }
   }
 
   async function deleteRelease(release) {
@@ -1081,6 +1146,24 @@ export default function ArtistHub({ slug }) {
                                   </div>
                                   {open && (
                                     <div class="space-y-4 border-t border-base-content/10 p-3 sm:p-4">
+                                      <div class="flex flex-wrap items-center justify-between gap-2">
+                                        <p class="text-xs text-base-content/50">
+                                          Gérer les titres ou supprimer l’album du catalogue.
+                                        </p>
+                                        <button
+                                          type="button"
+                                          class="btn btn-ghost btn-sm gap-1 text-error"
+                                          disabled={deleteAlbumBusy}
+                                          onClick={() => requestDeleteAlbum(album)}
+                                        >
+                                          {deleteAlbumBusy ? (
+                                            <span class="loading loading-spinner loading-xs" />
+                                          ) : (
+                                            <Trash2 size={14} />
+                                          )}
+                                          Supprimer l’album
+                                        </button>
+                                      </div>
                                       <ul class="space-y-2">
                                         {album.tracks.map((r, i) => {
                                           const delivery = r.releaseId
@@ -1116,6 +1199,13 @@ export default function ArtistHub({ slug }) {
                                         releases={releases}
                                         pinnedLeadId={album.lead?.id || album.id}
                                         embedded
+                                        dbAlbumId={album.id}
+                                        availableSingles={singles}
+                                        onAlbumChanged={() => void load()}
+                                        onAlbumDeleted={() => {
+                                          setOpenAlbumId("");
+                                          void load();
+                                        }}
                                       />
                                     </div>
                                   )}
@@ -1173,7 +1263,7 @@ export default function ArtistHub({ slug }) {
                   <div>
                     <h2 class="font-display text-2xl font-bold">Albums</h2>
                     <p class="text-sm text-base-content/55">
-                      Crée plusieurs albums indépendants. Chaque album part d'un single (paroles + audio).
+                      Crée plusieurs albums indépendants. Tu peux y déplacer des singles existants, puis compléter la génération.
                     </p>
                   </div>
                   {canCreateAlbum && (
@@ -1196,13 +1286,21 @@ export default function ArtistHub({ slug }) {
                           pendingAlbumStart.leadId === album.lead?.id);
                       return (
                       <div key={album.id} class="rounded-3xl border border-base-content/10 bg-base-300/30 p-5">
-                        <div class="mb-3 flex items-start justify-between">
+                        <div class="mb-3 flex items-start justify-between gap-3">
                           <div>
                             <h3 class="font-display text-lg font-bold">{album.title}</h3>
                             <p class="text-xs text-base-content/55">
                               {album.tracks?.length || 0} titre{album.tracks?.length > 1 ? "s" : ""} · {album.status}
                             </p>
                           </div>
+                          <button
+                            type="button"
+                            class="btn btn-ghost btn-sm gap-1 text-error shrink-0"
+                            disabled={deleteAlbumBusy}
+                            onClick={() => requestDeleteAlbum(album)}
+                          >
+                            <Trash2 size={14} /> Supprimer
+                          </button>
                         </div>
                         <ArtistAlbumSection
                           slug={data.slug}
@@ -1216,6 +1314,9 @@ export default function ArtistHub({ slug }) {
                           kickIfIdle={album.status === "draft"}
                           autoStart={startMatch ? pendingAlbumStart : null}
                           onAutoStarted={() => setPendingAlbumStart(null)}
+                          availableSingles={singles}
+                          onAlbumChanged={() => void load()}
+                          onAlbumDeleted={() => void load()}
                         />
                       </div>
                       );
@@ -1713,9 +1814,7 @@ export default function ArtistHub({ slug }) {
       {showAlbumModal && (
         <AlbumCreationModal
           slug={slug}
-          leadCandidates={releases.filter(
-            (r) => r.hasAudio && r.hasLyrics && !r.albumStatus && !r.albumLeadId,
-          )}
+          leadCandidates={singles.filter((r) => r.hasAudio && r.hasLyrics)}
           onClose={() => setShowAlbumModal(false)}
           onCreate={(payload) => {
             setShowAlbumModal(false);
@@ -1727,11 +1826,14 @@ export default function ArtistHub({ slug }) {
               title: meta.title || album?.title || "",
               concept: meta.concept || album?.concept || "",
               targetCount: meta.targetCount || album?.targetCount || 8,
+              memberProjectIds: Array.isArray(meta.memberProjectIds)
+                ? meta.memberProjectIds
+                : [],
               withFeats: Boolean(meta.withFeats),
               featArtists: Array.isArray(meta.featArtists) ? meta.featArtists : [],
             });
             selectTab("album");
-            void loadData();
+            void load();
           }}
           leadArtist={{
             slug,
@@ -1766,6 +1868,23 @@ export default function ArtistHub({ slug }) {
         title={deleteCopy.title}
         message={deleteCopy.message}
         confirmText="Oui, supprimer"
+        cancelText="Annuler"
+        confirmClass="btn-error"
+      />
+
+      <ConfirmModal
+        open={Boolean(pendingDeleteAlbum)}
+        onClose={() => setPendingDeleteAlbum(null)}
+        onConfirm={() => {
+          if (pendingDeleteAlbum) void confirmDeleteAlbum(pendingDeleteAlbum);
+        }}
+        title={`Supprimer « ${pendingDeleteAlbum?.title || "cet album"} » ?`}
+        message={
+          `L’album sera retiré du catalogue.\n\n` +
+          `Les titres restent disponibles en singles (audio et paroles conservés).\n` +
+          `Tu pourras les supprimer un par un si besoin.`
+        }
+        confirmText="Oui, supprimer l’album"
         cancelText="Annuler"
         confirmClass="btn-error"
       />
