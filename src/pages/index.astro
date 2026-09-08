@@ -1,8 +1,126 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import Dashboard from "../components/Dashboard.jsx";
+import { getSessionFromCookies } from "../server/auth.js";
+
+export const prerender = false;
+
+const session = getSessionFromCookies(Astro.cookies);
+if (session) {
+  return Astro.redirect("/studio");
+}
 ---
 
-<Layout>
-  <Dashboard client:load />
+<Layout
+  title="SONOZZ — Crée ton artiste IA"
+  description="Crée ton artiste, génère des titres, publie. Un flux en 3 étapes — sans Docker ni config serveur."
+>
+  <div class="min-h-screen pb-28">
+    <header class="border-b border-base-content/10 bg-base-200/80 backdrop-blur">
+      <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+        <a href="/" class="inline-flex items-center gap-3" aria-label="SONOZZ">
+          <img src="/logo.png" alt="" class="h-10 w-10 rounded-xl object-cover shadow" width="40" height="40" />
+          <span class="font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl">SONOZZ</span>
+        </a>
+        <nav class="flex items-center gap-2 sm:gap-3">
+          <a href="/play" class="btn btn-ghost btn-sm">Écouter</a>
+          <a href="/login" class="btn btn-primary btn-sm">Connexion</a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="relative overflow-hidden">
+      <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/20 via-transparent to-secondary/15" aria-hidden="true"></div>
+      <div class="relative mx-auto max-w-5xl px-4 py-16 sm:px-6 sm:py-24">
+        <p class="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-primary/90">Artiste IA · titres · publication</p>
+        <h1 class="font-display max-w-3xl text-4xl font-extrabold tracking-tight text-base-content sm:text-5xl md:text-6xl">
+          Crée ton artiste,<br class="hidden sm:block" /> génère des titres, publie.
+        </h1>
+        <p class="mt-5 max-w-2xl text-base text-base-content/70 sm:text-lg">
+          Un seul flux en trois étapes. Pas de serveur à installer, pas de variables d’environnement —
+          tu lances, tu génères, tu partages sur <span class="text-base-content/90">/play</span>.
+        </p>
+        <div class="mt-8 flex flex-wrap gap-3">
+          <a href="/login" class="btn btn-primary btn-lg shadow-lg shadow-primary/25">Créer mon artiste</a>
+          <a href="/play" class="btn btn-outline btn-lg border-base-content/20">Écouter le catalogue</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
+      <h2 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">Trois étapes. C’est tout.</h2>
+      <ol class="mt-8 grid gap-4 sm:grid-cols-3">
+        <li class="rounded-2xl border border-base-content/10 bg-base-200/50 p-5">
+          <span class="font-display text-3xl font-extrabold text-primary/80">1</span>
+          <h3 class="mt-2 font-display text-lg font-bold">Artiste</h3>
+          <p class="mt-1.5 text-sm text-base-content/65">Choisis un genre, un nom, une identité. Ton profil est prêt en minutes.</p>
+        </li>
+        <li class="rounded-2xl border border-base-content/10 bg-base-200/50 p-5">
+          <span class="font-display text-3xl font-extrabold text-primary/80">2</span>
+          <h3 class="mt-2 font-display text-lg font-bold">Titres</h3>
+          <p class="mt-1.5 text-sm text-base-content/65">Génère paroles, audio et jaquette. Relance ce qui ne te plaît pas.</p>
+        </li>
+        <li class="rounded-2xl border border-base-content/10 bg-base-200/50 p-5">
+          <span class="font-display text-3xl font-extrabold text-primary/80">3</span>
+          <h3 class="mt-2 font-display text-lg font-bold">Publie</h3>
+          <p class="mt-1.5 text-sm text-base-content/65">Partage sur le lecteur public, ou demande une mise en ligne stores.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section id="pricing" class="border-y border-base-content/10 bg-base-200/30">
+      <div class="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
+        <h2 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">Offre simple</h2>
+        <p class="mt-2 max-w-2xl text-sm text-base-content/60">Les crédits de génération sont le levier principal. Paiements bientôt (Stripe &amp; PayPal).</p>
+        <div class="mt-8 grid gap-4 lg:grid-cols-3">
+          <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
+            <h3 class="font-display text-xl font-bold">Free</h3>
+            <p class="mt-1 text-3xl font-extrabold">0&nbsp;€</p>
+            <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
+              <li>1 artiste</li>
+              <li>Générations limitées / mois</li>
+              <li>Lecteur public <code class="text-xs">/play</code></li>
+              <li>Watermark ou qualité limitée</li>
+            </ul>
+            <a href="/login" class="btn btn-outline btn-block mt-6 border-base-content/20">Commencer</a>
+          </article>
+
+          <article class="relative flex flex-col rounded-2xl border-2 border-primary/50 bg-gradient-to-b from-primary/15 to-base-100/90 p-6 shadow-lg shadow-primary/10">
+            <span class="absolute -top-3 left-4 rounded-full bg-primary px-3 py-0.5 text-[11px] font-bold uppercase tracking-wide text-primary-content">Recommandé</span>
+            <h3 class="font-display text-xl font-bold">Pro</h3>
+            <p class="mt-1 text-3xl font-extrabold">12&nbsp;€<span class="text-base font-semibold text-base-content/50">/mois</span></p>
+            <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
+              <li>Plus de crédits</li>
+              <li>Multi-albums</li>
+              <li>Export propre</li>
+              <li>Sans watermark</li>
+            </ul>
+            <a href="/login" class="btn btn-primary btn-block mt-6">Passer Pro</a>
+          </article>
+
+          <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
+            <h3 class="font-display text-xl font-bold">Publish+</h3>
+            <p class="mt-1 text-lg font-bold text-base-content/80">Add-on</p>
+            <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
+              <li>Pipeline DistroKid (ou équivalent)</li>
+              <li>Suivi statut : en cours / publié / échec</li>
+              <li>Idéal pour sortir vraiment en stores</li>
+            </ul>
+            <a href="/login" class="btn btn-outline btn-block mt-6 border-base-content/20">Demander Publish+</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <footer class="mx-auto max-w-5xl px-4 py-10 sm:px-6">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <p class="text-sm text-base-content/50">SONOZZ — artiste IA, titres, publication.</p>
+        <div class="flex flex-wrap gap-4 text-sm">
+          <a href="/play" class="link link-hover">Lecteur</a>
+          <a href="/login" class="link link-hover">Studio</a>
+          <a href="/legal/terms" class="link link-hover">Conditions</a>
+          <a href="/legal/privacy" class="link link-hover">Confidentialité</a>
+        </div>
+      </div>
+    </footer>
+  </div>
 </Layout>
