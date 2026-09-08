@@ -11,8 +11,6 @@ import {
   Scale,
 } from "lucide-preact";
 import JobsDock, { JobsDockMobile } from "./JobsDock.jsx";
-import { ensureKeysHydrated } from "../lib/keys/storage.js";
-
 const NAV = [
   { href: "/studio", id: "studio", label: "Studio", icon: Waves },
   { href: "/artistes", id: "artistes", label: "Artistes", icon: UserRound },
@@ -53,7 +51,6 @@ export default function AppShell({
         setAuthed(ok);
         setEmail(d?.email || null);
         setCanManageSettings(Boolean(d?.canManageSettings));
-        if (ok && d?.canManageSettings) void ensureKeysHydrated();
       })
       .catch(() => setAuthed(false));
   }, []);
