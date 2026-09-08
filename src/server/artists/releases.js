@@ -1,5 +1,6 @@
 import { getDb, saveProject } from "../db.js";
 import { resolveArtistGender, withResolvedArtistGender } from "../../lib/artistGender.js";
+import { artistPhotoPath } from "../../lib/artistPhotos.js";
 import { ensureArtistSchema, lightAssetUrl } from "./schema.js";
 import { getArtistBySlug, upsertArtistFromProject } from "./crud.js";
 import {
@@ -60,8 +61,10 @@ export async function listArtistReleases(slug, limit = 40, opts = {}) {
       String(row.track_status || "") === "pending-review" ||
       String(row.track_status || "") === "preview-ready";
     const audioUrl = pendingReview ? null : lightAssetUrl(row.audio_url);
-    const artistImage = lightAssetUrl(row.artist_image);
-    const coverUrl = lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url) || artistImage;
+    const photo = artistPhotoPath(row.artist_slug || slug);
+    const artistImage = lightAssetUrl(row.artist_image) || photo;
+    const coverUrl =
+      lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url) || artistImage;
     const onceStatus = row.once_status || null;
     const hasLyrics = Boolean(row.lyrics_title || row.lyrics_theme);
     return {
@@ -146,8 +149,10 @@ export async function listLibraryTracks(limit = 200) {
         return null;
       const audioUrl = lightAssetUrl(row.audio_url);
       if (!audioUrl) return null;
-      const artistImage = lightAssetUrl(row.artist_image);
-      const coverUrl = lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url) || artistImage;
+      const photo = artistPhotoPath(row.artist_slug);
+      const artistImage = lightAssetUrl(row.artist_image) || photo;
+      const coverUrl =
+        lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url) || artistImage;
       return {
         id: row.id,
         title: row.title,
