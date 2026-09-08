@@ -1,4 +1,4 @@
-import { loadKeys } from "../keys.js";
+import { loadKeys } from "../keys/storage.js";
 
 export function toAbortSignal(signal) {
   if (!signal) return undefined;
