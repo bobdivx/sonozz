@@ -183,7 +183,8 @@ export function sessionCapabilities(role) {
 export function isAdminOnlyPath(pathname) {
   if (!pathname) return false;
   const p = pathname.replace(/\/+$/, "") || "/";
-  if (p === "/parametres" || p === "/lab/ace") return true;
+  if (p === "/admin" || p === "/parametres" || p === "/lab/ace") return true;
+  if (p === "/api/admin" || p.startsWith("/api/admin/")) return true;
   if (p === "/api/keys" || p === "/api/test-keys" || p === "/api/db-test") return true;
   if (p === "/api/invites" || p.startsWith("/api/invites/")) {
     // accept est public
