@@ -78,17 +78,19 @@ function TopHeader({
 
   return (
     <header class="sticky top-0 z-40 shrink-0 border-b border-base-content/10 bg-base-200/90 backdrop-blur-md">
-      <div class="flex h-14 items-center gap-3 px-3 sm:h-16 sm:gap-4 sm:px-5 md:px-6">
-        {showMobileMenu && (
+      <div class="flex h-14 items-center gap-2 px-2 sm:h-16 sm:gap-4 sm:px-5 md:px-6">
+        {showMobileMenu ? (
           <button
             type="button"
-            class="btn btn-ghost btn-sm btn-square md:hidden"
+            class="btn btn-ghost btn-sm btn-square shrink-0 md:hidden"
             aria-label={mobileOpen ? "Fermer le menu" : "Ouvrir le menu"}
+            aria-expanded={mobileOpen}
+            aria-controls="sonozz-mobile-nav"
             onClick={onToggleMobile}
           >
             {mobileOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
-        )}
+        ) : null}
 
         <a
           href="/studio"
@@ -99,7 +101,7 @@ function TopHeader({
         </a>
 
         <form
-          class="mx-auto flex min-w-0 max-w-xl flex-1"
+          class="mx-auto flex min-w-0 max-w-[9.5rem] flex-1 sm:max-w-md md:max-w-xl"
           role="search"
           onSubmit={(e) => {
             e.preventDefault();
@@ -310,7 +312,7 @@ export default function AppShell({ active, children, title, subtitle, fillViewpo
       <div class={`relative flex min-h-0 flex-1 ${fillViewport ? "overflow-hidden" : ""}`}>
         {mobileOpen && (
           <div
-            class="fixed inset-0 z-20 bg-black/60 md:hidden"
+            class="fixed inset-0 z-40 bg-black/60 md:hidden"
             style={{ top: "var(--sonozz-top-header, 3.5rem)" }}
             onClick={() => setMobileOpen(false)}
             role="presentation"
@@ -318,12 +320,14 @@ export default function AppShell({ active, children, title, subtitle, fillViewpo
         )}
 
         <aside
-          class={`fixed left-0 z-20 flex w-64 flex-col border-r border-base-content/10 bg-base-200/95 backdrop-blur transition-transform md:static md:z-auto md:h-auto md:translate-x-0 md:bg-base-200/40 md:pb-[length:var(--sonozz-now-playing,5.5rem)] ${
-            mobileOpen ? "translate-x-0" : "-translate-x-full"
+          id="sonozz-mobile-nav"
+          class={`fixed left-0 z-50 flex w-[min(16rem,85vw)] flex-col border-r border-base-content/10 bg-base-200 shadow-xl transition-transform md:static md:z-auto md:h-auto md:w-64 md:translate-x-0 md:bg-base-200/40 md:pb-[length:var(--sonozz-now-playing,5.5rem)] md:shadow-none ${
+            mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
           }`}
           style={{
             top: "var(--sonozz-top-header, 3.5rem)",
             bottom: "var(--sonozz-now-playing, 5.5rem)",
+            maxHeight: "calc(100dvh - var(--sonozz-top-header, 3.5rem) - var(--sonozz-now-playing, 5.5rem))",
           }}
         >
           <nav class="flex flex-col gap-1 p-3 pt-4" aria-label="Navigation principale">
