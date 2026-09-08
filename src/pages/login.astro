@@ -15,13 +15,13 @@ import { isOidcConfigured, SSO_HINT_COOKIE, oidcCookieOptions } from "../server/
 export const prerender = false;
 
 function safeNext(raw) {
-  if (!raw || typeof raw !== "string") return "/";
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
-  if (raw.startsWith("/login")) return "/";
+  if (!raw || typeof raw !== "string") return "/studio";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/studio";
+  if (raw.startsWith("/login")) return "/studio";
   return raw;
 }
 
-const nextParam = Astro.url.searchParams.get("next") || "/";
+const nextParam = Astro.url.searchParams.get("next") || "/studio";
 const next = safeNext(nextParam);
 const errorCode = Astro.url.searchParams.get("error") || "";
 
