@@ -209,6 +209,9 @@ export function isPublicPath(pathname) {
   if (p === "/api/auth/callback/pocket-id") return true;
   if (p === "/api/invites/accept") return true;
 
+  // Stripe Checkout webhook (signature vérifiée dans la route)
+  if (p === "/api/billing/webhook") return true;
+
   if (p.startsWith("/_astro/") || p.startsWith("/assets/")) return true;
   if (p === "/favicon.ico" || p === "/favicon.svg" || p === "/logo.png" || p === "/apple-touch-icon.png") return true;
   if (p === "/sonozz-tiktok-app-icon.png") return true;
