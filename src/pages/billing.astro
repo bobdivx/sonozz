@@ -1,0 +1,146 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { getSessionFromCookies } from "../server/auth.js";
+import { isStripeConfigured, getStripeConfig } from "../server/stripe.js";
+
+export const prerender = false;
+
+const session = getSessionFromCookies(Astro.cookies);
+const configured = isStripeConfigured();
+const cfg = getStripeConfig();
+const hasPublishPlus = Boolean(cfg.pricePublishPlus);
+const email = session?.email || "";
+---
+
+<Layout
+  title="SONOZZ — Abonnement"
+  description="Choisis ton plan SONOZZ (Stripe Checkout)."
+>
+  <div class="min-h-screen pb-28">
+    <header class="border-b border-base-content/10 bg-base-200/80 backdrop-blur">
+      <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+        <a href="/studio" class="inline-flex items-center gap-3" aria-label="SONOZZ Studio">
+          <img src="/logo.png" alt="" class="h-10 w-10 rounded-xl object-cover shadow" width="40" height="40" />
+          <span class="font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl">SONOZZ</span>
+        </a>
+        <nav class="flex items-center gap-2 sm:gap-3">
+          <a href="/studio" class="btn btn-ghost btn-sm">Studio</a>
+          <a href="/compte" class="btn btn-ghost btn-sm">Compte</a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
+      <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">Abonnement</h1>
+      <p class="mt-2 max-w-2xl text-sm text-base-content/65">
+        Connecté·e en tant que <span class="font-medium text-base-content/90">{email}</span>.
+        Le paiement est géré par Stripe Checkout (clés à configurer côté serveur).
+      </p>
+
+      {!configured && (
+        <div class="alert alert-warning mt-6 max-w-2xl text-sm">
+          <span>
+            Stripe n’est pas encore configuré (<code class="text-xs">STRIPE_SECRET_KEY</code> /
+            <code class="text-xs">STRIPE_PRICE_PRO</code>). Les boutons resteront désactivés jusqu’aux clés.
+          </span>
+        </div>
+      )}
+
+      <p id="billing-error" class="mt-4 hidden text-sm text-error" role="alert"></p>
+
+      <div class="mt-8 grid gap-4 lg:grid-cols-2">
+        <article class="relative flex flex-col rounded-2xl border-2 border-primary/50 bg-gradient-to-b from-primary/15 to-base-100/90 p-6 shadow-lg shadow-primary/10">
+          <span class="absolute -top-3 left-4 rounded-full bg-primary px-3 py-0.5 text-[11px] font-bold uppercase tracking-wide text-primary-content">Recommandé</span>
+          <h2 class="font-display text-xl font-bold">Pro</h2>
+          <p class="mt-1 text-3xl font-extrabold">12&nbsp;€<span class="text-base font-semibold text-base-content/50">/mois</span></p>
+          <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
+            <li>Plus de crédits</li>
+            <li>Multi-albums</li>
+            <li>Export propre</li>
+            <li>Sans watermark</li>
+          </ul>
+          <button
+            type="button"
+            class="btn btn-primary btn-block mt-6"
+            data-plan="pro"
+            data-checkout
+            disabled={!configured}
+          >
+            Passer Pro
+          </button>
+        </article>
+
+        <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
+          <h2 class="font-display text-xl font-bold">Publish+</h2>
+          <p class="mt-1 text-lg font-bold text-base-content/80">Add-on</p>
+          <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
+            <li>Pipeline DistroKid (ou équivalent)</li>
+            <li>Suivi statut : en cours / publié / échec</li>
+            <li>Idéal pour sortir vraiment en stores</li>
+          </ul>
+          <button
+            type="button"
+            class="btn btn-outline btn-block mt-6 border-base-content/20"
+            data-plan="publish_plus"
+            data-checkout
+            disabled={!configured || !hasPublishPlus}
+          >
+            {hasPublishPlus ? "Souscrire Publish+" : "Publish+ (prix non configuré)"}
+          </button>
+        </article>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const errEl = document.getElementById("billing-error");
+    function showError(msg) {
+      if (!errEl) return;
+      errEl.textContent = msg || "Erreur";
+      errEl.classList.remove("hidden");
+    }
+
+    async function startCheckout(plan, btn) {
+      showError("");
+      errEl?.classList.add("hidden");
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Redirection…";
+      try {
+        const res = await fetch("/api/billing/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ plan }),
+          credentials: "same-origin",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        if (!data.url) throw new Error("URL Checkout manquante");
+        window.location.href = data.url;
+      } catch (e) {
+        showError(e?.message || "Impossible de démarrer le paiement");
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    }
+
+    document.querySelectorAll("[data-checkout]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const plan = btn.getAttribute("data-plan");
+        if (plan) startCheckout(plan, btn);
+      });
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    const preselect = params.get("plan");
+    if (preselect === "publish_plus" || preselect === "pro") {
+      const target = document.querySelector(`[data-checkout][data-plan="${preselect}"]`);
+      if (target && !target.disabled) {
+        // Soft highlight only — user clicks to pay
+        target.classList.add("ring", "ring-primary", "ring-offset-2");
+      }
+    }
+  </script>
+</Layout>
