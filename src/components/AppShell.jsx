@@ -11,7 +11,7 @@ import {
   Scale,
 } from "lucide-preact";
 import JobsDock, { JobsDockMobile } from "./JobsDock.jsx";
-import { ensureKeysHydrated } from "../lib/keys.js";
+import { ensureKeysHydrated } from "../lib/keys/storage.js";
 
 const NAV = [
   { href: "/studio", id: "studio", label: "Studio", icon: Waves },
