@@ -19,9 +19,9 @@ import {
 export const prerender = false;
 
 function safeNext(raw) {
-  if (!raw || typeof raw !== "string") return "/";
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
-  if (raw.startsWith("/login") || raw.startsWith("/api/")) return "/";
+  if (!raw || typeof raw !== "string") return "/studio";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/studio";
+  if (raw.startsWith("/login") || raw.startsWith("/api/")) return "/studio";
   return raw;
 }
 
@@ -42,7 +42,7 @@ export async function GET({ request, cookies, url }) {
   const pkce = createPkcePair();
   const state = randomOidcState();
   const nonce = randomOidcState();
-  const next = safeNext(url.searchParams.get("next") || "/");
+  const next = safeNext(url.searchParams.get("next") || "/studio");
 
   const cookieOpts = oidcCookieOptions(600);
   cookies.set(OIDC_STATE_COOKIE, `${state}:${nonce}`, cookieOpts);
