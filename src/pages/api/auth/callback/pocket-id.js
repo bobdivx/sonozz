@@ -25,9 +25,9 @@ import {
 export const prerender = false;
 
 function safeNext(raw) {
-  if (!raw || typeof raw !== "string") return "/";
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
-  if (raw.startsWith("/login") || raw.startsWith("/api/")) return "/";
+  if (!raw || typeof raw !== "string") return "/studio";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/studio";
+  if (raw.startsWith("/login") || raw.startsWith("/api/")) return "/studio";
   return raw;
 }
 
@@ -63,7 +63,7 @@ export async function GET({ request, cookies, url }) {
   const [storedState] = stored.split(":");
   const verifier = cookies.get(OIDC_VERIFIER_COOKIE)?.value || "";
   const intent = cookies.get(OIDC_INTENT_COOKIE)?.value === "link" ? "link" : "login";
-  const next = safeNext(cookies.get(OIDC_NEXT_COOKIE)?.value || "/");
+  const next = safeNext(cookies.get(OIDC_NEXT_COOKIE)?.value || "/studio");
 
   if (!code || !state || !storedState || state !== storedState || !verifier) {
     return loginError(cookies, "sso");
