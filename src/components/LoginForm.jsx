@@ -13,14 +13,14 @@ const ERROR_MESSAGES = {
 
 function ssoStartHref(next, intent = "login") {
   const params = new URLSearchParams();
-  if (next && next !== "/") params.set("next", next);
+  if (next && next !== "/" && next !== "/studio") params.set("next", next);
   if (intent === "link") params.set("intent", "link");
   const q = params.toString();
   return `/api/auth/pocket-id${q ? `?${q}` : ""}`;
 }
 
 export default function LoginForm({
-  next = "/",
+  next = "/studio",
   error = "",
   errorCode = "",
   initialEmail = "",
