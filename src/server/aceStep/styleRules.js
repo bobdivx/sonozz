@@ -9,7 +9,7 @@
 export const ACE_STYLE_CAP = 700;
 
 /** Bump si les règles changent (invalide le cache mémoire). */
-export const ACE_STYLE_RULES_VERSION = 5;
+export const ACE_STYLE_RULES_VERSION = 6;
 
 /** Cible caption — au-delà ACE sature (noise wall). */
 export const ACE_STYLE_TARGET = 360;
@@ -34,12 +34,14 @@ export const ACE_STYLE_MUST_CORE = [
   "full band once",
   "clear sung lyrics",
   "airy mix",
-  "verse lean → thicker chorus → biggest final",
+  "instrument layers change by section (never same loop)",
 ];
 
 export const ACE_STYLE_FALLBACK_CLARITY = "clear sung lyrics";
 export const ACE_STYLE_FALLBACK_BAND = "full band: guitar, bass, drums, keys";
 export const ACE_STYLE_FALLBACK_MIX = "airy mix";
+export const ACE_STYLE_FALLBACK_DYNAMICS =
+  "instrument layers change: verse sparse → chorus adds guitar/keys/pads → densest final";
 
 export function aceGenderHardPrefix(genderCode) {
   if (genderCode === "female") return "female lead vocal, woman singer, clear diction";
@@ -77,7 +79,8 @@ export function aceStyleLlmRulesBlock(brief = {}) {
 - Keep MUST: ${must}.
 - Avoid: ${avoid}.
 - Start with gender ONCE: "${aceGenderHardPrefix(brief?.lead?.gender) || "lead vocal"}" — never repeat it.
-- Then: genre, full band, clear lyrics, airy mix, section dynamics — each ONCE.
+- Then: genre, full band, clear lyrics, airy mix, instrument-layer section arc — each ONCE.
+- Name which layers enter/exit (verse sparse → chorus adds guitar/keys/pads) — "thicker" alone is not enough.
 - No essays, no duplicate sentences, no second genre.`;
 }
 
@@ -187,6 +190,13 @@ export function enforceAceStyleLocks(caption, brief = {}) {
   }
   if (!/\b(airy|open mix)\b/i.test(s)) {
     s = `${s.replace(/\.\s*$/, "")}. ${ACE_STYLE_FALLBACK_MIX}.`;
+  }
+  if (
+    !/\b(instrument layers|layers change|verse sparse|never (?:one )?flat|never same loop|section dynamics)\b/i.test(
+      s,
+    )
+  ) {
+    s = `${s.replace(/\.\s*$/, "")}. ${ACE_STYLE_FALLBACK_DYNAMICS}.`;
   }
 
   s = dedupeStyleClauses(s.replace(/\s+/g, " ").trim());

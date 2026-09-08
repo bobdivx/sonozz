@@ -60,6 +60,13 @@ export async function GET({ request, cookies, url }) {
     nonce,
   });
 
+  console.info(
+    "[oidc] authorize",
+    `client=${cfg.clientId}`,
+    `redirect_uri=${redirectUri}`,
+    `intent=${intent}`,
+  );
+
   return new Response(null, {
     status: 302,
     headers: { Location: authorizeUrl },

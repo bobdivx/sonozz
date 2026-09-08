@@ -16,6 +16,7 @@ import {
   composeAceStepStyle,
   aceStepProductionQualityFloor,
   aceStepBandBedCompact,
+  aceStepSectionDynamicsShort,
 } from "../../lib/musicLane.js";
 import {
   normalizeFeatArtist,
@@ -295,12 +296,14 @@ export function assembleAceStepStyle({
       .slice(0, 32);
     const arrange = normalizeMusicArrange(lead?.musicArrange);
     const bandBed = aceStepBandBedCompact(styleLock, arrange);
+    const sectionArc = aceStepSectionDynamicsShort({ duo: false });
     // Caption minimal — doublons / pavés → mur de bruit ACE.
+    // Arc INSTRUMENTAL explicite (pas seulement « thicker ») — sinon boucle plate.
     styleFinal = [
       `${genre}. ${gender}`,
       bandBed,
       langBit,
-      "verse lean → thicker chorus → biggest final",
+      sectionArc,
       mood || null,
     ]
       .filter(Boolean)
@@ -470,16 +473,16 @@ export function buildAceStepBody({
     body.taskType = "cover";
     // Cover : instruction courte (pavé long + style = mur de bruit SFT).
     body.instruction = isDuo
-      ? "Obey [singer 1]/[singer 2]; keep groove from reference; clear vocals."
-      : "Clear lead vocal; thicker chorus than verse; keep groove from reference.";
+      ? "Obey [singer 1]/[singer 2]; keep groove from reference; clear vocals; change instrument layers by section."
+      : "Clear lead vocal; verse sparse band → chorus adds instrument layers → densest final; keep groove from reference.";
     if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < ACE_SFT_GUIDANCE)) {
       body.guidanceScale = ACE_SFT_GUIDANCE;
     }
   } else {
     // text2music : instruction minimale (vide → ACE ignore parfois le style).
     body.instruction = isDuo
-      ? "Obey [singer 1]/[singer 2]."
-      : "Follow the style caption; sing lyrics clearly.";
+      ? "Obey [singer 1]/[singer 2]; change instrument layers by section."
+      : "Follow the style caption; change instrument layers by section (never same loop); sing lyrics clearly.";
   }
   return body;
 }

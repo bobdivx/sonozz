@@ -97,7 +97,7 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
       ? `${leadGenre} duet, gospel hooks, ONE clean song`
       : `${leadGenre} duet, ONE lane, full band, clean mix`,
     `band: ${bed}`,
-    "verse lean → thicker chorus → thin bridge → big final chorus",
+    "instrument layers change: verse sparse → chorus adds layers → thin bridge → densest final",
     `singer 1 ${a.name} (${g1}): ${leadVoice}`,
     `singer 2 ${b.name} (${g2}): ${featVoice}`,
     featGospel

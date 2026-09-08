@@ -65,6 +65,15 @@ describe("enforceAceStyleLocks", () => {
     });
     assert.ok(a.brief.mustKeep.some((m) => /female/i.test(m)));
     assert.match(a.style, /female lead vocal/i);
+    assert.match(a.style, /instrument layers change/i);
+  });
+
+  it("force un arc instrumental si le caption n’en a pas", () => {
+    const out = enforceAceStyleLocks(
+      "Indie Pop, female lead vocal. full band guitar bass drums. airy mix.",
+      { lead: { gender: "female" } },
+    );
+    assert.match(out, /instrument layers|verse sparse/i);
   });
 });
 

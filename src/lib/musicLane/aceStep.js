@@ -13,13 +13,21 @@ export function aceStepProductionQualityFloor({ duo = false } = {}) {
 }
 
 /**
- * Arc sectionnel COURT — changements d’INSTRUMENTS (pas seulement la batterie).
- * À placer TÔT dans le style (survit au plafond ~700).
+ * Arc sectionnel COURT — changements d’INSTRUMENTS (pas juste le volume).
+ * ACE ignore « thicker » seul → il faut nommer les couches qui entrent/sortent.
  */
 export function aceStepSectionDynamicsCompact({ duo = false } = {}) {
   const core =
-    "NOT one flat loop: verse = guitar+bass+light drums → pre-chorus adds keys/pads → chorus = fuller band (extra guitar layers, bigger drums, pads, wider snare) → thinner bridge → biggest final chorus";
+    "instrument layers change by section (not just louder): verse=sparse bed (bass+light drums) → pre adds keys/pads → chorus=full band (extra guitar layers, pads, wider snare) → thin bridge → densest final — never one flat loop";
   if (duo) return `${core}; band lifts under the active tagged singer`;
+  return core;
+}
+
+/** Phrase courte pour squelette solo / mustKeep (budget ~360c). */
+export function aceStepSectionDynamicsShort({ duo = false } = {}) {
+  const core =
+    "instrument layers change: verse sparse → chorus adds guitar/keys/pads → thin bridge → densest final — never same loop";
+  if (duo) return `${core}; lifts under active singer`;
   return core;
 }
 

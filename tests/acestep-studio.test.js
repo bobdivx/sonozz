@@ -234,7 +234,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(sft.enableNormalization, true);
     assert.equal(sft.normalizationDb, -2.5);
     assert.equal(sft.mp3Bitrate, "320k");
-    assert.match(sft.style, /thicker chorus|biggest final|full band|clear diction/i);
+    assert.match(sft.style, /instrument layers|densest final|full band|clear diction/i);
     assert.ok(sft.duration >= 110 && sft.duration <= ACE_SFT_DURATION_MAX);
     assert.equal(sft.referenceAudioUrl, undefined);
     assert.equal(sft.taskType, undefined);
@@ -298,14 +298,14 @@ describe("ACE-Step Studio client", () => {
     assert.match(body.style, /male lead vocal/i);
     assert.ok(body.style.length <= 400, `style trop long: ${body.style.length}`);
     assert.match(body.style, /full band/i);
-    assert.match(body.style, /thicker chorus|biggest final/i);
+    assert.match(body.style, /instrument layers change|densest final|never same loop/i);
     assert.match(body.style, /clear diction|clear sung/i);
     assert.match(body.style, /acoustic guitar/i);
     assert.doesNotMatch(body.style, /conversational/i);
     assert.doesNotMatch(body.style, /no vocoder|no autotune/i);
     // text2music solo : instruction courte (pas de pavé).
-    assert.ok(body.instruction && body.instruction.length < 80);
-    assert.match(body.instruction, /style caption|sing lyrics/i);
+    assert.ok(body.instruction && body.instruction.length < 120);
+    assert.match(body.instruction, /style caption|instrument layers|sing lyrics/i);
   });
 
   it("envoie le preview titre phare en cover (source + référence)", () => {
@@ -330,8 +330,8 @@ describe("ACE-Step Studio client", () => {
     assert.equal(body.enableNormalization, true);
     assert.equal(body.normalizationDb, -2.5);
     assert.equal(body.mp3Bitrate, "320k");
-    assert.match(body.instruction, /Clear lead vocal|thicker chorus|keep groove/i);
-    assert.match(body.style, /section dynamics|thicker chorus|chorus lift|chorus thicker than verse|dry clear lead vocal|verse lean/i);
+    assert.match(body.instruction, /Clear lead vocal|instrument layers|keep groove/i);
+    assert.match(body.style, /instrument layers|section dynamics|densest final|never same loop|full band/i);
 
     const turbo = buildAceStepBody({
       title: "Echoes",

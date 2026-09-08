@@ -4,7 +4,9 @@ import {
   artefactGuardsFromLock,
   aceStepCommercialArrangementBits,
   aceStepCommercialBandBits,
+  aceStepSectionDynamicsCompact,
   aceStepSectionDynamicsLine,
+  aceStepSectionDynamicsShort,
   coalesceGenres,
   composeAceStepStyle,
   defaultBpmForGenre,
@@ -235,6 +237,18 @@ describe("section dynamics helpers", () => {
     assert.match(line, /bridge/i);
     assert.match(line, /flat loop/i);
     assert.match(aceStepSectionDynamicsLine({ duo: true }), /tagged singer/i);
+  });
+
+  it("compact / short nomment les couches instrumentales", () => {
+    const compact = aceStepSectionDynamicsCompact();
+    assert.match(compact, /instrument layers/i);
+    assert.match(compact, /verse/i);
+    assert.match(compact, /chorus/i);
+    assert.match(compact, /flat loop/i);
+    const short = aceStepSectionDynamicsShort();
+    assert.match(short, /instrument layers change/i);
+    assert.match(short, /guitar|keys|pads/i);
+    assert.match(short, /never same loop/i);
   });
 
   it("commercial bits réutilisent la ligne sectionnelle", () => {
