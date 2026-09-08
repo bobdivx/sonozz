@@ -4,13 +4,13 @@ import Layout from "../layouts/Layout.astro";
 export const prerender = false;
 
 function safeNext(raw) {
-  if (!raw || typeof raw !== "string") return "/";
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
-  if (raw.startsWith("/login") || raw.startsWith("/403")) return "/";
+  if (!raw || typeof raw !== "string") return "/studio";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/studio";
+  if (raw.startsWith("/login") || raw.startsWith("/403")) return "/studio";
   return raw;
 }
 
-const next = safeNext(Astro.url.searchParams.get("next") || "/");
+const next = safeNext(Astro.url.searchParams.get("next") || "/studio");
 const loginHref = `/login?next=${encodeURIComponent(next)}`;
 ---
 
