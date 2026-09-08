@@ -151,10 +151,14 @@ export function mergeArtistProfile(prev = {}, incoming = {}) {
   return withResolvedArtistGender(merged);
 }
 
+/**
+ * URLs légères pour les API JSON (/play, listes).
+ * Jamais de data: — ça gonflait /api/library à ~16 Mo et bloquait le spinner Play.
+ */
 export function lightAssetUrl(url) {
   if (!url || typeof url !== "string") return null;
   if (/^https?:\/\//i.test(url)) return url;
-  if (url.startsWith("data:") && url.length <= 500_000) return url;
+  if (url.startsWith("/api/")) return url;
   return null;
 }
 
