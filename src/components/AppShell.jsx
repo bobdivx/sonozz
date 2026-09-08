@@ -9,14 +9,16 @@ import {
   Headphones,
   LogOut,
   Search,
+  LayoutDashboard,
 } from "lucide-preact";
 import JobsDock, { JobsDockMobile } from "./JobsDock.jsx";
 import { ensureKeysHydrated } from "../lib/keys.js";
 
 const NAV = [
-  { href: "/", id: "studio", label: "Studio", icon: Waves, hint: "Un morceau : paroles, audio, jaquette, stores" },
+  { href: "/studio", id: "studio", label: "Studio", icon: Waves, hint: "Un morceau : paroles, audio, jaquette, stores" },
   { href: "/artistes", id: "artistes", label: "Artistes", icon: UserRound, hint: "Profils, catalogue et albums" },
   { href: "/play", id: "play", label: "Play", icon: Headphones },
+  { href: "/admin", id: "admin", label: "Admin", icon: LayoutDashboard, adminOnly: true },
   { href: "/parametres", id: "parametres", label: "Paramètres", icon: Settings2, adminOnly: true },
   { href: "/compte", id: "compte", label: "Compte", icon: UserRound, memberOnly: true },
 ];
@@ -89,9 +91,9 @@ function TopHeader({
         )}
 
         <a
-          href="/"
+          href="/studio"
           class="shrink-0 font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl"
-          aria-label="SONOZZ — Accueil"
+          aria-label="SONOZZ — Studio"
         >
           SONOZZ
         </a>
@@ -142,7 +144,7 @@ function TopHeader({
 /**
  * Shell app avec top header (logo · recherche · avatar) + sidebar (si connecté)
  * ou bandeau logo public (écoute /play).
- * @param {{ active: 'studio' | 'artistes' | 'play' | 'parametres' | 'compte', children: any, title?: string, subtitle?: string, fillViewport?: boolean, actions?: any }} props
+ * @param {{ active: 'studio' | 'artistes' | 'play' | 'admin' | 'parametres' | 'compte', children: any, title?: string, subtitle?: string, fillViewport?: boolean, actions?: any }} props
  */
 export default function AppShell({ active, children, title, subtitle, fillViewport = false, actions }) {
   const [mobileOpen, setMobileOpen] = useState(false);
