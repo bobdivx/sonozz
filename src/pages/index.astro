@@ -16,32 +16,32 @@ if (session) {
 >
   <div class="min-h-screen pb-28">
     <header class="border-b border-base-content/10 bg-base-200/80 backdrop-blur">
-      <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      <div class="mx-auto flex max-w-5xl items-center justify-between gap-2 px-3 py-3 sm:gap-4 sm:px-6 sm:py-4">
         <a href="/" class="inline-flex items-center gap-3" aria-label="SONOZZ">
           <img src="/logo.png" alt="" class="h-10 w-10 rounded-xl object-cover shadow" width="40" height="40" />
           <span class="font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl">SONOZZ</span>
         </a>
         <nav class="flex items-center gap-2 sm:gap-3">
-          <a href="/play" class="btn btn-ghost btn-sm">Écouter</a>
-          <a href="/login" class="btn btn-primary btn-sm">Connexion</a>
+          <a href="/play" class="btn btn-ghost btn-sm px-2 sm:px-3">Écouter</a>
+          <a href="/login" class="btn btn-primary btn-sm px-2 sm:px-3">Connexion</a>
         </nav>
       </div>
     </header>
 
     <section class="relative overflow-hidden">
       <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/20 via-transparent to-secondary/15" aria-hidden="true"></div>
-      <div class="relative mx-auto max-w-5xl px-4 py-16 sm:px-6 sm:py-24">
+      <div class="relative mx-auto max-w-5xl px-4 py-10 sm:px-6 sm:py-24">
         <p class="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-primary/90">Artiste IA · titres · publication</p>
-        <h1 class="font-display max-w-3xl text-4xl font-extrabold tracking-tight text-base-content sm:text-5xl md:text-6xl">
+        <h1 class="font-display max-w-3xl text-[1.75rem] leading-tight font-extrabold tracking-tight text-base-content sm:text-5xl md:text-6xl">
           Crée ton artiste,<br class="hidden sm:block" /> génère des titres, publie.
         </h1>
         <p class="mt-5 max-w-2xl text-base text-base-content/70 sm:text-lg">
           Un seul flux en trois étapes. Pas de serveur à installer, pas de variables d’environnement —
           tu lances, tu génères, tu partages sur <span class="text-base-content/90">/play</span>.
         </p>
-        <div class="mt-8 flex flex-wrap gap-3">
-          <a href="/login" class="btn btn-primary btn-lg shadow-lg shadow-primary/25">Créer mon artiste</a>
-          <a href="/play" class="btn btn-outline btn-lg border-base-content/20">Écouter le catalogue</a>
+        <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+          <a href="/login" class="btn btn-primary btn-lg w-full shadow-lg shadow-primary/25 sm:w-auto">Créer mon artiste</a>
+          <a href="/play" class="btn btn-outline btn-lg w-full border-base-content/20 sm:w-auto">Écouter le catalogue</a>
         </div>
       </div>
     </section>
