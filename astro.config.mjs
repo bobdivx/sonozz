@@ -31,7 +31,18 @@ export default defineConfig({
   },
 
   vite: {
-    plugins: [tailwindcss()]
+    plugins: [tailwindcss()],
+    build: {
+      rollupOptions: {
+        output: {
+          // Keep keys/* out of SettingsPage island chunk so Play/AppShell
+          // (apiClient → storage) never imports SettingsPage (TDZ hydration).
+          manualChunks(id) {
+            if (id.includes('/src/lib/keys/')) return 'keys-lib';
+          },
+        },
+      },
+    },
   },
 
   adapter: node({
