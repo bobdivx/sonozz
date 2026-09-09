@@ -35,6 +35,20 @@ export async function ensureArtistSchema() {
     CREATE INDEX IF NOT EXISTS idx_artists_slug ON artists(slug)
   `);
 
+  try {
+    await db.execute(`ALTER TABLE artists ADD COLUMN owner_email TEXT`);
+  } catch {
+    /* already exists */
+  }
+
+  try {
+    await db.execute(
+      `CREATE INDEX IF NOT EXISTS idx_artists_owner ON artists(owner_email)`,
+    );
+  } catch {
+    /* ok */
+  }
+
   // Colonne optionnelle sur projects (ignore si déjà présente)
   try {
     await db.execute(`ALTER TABLE projects ADD COLUMN artist_slug TEXT`);

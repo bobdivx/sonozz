@@ -1,16 +1,33 @@
 import { error, readBody } from "../../server/http.js";
 import { PIPELINE_STEPS, runFullPipeline } from "../../server/pipeline.js";
+import { getSessionFromCookies, ROLE_ADMIN } from "../../server/auth.js";
+import { assertGenerationAllowed, spendCredits } from "../../server/credits.js";
 
 function ndjsonLine(obj) {
   return `${JSON.stringify(obj)}\n`;
 }
 
-export async function POST({ request }) {
+export async function POST({ request, cookies }) {
   let body;
   try {
     body = await readBody(request);
   } catch {
     return error("Corps de requête invalide", 400);
+  }
+
+  const session = getSessionFromCookies(cookies);
+  if (!session?.email) {
+    return error("Non autorisé", 401);
+  }
+
+  try {
+    if (session.role !== ROLE_ADMIN) {
+      await assertGenerationAllowed(session.email, { isAdmin: false });
+      await spendCredits(session.email, 1);
+    }
+  } catch (e) {
+    const status = e.code === "CREDITS" ? 402 : 400;
+    return error(e.message || "Crédits insuffisants", status);
   }
 
   const stream = new ReadableStream({

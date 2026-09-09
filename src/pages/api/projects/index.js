@@ -12,6 +12,7 @@ import {
 } from "../../../server/audioPersist.js";
 import { isS3Configured } from "../../../server/s3.js";
 import { normalizeProjectVersions } from "../../../lib/versionsModel.js";
+import { getSessionFromCookies, ROLE_ADMIN } from "../../../server/auth.js";
 
 export const prerender = false;
 
@@ -257,23 +258,34 @@ async function sanitizeProject(project = {}, { projectId } = {}) {
   return normalizeProjectVersions(clone);
 }
 
-export async function GET() {
+export async function GET({ cookies, url }) {
   try {
-    const projects = await listProjects(80);
+    const session = getSessionFromCookies(cookies);
+    if (!session?.email) return error("Non autorisé", 401);
+    const scopeAll =
+      session.role === ROLE_ADMIN && new URL(url).searchParams.get("scope") === "all";
+    const projects = await listProjects(80, {
+      ownerEmail: session.email,
+      includeAll: scopeAll,
+    });
     return json({ projects });
   } catch (e) {
     return error(e.message || "Erreur liste projets", 500);
   }
 }
 
-export async function POST({ request }) {
+export async function POST({ request, cookies }) {
   try {
+    const session = getSessionFromCookies(cookies);
+    if (!session?.email) return error("Non autorisé", 401);
+
     const body = await readBody(request);
     const project = await sanitizeProject(body.project || {}, { projectId: body.id });
     const saved = await saveProject({
       id: body.id || null,
       project,
       seed: body.seed || {},
+      ownerEmail: session.email,
       event: body.event || {
         eventType: "save",
         stepKey: body.stepKey || null,
@@ -284,7 +296,9 @@ export async function POST({ request }) {
     let artistHub = null;
     if (project.artist?.name) {
       try {
-        artistHub = await linkProjectToArtist(saved.id, project.artist);
+        artistHub = await linkProjectToArtist(saved.id, project.artist, {
+          ownerEmail: session.email,
+        });
         if (artistHub?.slug && saved.project?.artist) {
           saved.project.artist = { ...saved.project.artist, slug: artistHub.slug };
         }
@@ -295,6 +309,7 @@ export async function POST({ request }) {
 
     return json({ project: saved, artist: artistHub });
   } catch (e) {
-    return error(e.message || "Erreur sauvegarde", 500);
+    const status = e.code === "FORBIDDEN_PROJECT" ? 403 : 500;
+    return error(e.message || "Erreur sauvegarde", status);
   }
 }

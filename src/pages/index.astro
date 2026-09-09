@@ -51,7 +51,7 @@ const publishBullets = planBullets(plans, "publish_plus");
           tu lances, tu génères, tu partages sur <span class="text-base-content/90">/play</span>.
         </p>
         <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-          <a href="/login" class="btn btn-primary btn-lg w-full shadow-lg shadow-primary/25 sm:w-auto">Créer mon artiste</a>
+          <a href="/signup" class="btn btn-primary btn-lg w-full shadow-lg shadow-primary/25 sm:w-auto">Créer mon artiste</a>
           <a href="/play" class="btn btn-outline btn-lg w-full border-base-content/20 sm:w-auto">Écouter le catalogue</a>
         </div>
       </div>
@@ -89,7 +89,7 @@ const publishBullets = planBullets(plans, "publish_plus");
             <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
               {freeBullets.map((b) => <li>{b}</li>)}
             </ul>
-            <a href="/login" class="btn btn-outline btn-block mt-6 border-base-content/20">Commencer</a>
+            <a href="/signup" class="btn btn-outline btn-block mt-6 border-base-content/20">Commencer</a>
           </article>
 
           <article class="relative flex flex-col rounded-2xl border-2 border-primary/50 bg-gradient-to-b from-primary/15 to-base-100/90 p-6 shadow-lg shadow-primary/10">
@@ -99,7 +99,7 @@ const publishBullets = planBullets(plans, "publish_plus");
             <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
               {proBullets.map((b) => <li>{b}</li>)}
             </ul>
-            <a href="/login?next=%2Fbilling" class="btn btn-primary btn-block mt-6">Passer Pro</a>
+            <a href="/signup?next=%2Fbilling" class="btn btn-primary btn-block mt-6">Passer Pro</a>
           </article>
 
           <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
@@ -108,7 +108,7 @@ const publishBullets = planBullets(plans, "publish_plus");
             <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
               {publishBullets.map((b) => <li>{b}</li>)}
             </ul>
-            <a href="/login?next=%2Fbilling%3Fplan%3Dpublish_plus" class="btn btn-outline btn-block mt-6 border-base-content/20">Demander Publish+</a>
+            <a href="/signup?next=%2Fbilling%3Fplan%3Dpublish_plus" class="btn btn-outline btn-block mt-6 border-base-content/20">Demander Publish+</a>
           </article>
         </div>
       </div>

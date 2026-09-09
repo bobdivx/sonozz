@@ -353,7 +353,11 @@ export default function DistroKidStep({
               <Copy size={14} /> Copier les champs
             </button>
             {liveArtwork && (
-              <a class="btn btn-outline btn-sm gap-1" href={liveArtwork} download="cover.jpg">
+              <a
+                class="btn btn-outline btn-sm gap-1"
+                href={`/api/export/cover?url=${encodeURIComponent(liveArtwork)}`}
+                download="cover.jpg"
+              >
                 <Download size={14} /> Jaquette
               </a>
             )}
@@ -368,7 +372,11 @@ export default function DistroKidStep({
             )}
           </div>
 
-          <p class="text-xs text-base-content/45">{distrokid.note}</p>
+          <p class="text-xs text-base-content/45">
+            {distrokid.note}
+            {" "}
+            Sur Free, la jaquette est marquée « SONOZZ · Free » — Pro enlève le watermark.
+          </p>
         </div>
       )}
     </section>

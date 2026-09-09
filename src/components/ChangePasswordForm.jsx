@@ -1,4 +1,5 @@
 import { useState } from "preact/hooks";
+import { SectionCard, AlertBanner } from "./ui/index.js";
 
 /**
  * Formulaire changement de mot de passe (compte connecté).
@@ -40,59 +41,55 @@ export default function ChangePasswordForm() {
   }
 
   return (
-    <form class="max-w-xl space-y-4 border border-base-content/10 bg-base-200/40 p-4" onSubmit={onSubmit}>
-      <h3 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
-        Mot de passe
-      </h3>
-      <label class="form-control w-full">
-        <span class="label-text mb-1 text-xs text-base-content/50">Mot de passe actuel</span>
-        <input
-          type="password"
-          class="input input-bordered w-full bg-base-300/60"
-          autocomplete="current-password"
-          required
-          value={currentPassword}
-          onInput={(e) => setCurrentPassword(e.currentTarget.value)}
-        />
-      </label>
-      <label class="form-control w-full">
-        <span class="label-text mb-1 text-xs text-base-content/50">Nouveau (min. 8)</span>
-        <input
-          type="password"
-          class="input input-bordered w-full bg-base-300/60"
-          autocomplete="new-password"
-          minLength={8}
-          required
-          value={newPassword}
-          onInput={(e) => setNewPassword(e.currentTarget.value)}
-        />
-      </label>
-      <label class="form-control w-full">
-        <span class="label-text mb-1 text-xs text-base-content/50">Confirmer</span>
-        <input
-          type="password"
-          class="input input-bordered w-full bg-base-300/60"
-          autocomplete="new-password"
-          minLength={8}
-          required
-          value={confirm}
-          onInput={(e) => setConfirm(e.currentTarget.value)}
-        />
-      </label>
-      {error && (
-        <p class="text-sm text-error" role="alert">
-          {error}
-        </p>
-      )}
-      {message && (
-        <p class="text-sm text-success" role="status">
-          {message}
-        </p>
-      )}
-      <button type="submit" class="btn btn-primary btn-sm" disabled={busy}>
-        {busy ? <span class="loading loading-spinner loading-sm" /> : null}
-        Enregistrer le mot de passe
-      </button>
-    </form>
+    <SectionCard
+      tone="solid"
+      eyebrow="Sécurité"
+      title="Mot de passe"
+      description="Change le mot de passe de ton compte SONOZZ."
+    >
+      <form class="max-w-xl space-y-5" onSubmit={onSubmit}>
+        <label class="form-control w-full">
+          <span class="label-text mb-1.5 text-sm text-base-content/60">Mot de passe actuel</span>
+          <input
+            type="password"
+            class="input input-bordered h-12 w-full bg-base-300/60"
+            autocomplete="current-password"
+            required
+            value={currentPassword}
+            onInput={(e) => setCurrentPassword(e.currentTarget.value)}
+          />
+        </label>
+        <label class="form-control w-full">
+          <span class="label-text mb-1.5 text-sm text-base-content/60">Nouveau (min. 8)</span>
+          <input
+            type="password"
+            class="input input-bordered h-12 w-full bg-base-300/60"
+            autocomplete="new-password"
+            minLength={8}
+            required
+            value={newPassword}
+            onInput={(e) => setNewPassword(e.currentTarget.value)}
+          />
+        </label>
+        <label class="form-control w-full">
+          <span class="label-text mb-1.5 text-sm text-base-content/60">Confirmer</span>
+          <input
+            type="password"
+            class="input input-bordered h-12 w-full bg-base-300/60"
+            autocomplete="new-password"
+            minLength={8}
+            required
+            value={confirm}
+            onInput={(e) => setConfirm(e.currentTarget.value)}
+          />
+        </label>
+        {error && <AlertBanner tone="error">{error}</AlertBanner>}
+        {message && <AlertBanner tone="success">{message}</AlertBanner>}
+        <button type="submit" class="btn btn-primary rounded-full px-6" disabled={busy}>
+          {busy ? <span class="loading loading-spinner loading-sm" /> : null}
+          Enregistrer le mot de passe
+        </button>
+      </form>
+    </SectionCard>
   );
 }

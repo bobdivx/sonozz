@@ -43,8 +43,17 @@ function forbidden(pathname) {
  */
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname, search } = context.url;
+  const pathNorm = pathname.replace(/\/+$/, "") || "/";
 
-  if (isAccessControlEnabled() && !isPublicPath(pathname)) {
+  // Auth publique (inscription / login) — allowlist explicite (évite cache HMR middleware).
+  const alwaysPublic =
+    pathNorm === "/signup" ||
+    pathNorm === "/login" ||
+    pathNorm === "/rejoindre" ||
+    pathNorm === "/403" ||
+    pathNorm === "/api/auth/signup";
+
+  if (isAccessControlEnabled() && !alwaysPublic && !isPublicPath(pathname)) {
     const session = getSessionFromCookies(context.cookies);
     if (!session) {
       // Pour les APIs, retourner 401 immédiatement

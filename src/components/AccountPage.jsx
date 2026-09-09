@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import AppShell from "./AppShell.jsx";
 import PocketIdAccount from "./PocketIdAccount.jsx";
 import ChangePasswordForm from "./ChangePasswordForm.jsx";
+import { PageHeader, SectionCard } from "./ui/index.js";
 
 /**
  * Page compte pour les membres (pas d’accès /parametres).
@@ -30,47 +31,51 @@ export default function AccountPage() {
   }, []);
 
   return (
-    <AppShell active="compte" title="Mon compte" subtitle="Gère ton accès au studio.">
-      <div class="mx-auto max-w-xl space-y-8">
-        <p class="text-sm text-base-content/70">
-          Connecté en tant que <span class="font-mono text-base-content">{email || "…"}</span>
-          <span class="ml-2 rounded bg-base-content/10 px-1.5 py-0.5 text-[10px] uppercase">
-            {role}
-          </span>
-        </p>
+    <AppShell active="compte">
+      <div class="mx-auto max-w-xl">
+        <PageHeader
+          eyebrow="Compte"
+          title="Mon compte"
+          description="Gère ton accès, ton abonnement et ta connexion."
+        />
 
-        <div class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4">
-          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-base-content/50">
-            Abonnement
-          </h2>
-          <p class="text-sm text-base-content/65">
-            Passe Pro, achète des crédits ou gère ton abo Stripe.
+        <div class="space-y-8">
+          <p class="text-sm text-base-content/70">
+            Connecté en tant que{" "}
+            <span class="font-mono text-base-content">{email || "…"}</span>
+            <span class="ml-2 rounded-full bg-base-content/10 px-2 py-0.5 text-[10px] uppercase tracking-wide">
+              {role}
+            </span>
           </p>
-          <a href="/billing" class="btn btn-primary btn-sm mt-3">
-            Ouvrir la facturation
-          </a>
-        </div>
 
-        <ChangePasswordForm />
-
-        <div>
-          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-base-content/50">
-            Connexion SSO
-          </h2>
-          <PocketIdAccount accountPath="/compte" />
-        </div>
-
-        {canManageSettings ? (
-          <p class="text-sm text-base-content/50">
-            <a class="link" href="/parametres">
-              Ouvrir les paramètres
+          <SectionCard
+            tone="solid"
+            title="Abonnement"
+            description="Passe Pro, achète des crédits ou gère ton abo Stripe."
+          >
+            <a href="/billing" class="btn btn-primary rounded-full px-6">
+              Ouvrir la facturation
             </a>
-          </p>
-        ) : (
-          <p class="text-sm text-base-content/45">
-            Les clés API et réglages sensibles sont réservés à l’administrateur du studio.
-          </p>
-        )}
+          </SectionCard>
+
+          <ChangePasswordForm />
+
+          <SectionCard tone="solid" eyebrow="Connexion" title="SSO">
+            <PocketIdAccount accountPath="/compte" />
+          </SectionCard>
+
+          {canManageSettings ? (
+            <p class="text-sm text-base-content/50">
+              <a class="link" href="/parametres">
+                Ouvrir les paramètres
+              </a>
+            </p>
+          ) : (
+            <p class="text-sm text-base-content/45">
+              Les clés API et réglages sensibles sont réservés à l’administrateur du studio.
+            </p>
+          )}
+        </div>
       </div>
     </AppShell>
   );

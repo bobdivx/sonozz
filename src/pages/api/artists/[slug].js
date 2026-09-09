@@ -11,36 +11,63 @@ import {
 } from "../../../server/artists.js";
 import { previewCareerSchedule, runCareerSchedule } from "../../../server/careerSchedule.js";
 import { getUserKeys } from "../../../server/db.js";
+import { getSessionFromCookies, ROLE_ADMIN } from "../../../server/auth.js";
 
 export const prerender = false;
 
-export async function GET({ params }) {
+async function requireOwnedArtist(slug, cookies) {
+  const session = getSessionFromCookies(cookies);
+  if (!session?.email) {
+    const err = new Error("Non autorisé");
+    err.status = 401;
+    throw err;
+  }
+  if (session.role === ROLE_ADMIN) return session;
+  const row = await getArtistBySlug(slug);
+  if (!row) {
+    const err = new Error("Artiste introuvable");
+    err.status = 404;
+    throw err;
+  }
+  const owner = row.ownerEmail ? String(row.ownerEmail).toLowerCase() : null;
+  if (owner && owner !== session.email.toLowerCase()) {
+    const err = new Error("Cet artiste appartient à un autre compte");
+    err.status = 403;
+    throw err;
+  }
+  return session;
+}
+
+export async function GET({ params, cookies }) {
   try {
     const slug = params.slug;
+    await requireOwnedArtist(slug, cookies);
     const hub = await getArtistHub(slug);
     if (!hub) return error("Artiste introuvable", 404);
     return json({ artist: hub });
   } catch (e) {
-    return error(e.message || "Erreur artiste", 500);
+    return error(e.message || "Erreur artiste", e.status || 500);
   }
 }
 
-export async function DELETE({ params }) {
+export async function DELETE({ params, cookies }) {
   try {
     const slug = params.slug;
     if (!slug) return error("Slug manquant", 400);
+    await requireOwnedArtist(slug, cookies);
     const result = await deleteArtist(slug);
     return json(result);
   } catch (e) {
     const msg = e.message || "Suppression impossible";
-    const status = /introuvable/i.test(msg) ? 404 : 500;
+    const status = e.status || (/introuvable/i.test(msg) ? 404 : 500);
     return error(msg, status);
   }
 }
 
-export async function POST({ params, request }) {
+export async function POST({ params, request, cookies }) {
   try {
     const slug = params.slug;
+    const session = await requireOwnedArtist(slug, cookies);
     const body = await readBody(request);
     const action = body.action || "new-track";
 
@@ -121,7 +148,7 @@ export async function POST({ params, request }) {
       if (!name) return error("Nom d’artiste manquant", 400);
       const saved = await upsertArtistFromProject(
         { ...profile, slug, name },
-        { preferredSlug: slug },
+        { preferredSlug: slug, ownerEmail: session.email },
       );
       return json({ ok: true, artist: saved });
     }
@@ -145,7 +172,7 @@ export async function POST({ params, request }) {
       if (res.ok && res.artist) {
         const saved = await upsertArtistFromProject(
           { ...res.artist, slug, name: res.artist.name || existing.name },
-          { preferredSlug: slug },
+          { preferredSlug: slug, ownerEmail: session.email },
         );
         return json({
           ok: true,
@@ -245,6 +272,6 @@ export async function POST({ params, request }) {
 
     return error("Action inconnue", 400);
   } catch (e) {
-    return error(e.message || "Erreur artiste", 500);
+    return error(e.message || "Erreur artiste", e.status || 500);
   }
 }

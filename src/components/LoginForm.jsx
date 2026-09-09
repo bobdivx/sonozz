@@ -92,7 +92,7 @@ export default function LoginForm({
       action={`/login?next=${encodeURIComponent(next)}`}
       data-astro-reload
     >
-      <p class="text-center text-sm text-base-content/55">Connexion réservée à l’équipe</p>
+      <p class="text-center text-sm text-base-content/55">Connexion au studio</p>
       <input type="hidden" name="next" value={next} />
 
       <label class="form-control w-full">
@@ -132,6 +132,12 @@ export default function LoginForm({
       <button type="submit" class="btn btn-ghost w-full border border-base-content/15">
         Se connecter au studio
       </button>
+      <p class="text-center text-sm text-base-content/55">
+        Nouveau ?{" "}
+        <a class="link link-primary" href={`/signup?next=${encodeURIComponent(next)}`}>
+          Créer un compte
+        </a>
+      </p>
     </form>
   ) : null;
 

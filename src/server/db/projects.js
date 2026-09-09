@@ -86,24 +86,41 @@ export function stripHeavyProjectPayload(project = {}) {
   return next;
 }
 
-export async function listProjects(limit = 50) {
+export async function listProjects(limit = 50, { ownerEmail = null, includeAll = false } = {}) {
   await ensureSchema();
   const db = getDb();
-  const res = await db.execute({
-    sql: `
-      SELECT id, title, artist_name, track_title, status, created_at, updated_at
-      FROM projects
-      ORDER BY updated_at DESC
-      LIMIT ?
-    `,
-    args: [limit],
-  });
+  const owner = ownerEmail ? String(ownerEmail).trim().toLowerCase() : null;
+
+  if (!includeAll && !owner) return [];
+
+  const res = includeAll
+    ? await db.execute({
+        sql: `
+          SELECT id, title, artist_name, track_title, status, owner_email, created_at, updated_at
+          FROM projects
+          ORDER BY updated_at DESC
+          LIMIT ?
+        `,
+        args: [limit],
+      })
+    : await db.execute({
+        sql: `
+          SELECT id, title, artist_name, track_title, status, owner_email, created_at, updated_at
+          FROM projects
+          WHERE lower(owner_email) = ?
+          ORDER BY updated_at DESC
+          LIMIT ?
+        `,
+        args: [owner, limit],
+      });
+
   return res.rows.map((row) => ({
     id: row.id,
     title: row.title,
     artistName: row.artist_name,
     trackTitle: row.track_title,
     status: row.status,
+    ownerEmail: row.owner_email || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
@@ -136,6 +153,8 @@ export async function getProject(id) {
     artistName: row.artist_name,
     trackTitle: row.track_title,
     status: row.status,
+    ownerEmail: row.owner_email || null,
+    artistSlug: row.artist_slug || null,
     seed: row.seed_json ? JSON.parse(row.seed_json) : {},
     project: stripHeavyProjectPayload(JSON.parse(row.project_json)),
     createdAt: row.created_at,
@@ -151,25 +170,40 @@ export async function getProject(id) {
   };
 }
 
-export async function saveProject({ id, project, seed = {}, event } = {}) {
+export async function saveProject({ id, project, seed = {}, event, ownerEmail = null } = {}) {
   await ensureSchema();
   const db = getDb();
   const now = new Date().toISOString();
   const lightProject = stripHeavyProjectPayload(project || {});
   const summary = summarize(lightProject, seed);
   const projectId = id || uid("proj");
+  const owner = ownerEmail ? String(ownerEmail).trim().toLowerCase() : null;
+  const artistSlug =
+    lightProject?.artist?.slug ||
+    seed?.artistSlug ||
+    null;
 
   const existing = await db.execute({
-    sql: `SELECT id, created_at FROM projects WHERE id = ? LIMIT 1`,
+    sql: `SELECT id, created_at, owner_email FROM projects WHERE id = ? LIMIT 1`,
     args: [projectId],
   });
 
   if (existing.rows[0]) {
+    const prevOwner = existing.rows[0].owner_email
+      ? String(existing.rows[0].owner_email).toLowerCase()
+      : null;
+    if (owner && prevOwner && prevOwner !== owner) {
+      const err = new Error("Ce projet appartient à un autre compte");
+      err.code = "FORBIDDEN_PROJECT";
+      throw err;
+    }
     await db.execute({
       sql: `
         UPDATE projects
         SET title = ?, artist_name = ?, track_title = ?, status = ?,
-            seed_json = ?, project_json = ?, updated_at = ?
+            seed_json = ?, project_json = ?, updated_at = ?,
+            artist_slug = COALESCE(?, artist_slug),
+            owner_email = COALESCE(owner_email, ?)
         WHERE id = ?
       `,
       args: [
@@ -180,6 +214,8 @@ export async function saveProject({ id, project, seed = {}, event } = {}) {
         JSON.stringify(seed || {}),
         JSON.stringify(lightProject),
         now,
+        artistSlug,
+        owner,
         projectId,
       ],
     });
@@ -187,8 +223,9 @@ export async function saveProject({ id, project, seed = {}, event } = {}) {
     await db.execute({
       sql: `
         INSERT INTO projects
-          (id, title, artist_name, track_title, status, seed_json, project_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, title, artist_name, track_title, status, seed_json, project_json,
+           artist_slug, owner_email, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       args: [
         projectId,
@@ -198,6 +235,8 @@ export async function saveProject({ id, project, seed = {}, event } = {}) {
         summary.status,
         JSON.stringify(seed || {}),
         JSON.stringify(lightProject),
+        artistSlug,
+        owner,
         now,
         now,
       ],

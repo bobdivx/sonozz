@@ -65,13 +65,16 @@ const publishBullets = planBullets(plans, "publish_plus");
     </header>
 
     <section class="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
-      <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">Abonnement</h1>
-      <p class="mt-2 max-w-2xl text-sm text-base-content/65">
-        Connecté·e en tant que <span class="font-medium text-base-content/90">{email}</span>.
-        1 crédit = 1 {plans.creditUnitLabel}.
-      </p>
+      <header class="mb-10 space-y-3 md:mb-14">
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-primary/80">Facturation</p>
+        <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">Abonnement</h1>
+        <p class="max-w-2xl text-sm leading-relaxed text-base-content/65 sm:text-base">
+          Connecté·e en tant que <span class="font-medium text-base-content/90">{email}</span>.
+          1 crédit = 1 {plans.creditUnitLabel}.
+        </p>
+      </header>
 
-      <div class="mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-base-content/10 bg-base-200/40 px-4 py-3 text-sm">
+      <div class="flex flex-wrap items-center gap-3 rounded-3xl border border-base-content/10 bg-base-200/40 px-5 py-4 text-sm">
         <span>Plan : <strong class="uppercase">{billing.plan}</strong></span>
         <span class="opacity-40">·</span>
         <span>Crédits : <strong>{billing.credits}</strong></span>
@@ -88,26 +91,24 @@ const publishBullets = planBullets(plans, "publish_plus");
           </>
         )}
         {billing.stripeCustomerId && (
-          <button type="button" class="btn btn-ghost btn-sm ml-auto" data-portal>
+          <button type="button" class="btn btn-ghost rounded-full ml-auto" data-portal>
             Gérer l’abonnement
           </button>
         )}
       </div>
 
       {!configured && (
-        <div class="alert alert-warning mt-6 max-w-2xl text-sm">
-          <span>
-            Stripe n’est pas encore configuré (<code class="text-xs">STRIPE_SECRET_KEY</code> /
-            <code class="text-xs">STRIPE_PRICE_PRO</code>).
-          </span>
+        <div class="mt-6 max-w-2xl rounded-2xl border border-warning/30 bg-warning/10 px-5 py-4 text-sm text-warning">
+          Stripe n’est pas encore configuré (<code class="text-xs">STRIPE_SECRET_KEY</code> /
+          <code class="text-xs">STRIPE_PRICE_PRO</code>).
         </div>
       )}
 
-      <p id="billing-success" class="mt-4 hidden text-sm text-success" role="status"></p>
-      <p id="billing-error" class="mt-4 hidden text-sm text-error" role="alert"></p>
+      <p id="billing-success" class="mt-4 hidden rounded-2xl border border-success/30 bg-success/10 px-5 py-4 text-sm text-success" role="status"></p>
+      <p id="billing-error" class="mt-4 hidden rounded-2xl border border-error/40 bg-error/10 px-5 py-4 text-sm text-error" role="alert"></p>
 
-      <div class="mt-8 grid gap-4 lg:grid-cols-3">
-        <article class="relative flex flex-col rounded-2xl border-2 border-primary/50 bg-gradient-to-b from-primary/15 to-base-100/90 p-6 shadow-lg shadow-primary/10">
+      <div class="mt-10 grid gap-5 lg:grid-cols-3">
+        <article class="relative flex flex-col rounded-3xl border-2 border-primary/50 bg-gradient-to-b from-primary/15 to-base-100/90 p-6 sm:p-7 shadow-lg shadow-primary/10">
           <span class="absolute -top-3 left-4 rounded-full bg-primary px-3 py-0.5 text-[11px] font-bold uppercase tracking-wide text-primary-content">Recommandé</span>
           <h2 class="font-display text-xl font-bold">Pro</h2>
           <p class="mt-1 text-3xl font-extrabold">{plans.pro.priceMonthlyEur}&nbsp;€<span class="text-base font-semibold text-base-content/50">/mois</span></p>
@@ -116,7 +117,7 @@ const publishBullets = planBullets(plans, "publish_plus");
           </ul>
           <button
             type="button"
-            class="btn btn-primary btn-block mt-6"
+            class="btn btn-primary btn-block mt-6 rounded-full"
             data-plan="pro"
             data-checkout
             disabled={!configured || billing.plan === "pro"}
@@ -125,7 +126,7 @@ const publishBullets = planBullets(plans, "publish_plus");
           </button>
         </article>
 
-        <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
+        <article class="flex flex-col rounded-3xl border border-base-content/10 bg-base-100/80 p-6 sm:p-7">
           <h2 class="font-display text-xl font-bold">Pack crédits</h2>
           <p class="mt-1 text-lg font-bold text-base-content/80">+{plans.creditsPack.credits} · {plans.creditsPack.priceLabel}</p>
           <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
@@ -133,7 +134,7 @@ const publishBullets = planBullets(plans, "publish_plus");
           </ul>
           <button
             type="button"
-            class="btn btn-outline btn-block mt-6 border-base-content/20"
+            class="btn btn-outline btn-block mt-6 rounded-full border-base-content/20"
             data-plan="credits"
             data-checkout
             disabled={!creditsOk}
@@ -142,7 +143,7 @@ const publishBullets = planBullets(plans, "publish_plus");
           </button>
         </article>
 
-        <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
+        <article class="flex flex-col rounded-3xl border border-base-content/10 bg-base-100/80 p-6 sm:p-7">
           <h2 class="font-display text-xl font-bold">Publish+</h2>
           <p class="mt-1 text-lg font-bold text-base-content/80">{plans.publishPlus.priceLabel}</p>
           <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
@@ -150,7 +151,7 @@ const publishBullets = planBullets(plans, "publish_plus");
           </ul>
           <button
             type="button"
-            class="btn btn-outline btn-block mt-6 border-base-content/20"
+            class="btn btn-outline btn-block mt-6 rounded-full border-base-content/20"
             data-plan="publish_plus"
             data-checkout
             disabled={!configured || !hasPublishPlus}
@@ -160,9 +161,9 @@ const publishBullets = planBullets(plans, "publish_plus");
         </article>
       </div>
 
-      <div class="mt-8 rounded-2xl border border-base-content/10 bg-base-200/30 p-5">
+      <div class="mt-10 rounded-3xl border border-base-content/10 bg-base-200/30 p-6 sm:p-8">
         <h2 class="font-display text-lg font-bold">Inclus en Free</h2>
-        <ul class="mt-3 space-y-1 text-sm text-base-content/70">
+        <ul class="mt-3 space-y-1.5 text-sm text-base-content/70">
           {freeBullets.map((b) => <li>{b}</li>)}
         </ul>
       </div>

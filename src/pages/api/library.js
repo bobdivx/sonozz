@@ -37,8 +37,12 @@ export async function GET({ url }) {
         (t) => t.slug === artistSlug || t.slug === decodeURIComponent(artistSlug),
       );
     }
-    const artists = (await listArtists(80)).map(slimArtistForPlay);
-    return json({ tracks, artists });
+    const artists = (await listArtists(80, { includeAll: true })).map(slimArtistForPlay);
+    return json(
+      { tracks, artists },
+      200,
+      { "Cache-Control": "private, max-age=30, stale-while-revalidate=120" },
+    );
   } catch (e) {
     return error(e.message || "Erreur bibliothèque", 500);
   }

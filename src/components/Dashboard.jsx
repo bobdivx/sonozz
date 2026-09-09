@@ -17,6 +17,8 @@ import {
   Check,
   LoaderCircle,
   Library,
+  Plus,
+  ArrowRight,
 } from "lucide-preact";
 import StatsStep from "./steps/StatsStep.jsx";
 import LyricsStep from "./steps/LyricsStep.jsx";
@@ -1106,42 +1108,53 @@ export default function Dashboard() {
 
   return (
     <AppShell active="studio">
-    <div class="mx-auto w-full max-w-6xl">
-      <header class="mb-6 space-y-5 md:mb-8 md:space-y-6">
-        <div class="flex flex-wrap items-center gap-2 animate-rise sm:gap-3">
-          <p class="font-display text-2xl font-extrabold tracking-tight sm:text-3xl">
-            {showHomePipeline ? studioGreeting() : "Studio"}
-          </p>
-          <div class="ml-auto flex flex-wrap items-center gap-1.5 sm:gap-2">
-            <a href="/parametres" class="btn btn-ghost btn-xs gap-1 rounded-full">
-              <Settings2 size={14} />
+    <div class="mx-auto w-full max-w-5xl">
+      <header class={`animate-rise ${showHomePipeline ? "mb-10 space-y-3 md:mb-14" : "mb-6 space-y-5 md:mb-8 md:space-y-6"}`}>
+        <div class="flex flex-wrap items-start gap-4 sm:gap-6">
+          <div class="min-w-0 flex-1 space-y-2">
+            <p class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
+              {showHomePipeline ? studioGreeting() : "Studio"}
+            </p>
+            {showHomePipeline ? (
+              <p class="max-w-xl text-sm leading-relaxed text-base-content/60 sm:text-base">
+                Choisis un artiste, lance un titre. Un flux simple — paroles, audio, jaquette.
+              </p>
+            ) : null}
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <a href="/parametres" class="btn btn-ghost btn-sm gap-1.5 rounded-full px-3" title="Paramètres">
+              <Settings2 size={15} />
               <span class="hidden sm:inline">Paramètres</span>
               <span class={`h-2 w-2 rounded-full ${ready ? "bg-success" : "bg-warning animate-pulse-soft"}`} />
             </a>
-            <button type="button" class="btn btn-ghost btn-xs gap-1 rounded-full" onClick={() => setHistoryOpen(true)}>
-              <History size={14} />
+            <button type="button" class="btn btn-ghost btn-sm gap-1.5 rounded-full px-3" onClick={() => setHistoryOpen(true)}>
+              <History size={15} />
               <span class="hidden sm:inline">Historique</span>
             </button>
-            {artistSlug && (
-              <a href={`/artiste/${artistSlug}`} class="btn btn-ghost btn-xs gap-1 rounded-full text-primary">
+            {!showHomePipeline && artistSlug && (
+              <a href={`/artiste/${artistSlug}`} class="btn btn-ghost btn-sm gap-1.5 rounded-full px-3 text-primary">
                 Fiche artiste
               </a>
             )}
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs gap-1 rounded-full"
-              disabled={saving}
-              onClick={() =>
-                persist(project, {
-                  eventType: "manual-save",
-                  message: "Sauvegarde manuelle",
-                })
-              }
-            >
-              <Save size={14} />
-              {saving ? "…" : "Sauver"}
-            </button>
-            {saveMsg && <span class="text-xs text-base-content/45">{saveMsg}</span>}
+            {!showHomePipeline && (
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm gap-1.5 rounded-full px-3"
+                disabled={saving}
+                onClick={() =>
+                  persist(project, {
+                    eventType: "manual-save",
+                    message: "Sauvegarde manuelle",
+                  })
+                }
+              >
+                <Save size={15} />
+                {saving ? "…" : "Sauver"}
+              </button>
+            )}
+            {saveMsg && !showHomePipeline && (
+              <span class="text-xs text-base-content/45">{saveMsg}</span>
+            )}
           </div>
         </div>
 
@@ -1167,14 +1180,14 @@ export default function Dashboard() {
             )}
             {albumCtx.artistHref && (
               <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.artistHref}>
-                Voir l’album
+                Album
               </a>
             )}
           </div>
         )}
 
         {!showHomePipeline && (
-          <div class="grid gap-5 md:grid-cols-[auto_minmax(0,1fr)_minmax(180px,0.75fr)] md:items-end md:gap-8 animate-rise">
+          <div class="grid gap-5 rounded-2xl bg-base-300/40 p-5 md:grid-cols-[auto_1fr_auto] md:items-center md:gap-8 md:p-6">
             <img
               src={
                 project.artist?.imageUrl && !/^data:image\/svg/i.test(project.artist.imageUrl)
@@ -1202,7 +1215,7 @@ export default function Dashboard() {
                 />
               ) : null}
             </div>
-            <div class="space-y-2">
+            <div class="space-y-2 md:min-w-[10rem]">
               <div class="flex items-center justify-between text-sm">
                 <span class="text-base-content/60">Pipeline</span>
                 <span class="font-display text-primary">{progress}%</span>
@@ -1220,299 +1233,352 @@ export default function Dashboard() {
 
       {showHomePipeline && (
         <>
-          {/* Accès rapide artistes — style “Good evening” */}
-          {catalogArtists.length > 0 && (
-            <section class="mb-8 animate-rise">
-              <div class="mb-3 flex items-end justify-between gap-3">
-                <h2 class="font-display text-lg font-bold sm:text-xl">Accès rapide</h2>
-                <a href="/artistes" class="text-sm font-medium text-primary hover:underline">
-                  Voir tout
+          <section id="studio-launch" class="mb-12 animate-rise md:mb-16">
+            <div class="overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-base-200/80 via-base-300/40 to-primary/10">
+              <div class="space-y-8 p-6 sm:p-8 md:p-10">
+                <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                  <div class="max-w-lg space-y-2">
+                    <p class="text-xs font-semibold uppercase tracking-[0.2em] text-primary/80">
+                      Nouveau titre
+                    </p>
+                    <h2 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
+                      Lancer un morceau
+                    </h2>
+                    <p class="text-sm leading-relaxed text-base-content/60">
+                      Auto A→Z enchaîne paroles, audio et jaquette. Tu pourras retoucher chaque étape ensuite.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-lg gap-2 rounded-full px-8 shadow-lg shadow-primary/20"
+                    disabled={autoRunning || loading || !seed.artistSlug}
+                    onClick={runFullAuto}
+                  >
+                    {autoRunning ? <span class="loading loading-spinner loading-sm" /> : <Zap size={20} />}
+                    {autoRunning ? "En cours…" : "Auto A → Z"}
+                  </button>
+                </div>
+
+                {catalogArtists.length === 0 ? (
+                  <div class="flex flex-col items-start gap-4 rounded-2xl bg-base-100/50 px-5 py-6 sm:flex-row sm:items-center sm:justify-between">
+                    <div class="space-y-1">
+                      <p class="font-display text-lg font-semibold">Pas encore d’artiste</p>
+                      <p class="text-sm text-base-content/60">
+                        Crée un profil avant de générer un titre — identité, style, voix.
+                      </p>
+                    </div>
+                    <a href="/artiste/nouveau" class="btn btn-outline gap-2 rounded-full px-5">
+                      <Plus size={18} />
+                      Créer un artiste
+                    </a>
+                  </div>
+                ) : (
+                  <div class="grid gap-6 md:grid-cols-2 md:gap-8">
+                    <label class="form-control w-full gap-2">
+                      <span class="text-sm font-medium text-base-content/70">Artiste</span>
+                      <select
+                        class="select select-bordered h-12 w-full rounded-2xl bg-base-100/80 text-base"
+                        value={seed.artistSlug}
+                        disabled={autoRunning}
+                        onChange={(e) => {
+                          const slug = e.currentTarget.value;
+                          const hit = catalogArtists.find((a) => a.slug === slug);
+                          setSeed((s) => ({
+                            ...s,
+                            artistSlug: slug,
+                            language: hit?.profile?.language || s.language,
+                          }));
+                        }}
+                      >
+                        <option value="">Choisir un artiste…</option>
+                        {catalogArtists.map((a) => (
+                          <option key={a.slug} value={a.slug}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p class="text-xs leading-relaxed text-base-content/45">
+                        {selectedCatalog ? (
+                          <>
+                            {selectedCatalog.profile?.genre || "Profil prêt"}
+                            {" · "}
+                            <a class="link link-hover text-primary" href={`/artiste/${encodeURIComponent(selectedCatalog.slug)}`}>
+                              Voir la fiche
+                            </a>
+                          </>
+                        ) : (
+                          <>
+                            <a class="link link-hover text-primary" href="/artiste/nouveau">
+                              Nouvel artiste
+                            </a>
+                            {" · "}
+                            <a class="link link-hover text-primary" href="/artiste/nouveau?mode=self">
+                              Mon profil
+                            </a>
+                          </>
+                        )}
+                      </p>
+                    </label>
+
+                    <label class="form-control w-full gap-2">
+                      <span class="text-sm font-medium text-base-content/70">Thème ou titre</span>
+                      <input
+                        class="input input-bordered h-12 w-full rounded-2xl bg-base-100/80 text-base"
+                        placeholder="Ex. nuit d’été, rupture, club…"
+                        value={seed.theme}
+                        disabled={autoRunning}
+                        onInput={(e) => setSeed((s) => ({ ...s, theme: e.currentTarget.value }))}
+                      />
+                      <p class="text-xs text-base-content/45">Optionnel — laisse vide pour laisser l’IA proposer.</p>
+                    </label>
+
+                    <label class="form-control w-full gap-2 md:col-span-2">
+                      <span class="text-sm font-medium text-base-content/70">Langue des paroles</span>
+                      {String(loadKeys().musicProvider || "") === "songgen" && (
+                        <p class="text-xs text-warning">
+                          {songGenLanguageHint(loadKeys().songGenPreferredModel || "songgeneration_large")}
+                        </p>
+                      )}
+                      <select
+                        class="select select-bordered h-12 w-full max-w-md rounded-2xl bg-base-100/80 text-base"
+                        value={seedEffectiveLanguage}
+                        disabled={autoRunning}
+                        onChange={(e) =>
+                          setSeed((s) => ({
+                            ...s,
+                            language: e.currentTarget.value,
+                          }))
+                        }
+                      >
+                        {seedLangOptions.map((l) => {
+                          const engine = languageEngineLabel(
+                            l.code,
+                            loadKeys().musicProvider,
+                            loadKeys().songGenPreferredModel,
+                          );
+                          return (
+                            <option key={l.code} value={l.code}>
+                              {engine === "MiniMax" ? `${l.label} · MiniMax` : l.label}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </label>
+                  </div>
+                )}
+
+                {(autoRunning || log.length > 0) && (
+                  <div class="space-y-5 rounded-2xl border border-base-content/10 bg-base-100/40 p-5" aria-live="polite">
+                    <div class="flex flex-wrap items-end justify-between gap-3">
+                      <div class="min-w-0 flex-1">
+                        <p class="text-xs uppercase tracking-[0.2em] text-base-content/45">Progression</p>
+                        <p class="mt-1.5 truncate font-display text-base text-base-content">
+                          {autoProgress.message ||
+                            (log[log.length - 1]?.message ?? "En attente…")}
+                        </p>
+                      </div>
+                      <div class="text-right tabular-nums">
+                        <span class="font-display text-2xl text-primary">
+                          {autoRunning ? autoProgress.percent : log.some((l) => l.step === "done") ? 100 : autoProgress.percent}%
+                        </span>
+                        {autoRunning && (
+                          <p class="text-xs text-base-content/45">{formatElapsed(elapsedMs)}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div class="h-2.5 overflow-hidden rounded-full bg-base-300">
+                      <div
+                        class={`h-full rounded-full bg-primary transition-all duration-700 ease-out ${
+                          autoRunning ? "pipeline-progress-glow" : ""
+                        }`}
+                        style={{
+                          width: `${Math.max(
+                            autoRunning ? 4 : 0,
+                            autoRunning
+                              ? autoProgress.percent
+                              : log.some((l) => l.step === "done")
+                                ? 100
+                                : autoProgress.percent,
+                          )}%`,
+                        }}
+                      />
+                    </div>
+
+                    <ol class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {AUTO_PIPELINE_UI.map((s, i) => {
+                        const active = autoRunning && autoProgress.step === s.key;
+                        const currentIdx =
+                          autoProgress.step === "done" ? AUTO_PIPELINE_UI.length : autoProgress.index;
+                        const finishedInLog =
+                          !autoRunning &&
+                          (log.some((l) => l.step === "done") ||
+                            log.some((l) => {
+                              const li = AUTO_PIPELINE_UI.findIndex((x) => x.key === l.step);
+                              return li > i;
+                            }));
+                        const isDone = !active && (currentIdx > i || finishedInLog);
+                        return (
+                          <li
+                            key={s.key}
+                            class={`flex items-center gap-3 rounded-2xl border px-3.5 py-3 text-sm transition-colors ${
+                              active
+                                ? "border-primary/50 bg-primary/10 text-base-content"
+                                : isDone
+                                  ? "border-secondary/30 bg-secondary/5 text-base-content/80"
+                                  : "border-base-content/10 text-base-content/40"
+                            }`}
+                          >
+                            <span class="flex h-6 w-6 shrink-0 items-center justify-center">
+                              {active ? (
+                                <LoaderCircle size={16} class="animate-spin text-primary" />
+                              ) : isDone ? (
+                                <Check size={16} class="text-secondary" />
+                              ) : (
+                                <span class="text-xs tabular-nums opacity-50">{i + 1}</span>
+                              )}
+                            </span>
+                            <span class="font-medium">{s.label}</span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+
+                    {log.length > 0 && (
+                      <ul class="max-h-36 space-y-1.5 overflow-y-auto rounded-2xl border border-base-content/10 bg-base-300/20 px-4 py-3 text-xs text-base-content/55">
+                        {log.map((item, i) => (
+                          <li key={`${item.step}-${i}`} class="flex gap-2">
+                            <span class="shrink-0 text-primary">
+                              {STEP_STATUS_LABEL[item.step] || item.step}
+                            </span>
+                            <span class="min-w-0">{item.message}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section class="mb-12 animate-rise md:mb-16">
+            <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 class="font-display text-xl font-bold tracking-tight sm:text-2xl">Tes artistes</h2>
+                <p class="mt-1 text-sm text-base-content/55">
+                  Clique pour préremplir le lancement ci-dessus.
+                </p>
+              </div>
+              <div class="flex flex-wrap items-center gap-3">
+                <a href="/artiste/nouveau" class="btn btn-ghost btn-sm gap-1.5 rounded-full">
+                  <Plus size={15} />
+                  Nouveau
+                </a>
+                <a href="/artistes" class="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+                  Tous les profils
+                  <ArrowRight size={14} />
                 </a>
               </div>
-              <div class="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-                {catalogArtists.slice(0, 4).map((a) => (
-                  <button
-                    key={a.slug}
-                    type="button"
-                    class="group flex items-center gap-3 overflow-hidden rounded-lg bg-base-300/60 text-left transition hover:bg-base-300"
-                    onClick={() => {
-                      setSeed((s) => ({
-                        ...s,
-                        artistSlug: a.slug,
-                        language: a.profile?.language || s.language,
-                      }));
-                      document.getElementById("studio-launch")?.scrollIntoView({ behavior: "smooth", block: "start" });
-                    }}
-                  >
-                    {a.profile?.imageUrl ? (
-                      <img
-                        src={a.profile.imageUrl}
-                        alt=""
-                        class="h-14 w-14 shrink-0 object-cover sm:h-16 sm:w-16"
-                        width="64"
-                        height="64"
-                      />
-                    ) : (
-                      <div class="flex h-14 w-14 shrink-0 items-center justify-center bg-primary/15 sm:h-16 sm:w-16">
-                        <Waves size={20} class="text-primary" />
-                      </div>
-                    )}
-                    <span class="min-w-0 pr-2 font-display text-sm font-semibold leading-tight sm:text-base">
-                      <span class="line-clamp-2">{a.name}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
+            </div>
 
-          {/* Récents */}
+            {catalogArtists.length === 0 ? (
+              <div class="rounded-3xl border border-dashed border-base-content/15 bg-base-200/30 px-6 py-12 text-center">
+                <p class="font-display text-lg font-semibold">Aucun profil pour l’instant</p>
+                <p class="mx-auto mt-2 max-w-md text-sm text-base-content/55">
+                  Les artistes que tu crées apparaissent ici — prêts pour générer des titres.
+                </p>
+                <a href="/artiste/nouveau" class="btn btn-primary mt-6 gap-2 rounded-full px-6">
+                  <Plus size={18} />
+                  Créer mon premier artiste
+                </a>
+              </div>
+            ) : (
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {catalogArtists.slice(0, 6).map((a) => {
+                  const selected = seed.artistSlug === a.slug;
+                  return (
+                    <button
+                      key={a.slug}
+                      type="button"
+                      class={`group flex items-center gap-4 rounded-2xl border p-3 text-left transition sm:p-4 ${
+                        selected
+                          ? "border-primary/50 bg-primary/10 shadow-md shadow-primary/10"
+                          : "border-base-content/10 bg-base-200/40 hover:border-base-content/20 hover:bg-base-200/70"
+                      }`}
+                      onClick={() => {
+                        setSeed((s) => ({
+                          ...s,
+                          artistSlug: a.slug,
+                          language: a.profile?.language || s.language,
+                        }));
+                        document.getElementById("studio-launch")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                    >
+                      {a.profile?.imageUrl ? (
+                        <img
+                          src={a.profile.imageUrl}
+                          alt=""
+                          class="h-16 w-16 shrink-0 rounded-xl object-cover sm:h-20 sm:w-20"
+                          width="80"
+                          height="80"
+                        />
+                      ) : (
+                        <div class="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-primary/15 sm:h-20 sm:w-20">
+                          <Waves size={24} class="text-primary" />
+                        </div>
+                      )}
+                      <span class="min-w-0 flex-1">
+                        <span class="font-display block text-base font-semibold leading-snug sm:text-lg">
+                          <span class="line-clamp-2">{a.name}</span>
+                        </span>
+                        <span class="mt-1 block truncate text-xs text-base-content/50">
+                          {a.profile?.genre || "Sans genre"}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
           {recentProjects.length > 0 && (
-            <section class="mb-8 animate-rise">
-              <div class="mb-3 flex items-end justify-between gap-3">
-                <h2 class="font-display text-lg font-bold sm:text-xl">Récemment</h2>
+            <section class="mb-10 animate-rise md:mb-14">
+              <div class="mb-5 flex items-end justify-between gap-3">
+                <div>
+                  <h2 class="font-display text-xl font-bold tracking-tight sm:text-2xl">Continuer</h2>
+                  <p class="mt-1 text-sm text-base-content/55">Tes derniers projets ouverts.</p>
+                </div>
                 <button
                   type="button"
-                  class="text-sm font-medium text-primary hover:underline"
+                  class="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
                   onClick={() => setHistoryOpen(true)}
                 >
-                  Voir tout
+                  Historique
+                  <ArrowRight size={14} />
                 </button>
               </div>
-              <div class="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
+              <div class="-mx-1 flex gap-4 overflow-x-auto px-1 pb-2">
                 {recentProjects.map((p) => (
                   <button
                     key={p.id}
                     type="button"
-                    class="group w-36 shrink-0 text-left sm:w-40"
+                    class="group w-40 shrink-0 text-left sm:w-44"
                     onClick={() => loadFromHistory(p.id)}
                   >
-                    <div class="aspect-square overflow-hidden rounded-lg bg-gradient-to-br from-primary/25 via-base-300 to-secondary/20 shadow-md shadow-black/20">
-                      <div class="flex h-full w-full items-center justify-center p-3">
-                        <Music2 size={36} class="text-primary/60 transition group-hover:scale-105" />
+                    <div class="aspect-square overflow-hidden rounded-2xl bg-gradient-to-br from-primary/25 via-base-300 to-secondary/20 shadow-md shadow-black/15 transition group-hover:shadow-lg">
+                      <div class="flex h-full w-full items-center justify-center p-4">
+                        <Music2 size={40} class="text-primary/60 transition group-hover:scale-105" />
                       </div>
                     </div>
-                    <p class="mt-2 truncate font-display text-sm font-semibold">{p.title || "Projet"}</p>
-                    <p class="truncate text-xs text-base-content/45">{p.status || "brouillon"}</p>
+                    <p class="mt-3 truncate font-display text-sm font-semibold sm:text-base">{p.title || "Projet"}</p>
+                    <p class="mt-0.5 truncate text-xs text-base-content/45">{p.status || "brouillon"}</p>
                   </button>
                 ))}
               </div>
             </section>
           )}
-
-          {/* Lancer un morceau */}
-          <section id="studio-launch" class="mb-8 animate-rise">
-            <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <h2 class="font-display text-lg font-bold sm:text-xl">Lancer un morceau</h2>
-                <p class="mt-1 max-w-xl text-sm text-base-content/60">
-                  Choisis un artiste, puis Auto A→Z. Les profils se gèrent dans{" "}
-                  <a class="link link-hover text-primary" href="/artistes">
-                    Artistes
-                  </a>
-                  .
-                </p>
-              </div>
-              <button
-                type="button"
-                class="btn btn-primary gap-2 rounded-full px-5"
-                disabled={autoRunning || loading || !seed.artistSlug}
-                onClick={runFullAuto}
-              >
-                {autoRunning ? <span class="loading loading-spinner loading-sm" /> : <Zap size={18} />}
-                {autoRunning ? "Pipeline en cours…" : "Auto A → Z"}
-              </button>
-            </div>
-
-            <div class="grid gap-3 rounded-2xl bg-base-300/40 p-4 md:grid-cols-2 md:gap-4 md:p-5">
-              <label class="form-control w-full">
-                <span class="label-text mb-1 text-xs text-base-content/55">Artiste</span>
-                {catalogArtists.length === 0 ? (
-                  <a class="btn btn-outline btn-sm mt-1 rounded-full" href="/artiste/nouveau">
-                    Créer un artiste d’abord
-                  </a>
-                ) : (
-                  <select
-                    class="select select-bordered w-full rounded-xl bg-base-200"
-                    value={seed.artistSlug}
-                    disabled={autoRunning}
-                    onChange={(e) => {
-                      const slug = e.currentTarget.value;
-                      const hit = catalogArtists.find((a) => a.slug === slug);
-                      setSeed((s) => ({
-                        ...s,
-                        artistSlug: slug,
-                        language: hit?.profile?.language || s.language,
-                      }));
-                    }}
-                  >
-                    <option value="">Choisir…</option>
-                    {catalogArtists.map((a) => (
-                      <option key={a.slug} value={a.slug}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <p class="mt-1 text-[11px] text-base-content/45">
-                  {selectedCatalog ? (
-                    <>
-                      {selectedCatalog.profile?.genre || "Profil prêt"} — style sur la{" "}
-                      <a class="link" href={`/artiste/${encodeURIComponent(selectedCatalog.slug)}`}>
-                        fiche artiste
-                      </a>
-                      .
-                    </>
-                  ) : (
-                    <>
-                      Pas encore de profil ?{" "}
-                      <a class="link" href="/artiste/nouveau">
-                        Créer un artiste
-                      </a>
-                      {" · "}
-                      <a class="link" href="/artiste/nouveau?mode=self">
-                        Créer mon profil
-                      </a>
-                    </>
-                  )}
-                </p>
-              </label>
-              <label class="form-control w-full">
-                <span class="label-text mb-1 text-xs text-base-content/55">Thème / titre</span>
-                <input
-                  class="input input-bordered rounded-xl bg-base-200"
-                  placeholder="Optionnel"
-                  value={seed.theme}
-                  disabled={autoRunning}
-                  onInput={(e) => setSeed((s) => ({ ...s, theme: e.currentTarget.value }))}
-                />
-              </label>
-              <label class="form-control w-full md:col-span-2">
-                <span class="label-text mb-1 text-xs text-base-content/55">Langue des chansons</span>
-                {String(loadKeys().musicProvider || "") === "songgen" && (
-                  <p class="mb-1 text-[11px] text-warning">
-                    {songGenLanguageHint(loadKeys().songGenPreferredModel || "songgeneration_large")}
-                  </p>
-                )}
-                <select
-                  class="select select-bordered w-full rounded-xl bg-base-200"
-                  value={seedEffectiveLanguage}
-                  disabled={autoRunning}
-                  onChange={(e) =>
-                    setSeed((s) => ({
-                      ...s,
-                      language: e.currentTarget.value,
-                    }))
-                  }
-                >
-                  {seedLangOptions.map((l) => {
-                    const engine = languageEngineLabel(
-                      l.code,
-                      loadKeys().musicProvider,
-                      loadKeys().songGenPreferredModel,
-                    );
-                    return (
-                      <option key={l.code} value={l.code}>
-                        {engine === "MiniMax" ? `${l.label} · MiniMax` : l.label}
-                      </option>
-                    );
-                  })}
-                </select>
-              </label>
-            </div>
-
-            {(autoRunning || log.length > 0) && (
-              <div class="mt-5 space-y-4 rounded-2xl bg-base-300/30 p-4" aria-live="polite">
-                <div class="flex flex-wrap items-end justify-between gap-2">
-                  <div class="min-w-0 flex-1">
-                    <p class="text-xs uppercase tracking-[0.2em] text-base-content/45">Progression</p>
-                    <p class="mt-1 truncate font-display text-sm text-base-content">
-                      {autoProgress.message ||
-                        (log[log.length - 1]?.message ?? "En attente…")}
-                    </p>
-                  </div>
-                  <div class="text-right tabular-nums">
-                    <span class="font-display text-lg text-primary">
-                      {autoRunning ? autoProgress.percent : log.some((l) => l.step === "done") ? 100 : autoProgress.percent}%
-                    </span>
-                    {autoRunning && (
-                      <p class="text-xs text-base-content/45">{formatElapsed(elapsedMs)}</p>
-                    )}
-                  </div>
-                </div>
-
-                <div class="h-2 overflow-hidden rounded-full bg-base-300">
-                  <div
-                    class={`h-full rounded-full bg-primary transition-all duration-700 ease-out ${
-                      autoRunning ? "pipeline-progress-glow" : ""
-                    }`}
-                    style={{
-                      width: `${Math.max(
-                        autoRunning ? 4 : 0,
-                        autoRunning
-                          ? autoProgress.percent
-                          : log.some((l) => l.step === "done")
-                            ? 100
-                            : autoProgress.percent,
-                      )}%`,
-                    }}
-                  />
-                </div>
-
-                <ol class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  {AUTO_PIPELINE_UI.map((s, i) => {
-                    const active = autoRunning && autoProgress.step === s.key;
-                    const currentIdx =
-                      autoProgress.step === "done" ? AUTO_PIPELINE_UI.length : autoProgress.index;
-                    const finishedInLog =
-                      !autoRunning &&
-                      (log.some((l) => l.step === "done") ||
-                        log.some((l) => {
-                          const li = AUTO_PIPELINE_UI.findIndex((x) => x.key === l.step);
-                          return li > i;
-                        }));
-                    const isDone = !active && (currentIdx > i || finishedInLog);
-                    return (
-                      <li
-                        key={s.key}
-                        class={`flex items-center gap-2 rounded-xl border px-2.5 py-2 text-xs transition-colors ${
-                          active
-                            ? "border-primary/50 bg-primary/10 text-base-content"
-                            : isDone
-                              ? "border-secondary/30 bg-secondary/5 text-base-content/80"
-                              : "border-base-content/10 text-base-content/40"
-                        }`}
-                      >
-                        <span class="flex h-5 w-5 shrink-0 items-center justify-center">
-                          {active ? (
-                            <LoaderCircle size={14} class="animate-spin text-primary" />
-                          ) : isDone ? (
-                            <Check size={14} class="text-secondary" />
-                          ) : (
-                            <span class="text-[10px] tabular-nums opacity-50">{i + 1}</span>
-                          )}
-                        </span>
-                        <span class="font-medium">{s.label}</span>
-                      </li>
-                    );
-                  })}
-                </ol>
-
-                {log.length > 0 && (
-                  <ul class="max-h-32 space-y-1 overflow-y-auto rounded-xl border border-base-content/10 bg-base-300/30 px-3 py-2 text-xs text-base-content/55">
-                    {log.map((item, i) => (
-                      <li key={`${item.step}-${i}`} class="flex gap-2">
-                        <span class="shrink-0 text-primary">
-                          {STEP_STATUS_LABEL[item.step] || item.step}
-                        </span>
-                        <span class="min-w-0">{item.message}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </section>
         </>
       )}
 

@@ -18,6 +18,7 @@ import AppShell from "./AppShell.jsx";
 import PocketIdAccount from "./PocketIdAccount.jsx";
 import ChangePasswordForm from "./ChangePasswordForm.jsx";
 import TeamPanel from "./TeamPanel.jsx";
+import { PageHeader } from "./ui/index.js";
 import {
   KEY_FIELDS,
   loadKeys,
@@ -445,12 +446,15 @@ export default function SettingsPage() {
   const SectionIcon = meta?.icon || Sparkles;
 
   return (
-    <AppShell
-      active="parametres"
-      title="Paramètres"
-      subtitle="Clés API stockées dans ton navigateur. Sépare IA, morceaux, streaming, distribution et réseaux."
-    >
-      <div class="flex flex-col gap-6 lg:flex-row lg:gap-8">
+    <AppShell active="parametres">
+      <div class="mx-auto max-w-5xl">
+        <PageHeader
+          eyebrow="Configuration"
+          title="Paramètres"
+          description="Clés API stockées dans ton navigateur. Sépare IA, morceaux, streaming, distribution et réseaux."
+        />
+
+      <div class="flex flex-col gap-8 lg:flex-row lg:gap-10">
         {/* Section sidebar */}
         <nav
           class="flex shrink-0 gap-2 overflow-x-auto lg:w-56 lg:flex-col lg:overflow-visible"
@@ -466,14 +470,14 @@ export default function SettingsPage() {
                 key={id}
                 type="button"
                 onClick={() => selectSection(id)}
-                class={`flex min-w-[9rem] items-center gap-2 border px-3 py-2.5 text-left text-sm transition lg:w-full ${
+                class={`flex min-w-[9rem] items-center gap-2 rounded-2xl border px-3.5 py-3 text-left text-sm transition lg:w-full ${
                   isActive
-                    ? "border-primary bg-primary/10 text-primary"
+                    ? "border-primary/50 bg-primary/10 font-semibold text-primary shadow-md shadow-primary/10"
                     : "border-base-content/10 bg-base-200/40 text-base-content/70 hover:border-base-content/25"
                 }`}
               >
                 <Icon size={16} />
-                <span class="font-medium">{group.group}</span>
+                <span>{group.group}</span>
               </button>
             );
           })}
@@ -481,13 +485,13 @@ export default function SettingsPage() {
 
         {/* Content */}
         <section class="min-w-0 flex-1 animate-rise">
-          <div class="mb-6 flex items-start gap-3">
-            <div class="mt-0.5 text-primary">
-              <SectionIcon size={22} />
+          <div class="mb-8 flex items-start gap-3">
+            <div class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+              <SectionIcon size={20} />
             </div>
             <div>
-              <h2 class="font-display text-xl font-bold md:text-2xl">{activeGroup.group}</h2>
-              <p class="mt-1 text-sm text-base-content/55">{meta?.blurb}</p>
+              <h2 class="font-display text-2xl font-bold tracking-tight md:text-3xl">{activeGroup.group}</h2>
+              <p class="mt-1.5 text-sm leading-relaxed text-base-content/55">{meta?.blurb}</p>
             </div>
           </div>
 
@@ -571,7 +575,7 @@ export default function SettingsPage() {
           )}
 
           {section === "distribution" && (
-            <div class="mt-8 max-w-xl space-y-3 border border-base-content/10 bg-base-200/40 p-4">
+            <div class="mt-6 max-w-xl space-y-4 rounded-3xl border border-base-content/10 bg-base-200/40 p-5">
               <h3 class="font-display text-lg font-semibold">Webhook carrière ONCE</h3>
               <p class="text-xs text-base-content/60">
                 ONCE pousse <code>release.status_changed</code> → SONOZZ met à jour le statut stores /
@@ -656,7 +660,7 @@ export default function SettingsPage() {
           )}
 
           {section === "reseaux" && redirectUri && (
-            <div class="mt-6 max-w-xl space-y-3 border border-warning/30 bg-warning/5 p-4 text-xs text-base-content/80">
+            <div class="mt-6 max-w-xl space-y-3 rounded-3xl border border-warning/30 bg-warning/5 p-5 text-xs text-base-content/80">
               <p class="font-medium text-warning">Erreur TikTok « client_key » — checklist portail</p>
               <ol class="list-decimal space-y-1.5 pl-4">
                 <li>
@@ -707,7 +711,7 @@ export default function SettingsPage() {
           )}
 
           {section === "reseaux" && ytRedirectUri && (
-            <div class="mt-6 max-w-xl space-y-3 border border-secondary/30 bg-secondary/5 p-4 text-xs text-base-content/80">
+            <div class="mt-6 max-w-xl space-y-3 rounded-3xl border border-secondary/30 bg-secondary/5 p-5 text-xs text-base-content/80">
               <p class="font-medium text-secondary">YouTube Shorts — checklist Google Cloud</p>
               <ol class="list-decimal space-y-1.5 pl-4">
                 <li>
@@ -752,7 +756,7 @@ export default function SettingsPage() {
           )}
 
           {youtubePreview && section === "reseaux" && (
-            <div class="mt-4 max-w-xl space-y-2 border border-base-content/15 bg-base-200/60 p-4 text-xs">
+            <div class="mt-4 max-w-xl space-y-2 rounded-3xl border border-base-content/15 bg-base-200/60 p-5 text-xs">
               <p class="font-medium text-base-content">Prévisualisation OAuth YouTube</p>
               <p>
                 Key : <code>{youtubePreview.clientIdPreview}</code> · Scope :{" "}
@@ -770,7 +774,7 @@ export default function SettingsPage() {
           )}
 
           {tiktokPreview && section === "reseaux" && (
-            <div class="mt-4 max-w-xl space-y-2 border border-base-content/15 bg-base-200/60 p-4 text-xs">
+            <div class="mt-4 max-w-xl space-y-2 rounded-3xl border border-base-content/15 bg-base-200/60 p-5 text-xs">
               <p class="font-medium text-base-content">Prévisualisation OAuth TikTok</p>
               <p>
                 Mode : <strong>{tiktokPreview.mode}</strong> · Key :{" "}
@@ -908,6 +912,7 @@ export default function SettingsPage() {
           </div>
           )}
         </section>
+      </div>
       </div>
     </AppShell>
   );

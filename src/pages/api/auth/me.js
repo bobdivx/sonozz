@@ -30,6 +30,16 @@ export async function GET({ cookies }) {
 
   const caps = session ? sessionCapabilities(role) : sessionCapabilities(null);
 
+  let billing = null;
+  if (session?.email) {
+    try {
+      const { getBillingState } = await import("../../../server/billing.js");
+      billing = await getBillingState(session.email);
+    } catch {
+      billing = null;
+    }
+  }
+
   return json({
     configured: isAuthConfigured(),
     oidcConfigured: isOidcConfigured(),
@@ -41,5 +51,8 @@ export async function GET({ cookies }) {
     canInvite: Boolean(session && caps.canInvite),
     ssoLinked,
     ssoLinkedAt,
+    plan: billing?.plan || null,
+    credits: billing?.credits ?? null,
+    watermark: billing?.watermark ?? null,
   });
 }

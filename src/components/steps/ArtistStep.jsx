@@ -33,6 +33,7 @@ import StyleTrackPicker from "../StyleTrackPicker.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "../ArtistNameField.jsx";
 import PhotoUpload from "../PhotoUpload.jsx";
 import VoiceSampleUpload from "../VoiceSampleUpload.jsx";
+import ChoiceCard from "../ui/ChoiceCard.jsx";
 import { resolveArtistGender, inferGenderFromStyleRef, ARTIST_GENDER_OPTIONS, ARTIST_GENDER_LABELS } from "../../lib/artistGender.js";
 import { artistPhotoSyncKey, normalizeArtistPhotos } from "../../lib/artistPhotos.js";
 import { buildArtistDraftPatch, isUnchangedArtistDraft, styleTrackKey, lockHasSonicDna, artistPatchFromStyleLock } from "../../lib/artistDraft.js";
@@ -588,34 +589,30 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
   );
 
   return (
-    <section class="animate-rise space-y-5">
-      <div class="space-y-2">
-        <p class="text-xs font-medium uppercase tracking-[0.16em] text-base-content/45">
-          Type de profil
-        </p>
-        <div class="flex flex-wrap gap-2" role="group" aria-label="Type de profil">
-        <button
-          type="button"
-          class={`btn btn-sm gap-2 ${!isSelf ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-          disabled={loading}
-          onClick={() => applyMode("fiction")}
-        >
-          <Sparkles size={14} />
-          Artiste fictionnel
-        </button>
-        <button
-          type="button"
-          class={`btn btn-sm gap-2 ${isSelf ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-          disabled={loading}
-          onClick={() => applyMode("self")}
-        >
-          <Heart size={14} />
-          C’est moi
-        </button>
+    <section class="animate-rise space-y-8">
+      <div class="space-y-3">
+        <p class="text-sm font-medium text-base-content/70">Type de profil</p>
+        <div class="grid gap-3 sm:grid-cols-2" role="group" aria-label="Type de profil">
+          <ChoiceCard
+            icon={<Sparkles size={18} />}
+            title="Artiste fictionnel"
+            description="Personnage inventé — portrait et bio générés."
+            active={!isSelf}
+            disabled={loading}
+            onClick={() => applyMode("fiction")}
+          />
+          <ChoiceCard
+            icon={<Heart size={18} />}
+            title="C’est moi"
+            description="Ton vrai profil — photos et extrait de voix."
+            active={isSelf}
+            disabled={loading}
+            onClick={() => applyMode("self")}
+          />
         </div>
       </div>
 
-      <div class="w-full min-w-0 rounded-2xl border border-base-content/10 bg-base-300/25">
+      <div class="w-full min-w-0 overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-base-200/80 via-base-100/50 to-primary/5">
       <div
         role="tablist"
         class="flex w-full min-w-0 border-b border-base-content/10"
@@ -624,28 +621,28 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
           type="button"
           role="tab"
           aria-selected={profileTab === "identity"}
-          class={`flex min-w-0 flex-1 items-center justify-center gap-1.5 px-2 py-3 text-sm ${
+          class={`flex min-w-0 flex-1 items-center justify-center gap-2 px-3 py-4 text-sm sm:text-base ${
             profileTab === "identity"
-              ? "bg-base-200 font-medium text-primary"
-              : "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+              ? "bg-base-200/80 font-semibold text-primary"
+              : "text-base-content/55 hover:bg-base-200/40 hover:text-base-content"
           }`}
           onClick={() => setProfileTab("identity")}
         >
-          <UserRound size={14} class="shrink-0" />
+          <UserRound size={16} class="shrink-0" />
           Identité
         </button>
         <button
           type="button"
           role="tab"
           aria-selected={profileTab === "style"}
-          class={`flex min-w-0 flex-1 items-center justify-center gap-1.5 px-2 py-3 text-sm ${
+          class={`flex min-w-0 flex-1 items-center justify-center gap-2 px-3 py-4 text-sm sm:text-base ${
             profileTab === "style"
-              ? "bg-base-200 font-medium text-primary"
-              : "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+              ? "bg-base-200/80 font-semibold text-primary"
+              : "text-base-content/55 hover:bg-base-200/40 hover:text-base-content"
           }`}
           onClick={() => setProfileTab("style")}
         >
-          <Music2 size={14} class="shrink-0" />
+          <Music2 size={16} class="shrink-0" />
           Style
           {dnaStale ? <span class="badge badge-warning badge-xs shrink-0">DNA</span> : null}
         </button>
@@ -654,10 +651,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
             type="button"
             role="tab"
             aria-selected={profileTab === "preview"}
-            class={`flex min-w-0 flex-1 items-center justify-center px-2 py-3 text-sm ${
+            class={`flex min-w-0 flex-1 items-center justify-center px-3 py-4 text-sm sm:text-base ${
               profileTab === "preview"
-                ? "bg-base-200 font-medium text-primary"
-                : "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+                ? "bg-base-200/80 font-semibold text-primary"
+                : "text-base-content/55 hover:bg-base-200/40 hover:text-base-content"
             }`}
             onClick={() => setProfileTab("preview")}
           >
@@ -665,7 +662,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
           </button>
         ) : null}
       </div>
-      <p class="px-4 pt-3 text-sm text-base-content/60 sm:px-5">
+      <p class="px-5 pt-5 text-sm leading-relaxed text-base-content/60 sm:px-6">
         {profileTab === "identity"
           ? isSelf
             ? "Nom, photos, voix, présentation — pas le son des morceaux."
@@ -675,7 +672,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
             : "Portrait, DNA et look déjà enregistrés sur la fiche."}
       </p>
 
-      <div class={`min-w-0 space-y-4 p-4 sm:p-5 ${profileTab === "identity" ? "" : "hidden"}`}>
+      <div class={`min-w-0 space-y-6 p-5 sm:p-6 ${profileTab === "identity" ? "" : "hidden"}`}>
         <ArtistNameField
           value={name}
           disabled={loading}
@@ -779,9 +776,9 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
             </button>
           )}
 
-        <fieldset class="space-y-2">
+        <fieldset class="space-y-3">
           <legend class="mb-1 text-sm text-base-content/60">Sexe / présentation</legend>
-          <p class="text-xs text-base-content/45">
+          <p class="text-sm text-base-content/50">
             Voix, portrait et bio collent à ce choix — ce n’est pas le style musical.
           </p>
           <div class="flex flex-wrap gap-2">
@@ -789,7 +786,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
               <button
                 key={g.value}
                 type="button"
-                class={`btn btn-sm ${gender === g.value ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+                class={`btn rounded-full ${gender === g.value ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
                 disabled={loading}
                 onClick={() => {
                   genderManualRef.current = true;
@@ -832,18 +829,18 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
         </label>
       </div>
 
-      <div class={`min-w-0 space-y-4 p-4 sm:p-5 ${profileTab === "style" ? "" : "hidden"}`}>
+      <div class={`min-w-0 space-y-6 p-5 sm:p-6 ${profileTab === "style" ? "" : "hidden"}`}>
         <div class="min-w-0 space-y-3">
           <p class="flex items-center gap-2 text-sm text-base-content/60">
             <Music2 size={14} class="shrink-0 text-primary" />
             Références sonores
           </p>
-          <p class="text-xs text-base-content/45">
+          <p class="text-sm text-base-content/50">
             {isSelf
               ? "Choisis les artistes (et éventuellement un titre précis) — c’est la source principale du style."
               : "Artiste et/ou titre de référence : le genre, le BPM et la prod viennent d’ici. Pas besoin de cocher un style à la main."}
           </p>
-          <div class="space-y-3">
+          <div class="space-y-4">
             {isSelf ? (
               <StyleArtistPicker
                 multiple
@@ -1102,7 +1099,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
       </div>
 
       {artist ? (
-      <div class={`min-w-0 space-y-4 p-4 sm:p-5 ${profileTab === "preview" ? "" : "hidden"}`}>
+      <div class={`min-w-0 space-y-6 p-5 sm:p-6 ${profileTab === "preview" ? "" : "hidden"}`}>
           <div class="grid gap-6 md:grid-cols-[240px_1fr] md:items-start">
             <figure class="space-y-2">
               {(() => {
@@ -1375,15 +1372,15 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
       </div>
 
       <div
-        class="sticky z-20 rounded-2xl border border-base-content/15 bg-base-200/95 p-3 shadow-xl shadow-black/30 backdrop-blur"
+        class="sticky z-20 rounded-3xl border border-base-content/10 bg-base-200/95 p-4 shadow-xl shadow-black/25 backdrop-blur sm:p-5"
         style={{
-          bottom: "calc(var(--sonozz-now-playing, 5.25rem) + 0.5rem)",
+          bottom: "calc(var(--sonozz-now-playing, 5.25rem) + 0.75rem)",
         }}
       >
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            class="btn btn-primary gap-2"
+            class="btn btn-primary gap-2 rounded-full px-6"
             disabled={loading || styleBusy || nameBlocked || !name.trim()}
             onClick={handleSaveProfile}
           >
@@ -1397,7 +1394,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
           {profileTab === "style" && styleTrackPick?.id ? (
             <button
               type="button"
-              class="btn btn-ghost border border-base-content/15"
+              class="btn btn-ghost rounded-full border border-base-content/15"
               disabled={loading || styleBusy}
               onClick={handleApplyStyleTrack}
             >
@@ -1406,7 +1403,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
           ) : null}
           <button
             type="button"
-            class="btn btn-ghost border border-base-content/15 gap-2"
+            class="btn btn-ghost gap-2 rounded-full border border-base-content/15"
             disabled={
               loading ||
               styleBusy ||
@@ -1424,8 +1421,8 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
             {artist ? "Régénérer le visuel" : "Générer le visuel"}
           </button>
         </div>
-        {pickError ? <p class="mt-2 text-xs text-warning">{pickError}</p> : null}
-        <p class="mt-2 text-xs text-base-content/50">
+        {pickError ? <p class="mt-3 text-sm text-warning">{pickError}</p> : null}
+        <p class="mt-3 text-sm text-base-content/50">
           Sauvegarder enregistre Identité et Style. Le visuel se génère à part.
         </p>
       </div>

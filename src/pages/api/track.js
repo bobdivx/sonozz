@@ -18,6 +18,28 @@ import {
   testAceStep,
 } from "../../server/aceStep.js";
 import { testReplicateToken } from "../../server/replicate.js";
+import { getSessionFromCookies, ROLE_ADMIN } from "../../server/auth.js";
+import { assertGenerationAllowed, spendCredits } from "../../server/credits.js";
+
+async function chargeTrackIfNeeded(cookies, body) {
+  const session = getSessionFromCookies(cookies);
+  if (!session?.email) {
+    const err = new Error("Non autorisé");
+    err.status = 401;
+    throw err;
+  }
+  const isAdmin = session.role === ROLE_ADMIN;
+  const preview = Boolean(body?.preview);
+  if (preview) {
+    return { session, charged: false, credits: null };
+  }
+  if (isAdmin) {
+    return { session, charged: false, credits: null };
+  }
+  await assertGenerationAllowed(session.email, { isAdmin: false });
+  const spent = await spendCredits(session.email, 1);
+  return { session, charged: true, credits: spent.balance };
+}
 
 function songGenProbePayload(info) {
   const large = info.largeModel;
@@ -61,7 +83,7 @@ async function withFreshProbe(keys, result) {
   return { ok: true, ...result, probe };
 }
 
-export async function POST({ request }) {
+export async function POST({ request, cookies }) {
   let body = {};
   try {
     body = await readBody(request);
@@ -326,16 +348,20 @@ export async function POST({ request }) {
     }
 
     if (action === "sync") {
+      const bill = await chargeTrackIfNeeded(cookies, body);
       const data = await runTrack(body);
-      return json(data);
+      return json({ ...data, credits: bill.credits });
     }
 
+    // start (défaut) et toute autre action de génération
+    const bill = await chargeTrackIfNeeded(cookies, body);
     const data = await startTrack(body);
-    return json(data);
+    return json({ ...data, credits: bill.credits });
   } catch (e) {
     const action = String(body?.action || "start").trim();
     console.error("[track]", action, e?.message || e);
-    return error(e.message || "Erreur morceau", 500);
+    const status = e.status || (e.code === "CREDITS" ? 402 : 500);
+    return error(e.message || "Erreur morceau", status);
   }
 }
 

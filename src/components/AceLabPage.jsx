@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
-  ArrowLeft,
-  FlaskConical,
   Play,
   RefreshCw,
   Square,
@@ -9,6 +7,8 @@ import {
 } from "lucide-preact";
 import { ensureKeysHydrated } from "../lib/keys.js";
 import { api } from "../lib/apiClient.js";
+import AppShell from "./AppShell.jsx";
+import { PageHeader } from "./ui/index.js";
 
 const PRESETS = [
   {
@@ -446,30 +446,21 @@ export default function AceLabPage() {
   const autoCfgHint = activeIsTurbo ? 0 : activeBase ? 7 : "?";
 
   return (
-    <div class="mx-auto max-w-5xl space-y-6 px-4 py-8">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p class="text-xs uppercase tracking-wide text-base-content/50">Diagnostic</p>
-          <h1 class="font-display flex items-center gap-2 text-2xl font-bold">
-            <FlaskConical size={22} />
-            Lab ACE-Step
-          </h1>
-          <p class="mt-1 max-w-2xl text-sm text-base-content/65">
-            Test brut : style + paroles + modèle + réglages variables (steps, CFG, cover). Sans
-            artiste / wizard / DNA.
-          </p>
-        </div>
-        <a href="/parametres?section=studios" class="btn btn-ghost btn-sm gap-1">
-          <ArrowLeft size={14} />
-          Paramètres
-        </a>
-      </div>
+    <AppShell active="parametres">
+    <div class="mx-auto max-w-5xl space-y-8">
+      <PageHeader
+        eyebrow="Diagnostic"
+        title="Lab ACE-Step"
+        description="Test brut : style + paroles + modèle + réglages. Sans artiste / wizard / DNA."
+        backHref="/parametres?section=studios"
+        backLabel="Paramètres"
+      />
 
-      <section class="rounded-box border border-base-content/10 bg-base-200/40 p-4 space-y-3">
+      <section class="space-y-4 rounded-3xl border border-base-content/10 bg-base-200/40 p-5 sm:p-6">
         <div class="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            class="btn btn-sm gap-1"
+            class="btn gap-1 rounded-full"
             disabled={probing || !keys}
             onClick={() => void runProbe()}
           >
@@ -808,10 +799,14 @@ export default function AceLabPage() {
         ) : null}
       </div>
 
-      {error ? <p class="text-sm text-error whitespace-pre-wrap">{error}</p> : null}
+      {error ? (
+        <p class="rounded-2xl border border-error/40 bg-error/10 px-5 py-4 text-sm text-error whitespace-pre-wrap">
+          {error}
+        </p>
+      ) : null}
 
       {audioUrl ? (
-        <section class="rounded-box border border-success/30 bg-success/5 p-4 space-y-2">
+        <section class="space-y-2 rounded-3xl border border-success/30 bg-success/5 p-5 sm:p-6">
           <p class="text-sm font-medium">Résultat</p>
           <audio controls src={audioUrl} class="w-full" />
           <a class="link text-sm break-all" href={audioUrl} target="_blank" rel="noreferrer">
@@ -820,12 +815,13 @@ export default function AceLabPage() {
         </section>
       ) : null}
 
-      <section class="rounded-box border border-base-content/10 bg-base-300/30 p-3">
+      <section class="rounded-3xl border border-base-content/10 bg-base-300/30 p-5 sm:p-6">
         <p class="mb-2 text-xs font-medium uppercase tracking-wide text-base-content/55">Logs</p>
         <pre class="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-base-content/80">
           {logs.length ? logs.join("\n") : "—"}
         </pre>
       </section>
     </div>
+    </AppShell>
   );
 }

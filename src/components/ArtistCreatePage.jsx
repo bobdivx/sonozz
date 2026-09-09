@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import ArtistStep from "./steps/ArtistStep.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
+import { PageHeader, AlertBanner, SectionCard } from "./ui/index.js";
 import { api } from "../lib/apiClient.js";
 import { keysReady, loadKeys, ensureKeysHydrated } from "../lib/keys.js";
 import { isOncePublished } from "../lib/studio.js";
@@ -22,6 +23,8 @@ export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
   const [notice, setNotice] = useState("");
   const [ready, setReady] = useState(false);
   const [oncePublishedCount, setOncePublishedCount] = useState(0);
+
+  const isEdit = Boolean(slug || savedSlug);
 
   useEffect(() => {
     let cancelled = false;
@@ -158,60 +161,70 @@ export default function ArtistCreatePage({ slug = "", initialMode } = {}) {
         `Tous les projets, albums, et fichiers audio / clips S3 associés seront effacés. Cette action est irréversible.`;
 
   return (
-    <AppShell
-      active="artistes"
-      title="Profil artiste"
-      subtitle="Onglets Identité et Style musical. Sauvegarde à tout moment — le Studio sert ensuite aux morceaux."
-    >
-      <div class="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-        {!ready && (
-          <p class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-            Configure un LLM dans{" "}
-            <a class="underline" href="/parametres?section=ia">
-              Paramètres
-            </a>{" "}
-            avant de générer un profil.
-          </p>
-        )}
-        {error && <p class="text-sm text-error">{error}</p>}
-        {notice && !error && <p class="text-sm text-success">{notice}</p>}
-        {loading ? (
-          <div class="h-64 animate-pulse rounded-2xl bg-base-300/50" />
-        ) : (
-          <ArtistStep
-            artist={artist}
-            loading={saving || deleting}
-            initialMode={initialMode || artist?.mode || undefined}
-            onGenerate={handleGenerate}
-            onSave={handleSave}
-            onPatchArtist={(patch) => {
-              setArtist((prev) => ({ ...(prev || {}), ...patch }));
-            }}
-          />
-        )}
+    <AppShell active="artistes">
+      <div class="mx-auto w-full min-w-0 max-w-3xl">
+        <PageHeader
+          backHref="/artistes"
+          backLabel="Retour aux artistes"
+          eyebrow={isEdit ? "Édition" : "Nouveau profil"}
+          title={isEdit ? artist?.name || "Profil artiste" : "Créer un artiste"}
+          description={
+            isEdit
+              ? "Identité et style musical. Enregistre quand tu veux — le Studio sert ensuite aux titres."
+              : "Définis l’identité et le son. Ensuite tu pourras lancer des titres depuis le Studio."
+          }
+        />
 
-        {savedSlug && !loading ? (
-          <div class="rounded-2xl border border-error/25 bg-error/5 p-4">
-            <h2 class="text-sm font-semibold text-error">Zone dangereuse</h2>
-            <p class="mt-1 text-xs text-base-content/60">
-              Supprime l’artiste de Turso, ses morceaux / albums, et les objets S3 (audio, clips,
-              extrait vocal).
-            </p>
-            <button
-              type="button"
-              class="btn btn-error btn-outline mt-3 gap-2"
-              disabled={deleting || saving}
-              onClick={() => setConfirmDelete(true)}
+        <div class="space-y-8">
+          {!ready && (
+            <AlertBanner tone="warning">
+              Configure un LLM dans{" "}
+              <a class="underline font-medium" href="/parametres?section=ia">
+                Paramètres
+              </a>{" "}
+              avant de générer un profil IA.
+            </AlertBanner>
+          )}
+          {error && <AlertBanner tone="error">{error}</AlertBanner>}
+          {notice && !error && <AlertBanner tone="success">{notice}</AlertBanner>}
+
+          {loading ? (
+            <div class="h-72 animate-pulse rounded-3xl bg-base-300/40" />
+          ) : (
+            <ArtistStep
+              artist={artist}
+              loading={saving || deleting}
+              initialMode={initialMode || artist?.mode || undefined}
+              onGenerate={handleGenerate}
+              onSave={handleSave}
+              onPatchArtist={(patch) => {
+                setArtist((prev) => ({ ...(prev || {}), ...patch }));
+              }}
+            />
+          )}
+
+          {savedSlug && !loading ? (
+            <SectionCard
+              tone="danger"
+              title="Zone dangereuse"
+              description="Supprime l’artiste, ses morceaux / albums, et les fichiers audio / clips associés. Irréversible."
             >
-              {deleting ? (
-                <span class="loading loading-spinner loading-sm" />
-              ) : (
-                <Trash2 size={16} />
-              )}
-              Supprimer l’artiste
-            </button>
-          </div>
-        ) : null}
+              <button
+                type="button"
+                class="btn btn-error btn-outline gap-2 rounded-full px-5"
+                disabled={deleting || saving}
+                onClick={() => setConfirmDelete(true)}
+              >
+                {deleting ? (
+                  <span class="loading loading-spinner loading-sm" />
+                ) : (
+                  <Trash2 size={16} />
+                )}
+                Supprimer l’artiste
+              </button>
+            </SectionCard>
+          ) : null}
+        </div>
       </div>
 
       <ConfirmModal

@@ -1,14 +1,15 @@
 import { useEffect, useState } from "preact/hooks";
 import AppShell from "./AppShell.jsx";
+import { PageHeader, AlertBanner, SectionCard } from "./ui/index.js";
 
 function StatCard({ label, value, hint }) {
   return (
-    <div class="rounded-2xl border border-base-content/10 bg-base-200/60 p-5 shadow-sm">
-      <p class="text-xs font-semibold uppercase tracking-[0.18em] text-base-content/45">{label}</p>
+    <div class="rounded-3xl border border-base-content/10 bg-gradient-to-br from-base-200/80 via-base-100/50 to-primary/5 p-5 sm:p-6">
+      <p class="text-xs font-semibold uppercase tracking-[0.2em] text-primary/80">{label}</p>
       <p class="mt-2 font-display text-3xl font-extrabold tracking-tight text-base-content">
         {value === null || value === undefined ? "—" : value}
       </p>
-      {hint ? <p class="mt-1 text-xs text-base-content/50">{hint}</p> : null}
+      {hint ? <p class="mt-1 text-sm text-base-content/50">{hint}</p> : null}
     </div>
   );
 }
@@ -25,10 +26,10 @@ function formatDate(iso) {
 function Num({ label, value, onChange, min = 0 }) {
   return (
     <label class="form-control w-full">
-      <span class="label-text text-xs">{label}</span>
+      <span class="label-text mb-1 text-sm text-base-content/60">{label}</span>
       <input
         type="number"
-        class="input input-bordered input-sm"
+        class="input input-bordered h-11 w-full bg-base-200"
         min={min}
         value={value}
         onInput={(e) => onChange(Number(e.currentTarget.value))}
@@ -124,21 +125,21 @@ export default function AdminConsole() {
   }
 
   return (
-    <AppShell active="admin" title="Admin" subtitle="Métriques, plans, crédits & utilisateurs">
+    <AppShell active="admin">
+      <div class="mx-auto max-w-5xl">
+        <PageHeader
+          eyebrow="Console"
+          title="Admin"
+          description="Métriques, plans, crédits et utilisateurs."
+        />
+
+        <div class="space-y-8">
       {loading && <p class="text-sm text-base-content/60">Chargement…</p>}
-      {err && (
-        <p class="mb-4 rounded-md bg-error/15 px-3 py-2 text-sm text-error" role="alert">
-          {err}
-        </p>
-      )}
-      {msg && (
-        <p class="mb-4 rounded-md bg-success/15 px-3 py-2 text-sm text-success" role="status">
-          {msg}
-        </p>
-      )}
+      {err && <AlertBanner tone="error">{err}</AlertBanner>}
+      {msg && <AlertBanner tone="success">{msg}</AlertBanner>}
 
       {stats && (
-        <section class="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard label="Utilisateurs" value={stats.users} />
           <StatCard label="Artistes" value={stats.artists} />
           <StatCard label="Titres / projets" value={stats.tracks} />
@@ -147,23 +148,24 @@ export default function AdminConsole() {
       )}
 
       {plans && (
-        <section class="mb-10 space-y-4 rounded-2xl border border-base-content/10 bg-base-200/40 p-5">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 class="font-display text-lg font-bold">Plans & crédits</h2>
-              <p class="text-xs text-base-content/55">
-                1 crédit = 1 {plans.creditUnitLabel || "génération de titre"}. Affiché sur la landing et
-                /billing.
-              </p>
-            </div>
-            <button type="button" class="btn btn-primary btn-sm" disabled={savingPlans} onClick={savePlans}>
+        <SectionCard
+          eyebrow="Offres"
+          title="Plans & crédits"
+          description={`1 crédit = 1 ${plans.creditUnitLabel || "génération de titre"}. Affiché sur la landing et /billing.`}
+          actions={
+            <button
+              type="button"
+              class="btn btn-primary rounded-full px-5"
+              disabled={savingPlans}
+              onClick={savePlans}
+            >
               {savingPlans ? "Enregistrement…" : "Enregistrer les plans"}
             </button>
-          </div>
-
+          }
+        >
           <div class="grid gap-4 lg:grid-cols-2">
-            <div class="rounded-xl border border-base-content/10 bg-base-100/80 p-4">
-              <h3 class="font-bold">Free</h3>
+            <div class="rounded-2xl border border-base-content/10 bg-base-100/80 p-5">
+              <h3 class="font-display font-semibold">Free</h3>
               <div class="mt-3 grid grid-cols-2 gap-2">
                 <Num
                   label="Artistes max"
@@ -194,8 +196,8 @@ export default function AdminConsole() {
               </label>
             </div>
 
-            <div class="rounded-xl border border-primary/30 bg-base-100/80 p-4">
-              <h3 class="font-bold">Pro ({plans.pro.priceLabel})</h3>
+            <div class="rounded-2xl border border-primary/30 bg-base-100/80 p-5">
+              <h3 class="font-display font-semibold">Pro ({plans.pro.priceLabel})</h3>
               <div class="mt-3 grid grid-cols-2 gap-2">
                 <Num
                   label="Artistes max"
@@ -229,8 +231,8 @@ export default function AdminConsole() {
               </div>
             </div>
 
-            <div class="rounded-xl border border-base-content/10 bg-base-100/80 p-4">
-              <h3 class="font-bold">Pack crédits</h3>
+            <div class="rounded-2xl border border-base-content/10 bg-base-100/80 p-5">
+              <h3 class="font-display font-semibold">Pack crédits</h3>
               <div class="mt-3 grid grid-cols-2 gap-2">
                 <Num
                   label="Crédits du pack"
@@ -256,8 +258,8 @@ export default function AdminConsole() {
               </div>
             </div>
 
-            <div class="rounded-xl border border-base-content/10 bg-base-100/80 p-4">
-              <h3 class="font-bold">Publish+</h3>
+            <div class="rounded-2xl border border-base-content/10 bg-base-100/80 p-5">
+              <h3 class="font-display font-semibold">Publish+</h3>
               <div class="mt-3 grid grid-cols-2 gap-2">
                 <Num
                   label="Prix € / mois"
@@ -279,15 +281,17 @@ export default function AdminConsole() {
               </p>
             </div>
           </div>
-        </section>
+        </SectionCard>
       )}
 
-      <section class="overflow-hidden rounded-2xl border border-base-content/10">
-        <div class="border-b border-base-content/10 bg-base-200/60 px-4 py-3">
-          <h2 class="font-display text-lg font-bold">Utilisateurs & crédits</h2>
-        </div>
+      <SectionCard
+        eyebrow="Comptes"
+        title="Utilisateurs & crédits"
+        description="Ajuste le plan ou les crédits d’un compte."
+        bodyClass="!p-0"
+      >
         <div class="overflow-x-auto">
-          <table class="table table-sm">
+          <table class="table">
             <thead>
               <tr>
                 <th>Email</th>
@@ -313,7 +317,7 @@ export default function AdminConsole() {
                     </td>
                     <td>
                       <select
-                        class="select select-bordered select-xs"
+                        class="select select-bordered select-sm"
                         value={u.plan || "free"}
                         onChange={(e) => patchUser(u.email, { plan: e.currentTarget.value })}
                       >
@@ -326,14 +330,14 @@ export default function AdminConsole() {
                     <td class="whitespace-nowrap">
                       <button
                         type="button"
-                        class="btn btn-ghost btn-xs"
+                        class="btn btn-ghost btn-sm rounded-full"
                         onClick={() => patchUser(u.email, { creditsDelta: 10 })}
                       >
                         +10 crédits
                       </button>
                       <button
                         type="button"
-                        class="btn btn-ghost btn-xs"
+                        class="btn btn-ghost btn-sm rounded-full"
                         onClick={() => patchUser(u.email, { credits: 0 })}
                       >
                         Reset crédits
@@ -345,7 +349,9 @@ export default function AdminConsole() {
             </tbody>
           </table>
         </div>
-      </section>
+      </SectionCard>
+        </div>
+      </div>
     </AppShell>
   );
 }

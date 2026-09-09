@@ -23,6 +23,7 @@ import AlbumCreationModal from "./AlbumCreationModal.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
 import TrackCreationModal from "./TrackCreationModal.jsx";
 import TrackReviewPanel from "./TrackReviewPanel.jsx";
+import { AlertBanner, EmptyState } from "./ui/index.js";
 import { api } from "../lib/apiClient.js";
 import { loadKeys } from "../lib/keys.js";
 import { listArtistImageUrl } from "../lib/artistPhotos.js";
@@ -837,10 +838,10 @@ export default function ArtistHub({ slug }) {
 
   return (
     <AppShell active="artistes">
-      <div class="mx-auto w-full max-w-5xl space-y-6">
+      <div class="mx-auto w-full max-w-5xl space-y-8 md:space-y-10">
         <a
           href="/artistes"
-          class="inline-flex items-center gap-1 text-sm text-base-content/55 transition hover:text-primary"
+          class="inline-flex items-center gap-1.5 text-sm text-base-content/55 transition hover:text-primary"
         >
           ← Tous les artistes
         </a>
@@ -857,15 +858,11 @@ export default function ArtistHub({ slug }) {
             </div>
           </div>
         )}
-        {error && (
-          <div class="rounded-2xl border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">
-            {error}
-          </div>
-        )}
-        {msg && <p class="text-sm text-success">{msg}</p>}
+        {error && <AlertBanner tone="error">{error}</AlertBanner>}
+        {msg && <AlertBanner tone="success">{msg}</AlertBanner>}
 
         {data && (
-          <div class="space-y-6 animate-rise">
+          <div class="space-y-8 animate-rise md:space-y-10">
             <header class="overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/35 shadow-2xl shadow-black/20">
               <div class="grid md:grid-cols-[minmax(220px,280px)_1fr]">
                 <figure class="relative aspect-square bg-base-300">
@@ -878,7 +875,7 @@ export default function ArtistHub({ slug }) {
                   )}
                   <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-base-200/80 via-transparent to-transparent md:hidden" />
                 </figure>
-                <div class="flex flex-col justify-end gap-4 p-5 sm:p-7">
+                <div class="flex flex-col justify-end gap-4 p-6 sm:p-8">
                   <div class="flex flex-wrap gap-1.5">
                     {style.genres.slice(0, 4).map((g) => (
                       <span
@@ -981,17 +978,17 @@ export default function ArtistHub({ slug }) {
                 <div class="mt-4">
                   {nextMove.href ? (
                     <a
-                      class="btn btn-primary btn-sm gap-1 rounded-full"
+                      class="btn btn-primary gap-1 rounded-full"
                       href={nextMove.href}
                       target="_blank"
                       rel="noreferrer"
                     >
-                      {nextMove.cta} <ExternalLink size={12} />
+                      {nextMove.cta} <ExternalLink size={14} />
                     </a>
                   ) : (
                     <button
                       type="button"
-                      class="btn btn-primary btn-sm gap-1 rounded-full"
+                      class="btn btn-primary gap-1 rounded-full"
                       disabled={createTrackBusy || scheduleBusy}
                       onClick={nextMove.onClick}
                     >
@@ -1006,7 +1003,7 @@ export default function ArtistHub({ slug }) {
             )}
 
             <div
-              class="flex gap-1 overflow-x-auto rounded-full border border-base-content/10 bg-base-300/50 p-1"
+              class="flex gap-1 overflow-x-auto rounded-full border border-base-content/10 bg-base-300/50 p-1.5"
               role="tablist"
               aria-label="Sections de la fiche"
             >
@@ -1019,7 +1016,7 @@ export default function ArtistHub({ slug }) {
                     type="button"
                     role="tab"
                     aria-selected={on}
-                    class={`flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-sm transition ${
+                    class={`flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2.5 text-sm transition ${
                       on
                         ? "bg-primary font-semibold text-primary-content shadow-md shadow-black/20"
                         : "text-base-content/55 hover:text-base-content"
@@ -1035,11 +1032,11 @@ export default function ArtistHub({ slug }) {
 
             {tab === "titres" && (
               <div class="space-y-8">
-                <section class="space-y-4">
+                <section class="space-y-5">
                   <div class="flex flex-wrap items-end justify-between gap-3">
                     <div>
                       <h2 class="font-display text-2xl font-bold">Le catalogue</h2>
-                      <p class="text-sm text-base-content/55">
+                      <p class="mt-1 text-sm text-base-content/55">
                         {releases.length
                           ? `${albums.length ? `${albums.length} album${albums.length > 1 ? "s" : ""}` : ""}${
                               albums.length && singles.length ? " · " : ""
@@ -1323,34 +1320,34 @@ export default function ArtistHub({ slug }) {
                     })}
                   </div>
                 ) : canCreateAlbum ? (
-                  <div class="rounded-3xl border border-dashed border-base-content/15 bg-base-300/20 px-5 py-8 text-center">
-                    <p class="text-sm text-base-content/60">
-                      Tu n'as pas encore créé d'album. Clique sur « Nouvel album » pour commencer.
-                    </p>
-                  </div>
+                  <EmptyState
+                    title="Pas encore d’album"
+                    description="Clique sur « Nouvel album » pour commencer."
+                  />
                 ) : (
-                  <div class="rounded-3xl border border-dashed border-base-content/15 bg-base-300/20 px-5 py-8 text-center">
-                    <p class="text-sm text-base-content/60">
-                      Il faut d'abord un single avec paroles et audio. L'album part de ce titre.
-                    </p>
-                    <button
-                      type="button"
-                      class="btn btn-primary btn-sm mt-4 gap-1 rounded-full"
-                      disabled={createTrackBusy}
-                      onClick={() => promptCreateTrack()}
-                    >
-                      <Plus size={14} /> Nouveau titre
-                    </button>
-                  </div>
+                  <EmptyState
+                    title="Un single d’abord"
+                    description="Il faut d’abord un single avec paroles et audio. L’album part de ce titre."
+                    action={
+                      <button
+                        type="button"
+                        class="btn btn-primary gap-1 rounded-full px-5"
+                        disabled={createTrackBusy}
+                        onClick={() => promptCreateTrack()}
+                      >
+                        <Plus size={14} /> Nouveau titre
+                      </button>
+                    }
+                  />
                 )}
               </section>
             )}
 
             {tab === "revue" && (
-              <section class="space-y-4">
+              <section class="space-y-5">
                 <div>
                   <h2 class="font-display text-2xl font-bold">Revue des morceaux</h2>
-                  <p class="text-sm text-base-content/55">
+                  <p class="mt-1 text-sm text-base-content/55">
                     Écoute tes titres, note-les et régénère ceux qui ne te conviennent pas. Les versions précédentes sont conservées.
                   </p>
                 </div>

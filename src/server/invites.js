@@ -210,6 +210,13 @@ export async function acceptInvitation({ token, password, name } = {}) {
     args: [now, invite.id],
   });
 
+  try {
+    const { grantSignupCredits } = await import("./credits.js");
+    await grantSignupCredits(invite.email);
+  } catch (e) {
+    console.warn("[invites] grant credits", e?.message || e);
+  }
+
   return { user, email: invite.email };
 }
 

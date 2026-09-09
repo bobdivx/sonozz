@@ -1,0 +1,38 @@
+---
+import Layout from "../layouts/Layout.astro";
+import SignupForm from "../components/SignupForm.jsx";
+import { getSessionFromCookies } from "../server/auth.js";
+
+export const prerender = false;
+
+function safeNext(raw) {
+  if (!raw || typeof raw !== "string") return "/studio";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/studio";
+  if (raw.startsWith("/login") || raw.startsWith("/signup")) return "/studio";
+  return raw;
+}
+
+const next = safeNext(Astro.url.searchParams.get("next") || "/studio");
+const session = getSessionFromCookies(Astro.cookies);
+if (session) {
+  return Astro.redirect(next);
+}
+---
+
+<Layout title="SONOZZ — Créer un compte" description="Crée ton compte SONOZZ et lance ton studio.">
+  <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12 pb-32">
+    <div class="mb-8 text-center">
+      <img
+        src="/logo.png"
+        alt="SONOZZ"
+        class="mx-auto mb-6 h-20 w-20 rounded-2xl object-cover shadow-lg shadow-black/40"
+        width="80"
+        height="80"
+      />
+      <h1 class="font-display text-3xl font-bold tracking-tight text-base-content">Créer un compte</h1>
+      <p class="mt-2 text-sm text-base-content/55">Studio artiste IA — titres, albums, publication</p>
+    </div>
+
+    <SignupForm client:load next={next} />
+  </div>
+</Layout>

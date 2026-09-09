@@ -88,6 +88,8 @@ describe("Invitations / auth multi-comptes", () => {
 
   it("chemins publics invitation + ACL admin", () => {
     assert.equal(isPublicPath("/rejoindre"), true);
+    assert.equal(isPublicPath("/signup"), true);
+    assert.equal(isPublicPath("/api/auth/signup"), true);
     assert.equal(isPublicPath("/api/invites/accept"), true);
     assert.equal(isPublicPath("/api/invites"), false);
 

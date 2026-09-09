@@ -13,17 +13,18 @@ import {
   profileRichness,
 } from "./schema.js";
 
-export async function upsertArtistFromProject(artist, { preferredSlug } = {}) {
+export async function upsertArtistFromProject(artist, { preferredSlug, ownerEmail } = {}) {
   if (!artist?.name) return null;
   await ensureArtistSchema();
   const db = getDb();
   const now = new Date().toISOString();
   const baseSlug = preferredSlug || artist.slug || slugify(artist.aka || artist.name);
   let slug = baseSlug;
+  const owner = ownerEmail ? String(ownerEmail).trim().toLowerCase() : null;
 
   // Si le slug existe pour un autre nom, suffixer
   const existing = await db.execute({
-    sql: `SELECT id, slug, name, profile_json, created_at FROM artists WHERE slug = ? LIMIT 1`,
+    sql: `SELECT id, slug, name, profile_json, owner_email, created_at FROM artists WHERE slug = ? LIMIT 1`,
     args: [slug],
   });
 
@@ -31,13 +32,25 @@ export async function upsertArtistFromProject(artist, { preferredSlug } = {}) {
 
   if (existing.rows[0]) {
     const row = existing.rows[0];
+    const prevOwner = row.owner_email ? String(row.owner_email).toLowerCase() : null;
+    if (owner && prevOwner && prevOwner !== owner) {
+      throw new Error("Cet artiste appartient à un autre compte");
+    }
     const prev = row.profile_json ? JSON.parse(row.profile_json) : {};
     const merged = mergeArtistProfile(prev, incoming);
     await db.execute({
-      sql: `UPDATE artists SET name = ?, profile_json = ?, updated_at = ? WHERE slug = ?`,
-      args: [merged.name || artist.name, JSON.stringify(merged), now, slug],
+      sql: `UPDATE artists SET name = ?, profile_json = ?, owner_email = COALESCE(owner_email, ?), updated_at = ? WHERE slug = ?`,
+      args: [merged.name || artist.name, JSON.stringify(merged), owner, now, slug],
     });
-    return { id: row.id, slug, name: merged.name, profile: merged, createdAt: row.created_at, updatedAt: now };
+    return {
+      id: row.id,
+      slug,
+      name: merged.name,
+      profile: merged,
+      ownerEmail: prevOwner || owner,
+      createdAt: row.created_at,
+      updatedAt: now,
+    };
   }
 
   // collision rare: slug libre
@@ -45,13 +58,21 @@ export async function upsertArtistFromProject(artist, { preferredSlug } = {}) {
   const profile = incoming;
   await db.execute({
     sql: `
-      INSERT INTO artists (id, slug, name, profile_json, stats_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO artists (id, slug, name, profile_json, stats_json, owner_email, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
-    args: [id, slug, artist.name, JSON.stringify(profile), JSON.stringify({}), now, now],
+    args: [id, slug, artist.name, JSON.stringify(profile), JSON.stringify({}), owner, now, now],
   });
 
-  return { id, slug, name: artist.name, profile, createdAt: now, updatedAt: now };
+  return {
+    id,
+    slug,
+    name: artist.name,
+    profile,
+    ownerEmail: owner,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 /**
@@ -136,32 +157,38 @@ export async function syncArtistsFromProjects() {
   return synced;
 }
 
-export async function listArtists(limit = 50) {
+export async function listArtists(limit = 50, { ownerEmail = null, includeAll = false } = {}) {
   await ensureArtistSchema();
   const db = getDb();
+  const owner = ownerEmail ? String(ownerEmail).trim().toLowerCase() : null;
 
-  let res = await db.execute({
-    sql: `
-      SELECT id, slug, name, profile_json, stats_json, created_at, updated_at
+  // Pas d’owner + pas includeAll → liste vide (jamais le catalogue global par accident)
+  if (!includeAll && !owner) {
+    return [];
+  }
+
+  const selectSql = includeAll
+    ? `
+      SELECT id, slug, name, profile_json, stats_json, owner_email, created_at, updated_at
       FROM artists
       ORDER BY updated_at DESC
       LIMIT ?
-    `,
-    args: [limit],
-  });
+    `
+    : `
+      SELECT id, slug, name, profile_json, stats_json, owner_email, created_at, updated_at
+      FROM artists
+      WHERE lower(owner_email) = ?
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `;
+  const args = includeAll ? [limit] : [owner, limit];
 
-  // Auto-sync si table vide mais des projets existent
-  if (res.rows.length === 0) {
+  let res = await db.execute({ sql: selectSql, args });
+
+  // Auto-sync si table vide mais des projets existent (admin all-scope only)
+  if (res.rows.length === 0 && includeAll) {
     await syncArtistsFromProjects();
-    res = await db.execute({
-      sql: `
-        SELECT id, slug, name, profile_json, stats_json, created_at, updated_at
-        FROM artists
-        ORDER BY updated_at DESC
-        LIMIT ?
-      `,
-      args: [limit],
-    });
+    res = await db.execute({ sql: selectSql, args });
   }
 
   return res.rows.map((row) => {
@@ -172,6 +199,7 @@ export async function listArtists(limit = 50) {
       slug: row.slug,
       name: row.name,
       profile,
+      ownerEmail: row.owner_email || null,
       stats: row.stats_json ? JSON.parse(row.stats_json) : {},
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -194,6 +222,7 @@ export async function getArtistBySlug(slug) {
     name: row.name,
     profile: row.profile_json ? JSON.parse(row.profile_json) : {},
     stats: row.stats_json ? JSON.parse(row.stats_json) : {},
+    ownerEmail: row.owner_email || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -353,14 +382,22 @@ export async function deleteArtist(slug) {
   };
 }
 
-export async function linkProjectToArtist(projectId, artist) {
+export async function linkProjectToArtist(projectId, artist, { ownerEmail = null } = {}) {
   if (!projectId || !artist?.name) return null;
-  const upserted = await upsertArtistFromProject(withResolvedArtistGender(artist));
+  const upserted = await upsertArtistFromProject(withResolvedArtistGender(artist), {
+    ownerEmail,
+  });
   if (!upserted) return null;
   const db = getDb();
+  const owner = ownerEmail ? String(ownerEmail).trim().toLowerCase() : null;
   await db.execute({
-    sql: `UPDATE projects SET artist_slug = ? WHERE id = ?`,
-    args: [upserted.slug, projectId],
+    sql: `
+      UPDATE projects
+      SET artist_slug = ?,
+          owner_email = COALESCE(owner_email, ?)
+      WHERE id = ?
+    `,
+    args: [upserted.slug, owner, projectId],
   });
   return upserted;
 }

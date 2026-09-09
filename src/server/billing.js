@@ -31,9 +31,18 @@ export async function getBillingState(email) {
       credits: 0,
       publishPlus: false,
       stripeCustomerId: null,
-      canGenerate: true,
+      canGenerate: false,
+      watermark: true,
     };
   }
+
+  try {
+    const { grantMonthlyCreditsIfDue } = await import("./credits.js");
+    await grantMonthlyCreditsIfDue(email);
+  } catch {
+    /* grant best-effort */
+  }
+
   const db = getDb();
   const res = await db.execute({
     sql: `SELECT plan, subscription_status, credits_balance, publish_plus, stripe_customer_id, subscription_id
@@ -45,14 +54,24 @@ export async function getBillingState(email) {
   const status = row.subscription_status || null;
   const credits = Number(row.credits_balance || 0) || 0;
   const activePro = plan === "pro" && (!status || ["active", "trialing", "past_due"].includes(String(status)));
+  const effectivePlan = activePro ? "pro" : "free";
+  let watermark = effectivePlan !== "pro";
+  try {
+    const plans = await getBillingPlans();
+    const tier = effectivePlan === "pro" ? plans.pro : plans.free;
+    watermark = Boolean(tier?.watermark);
+  } catch {
+    /* keep default */
+  }
   return {
-    plan: activePro ? "pro" : "free",
+    plan: effectivePlan,
     subscriptionStatus: status,
     credits,
     publishPlus: Boolean(Number(row.publish_plus || 0)),
     stripeCustomerId: row.stripe_customer_id || null,
     subscriptionId: row.subscription_id || null,
-    canGenerate: activePro || credits > 0 || plan === "free",
+    canGenerate: credits > 0,
+    watermark,
   };
 }
 
@@ -200,9 +219,9 @@ export async function applySubscriptionEvent(sub, eventType) {
 
 /**
  * Soft entitlement check for generation APIs.
- * Free: allowed (quota TBD). Pro: allowed. Credits: allowed if balance > 0 when enforced later.
+ * Debite via spendCredits côté routes track/pipeline.
  */
-export async function assertCanGenerate(email) {
-  const state = await getBillingState(email);
-  return state;
+export async function assertCanGenerate(email, { isAdmin = false } = {}) {
+  const { assertGenerationAllowed } = await import("./credits.js");
+  return assertGenerationAllowed(email, { isAdmin });
 }

@@ -199,12 +199,13 @@ export function isPublicPath(pathname) {
   if (!pathname) return false;
   const p = pathname.replace(/\/+$/, "") || "/";
 
-  if (p === "/" || p === "/play" || p === "/login" || p === "/403" || p === "/500") return true;
+  if (p === "/" || p === "/play" || p === "/login" || p === "/signup" || p === "/403" || p === "/500") return true;
   if (p === "/rejoindre") return true;
   if (p === "/api/library" || p === "/api/audio/stream") return true;
   // Portraits du lecteur public (/play liste les artistes via /api/library).
   if (/^\/api\/artists\/[^/]+\/photo$/.test(p)) return true;
   if (p === "/api/auth/login" || p === "/api/auth/logout" || p === "/api/auth/me") return true;
+  if (p === "/api/auth/signup") return true;
   if (p === "/api/auth/pocket-id" || p === "/api/auth/sso-status") return true;
   if (p === "/api/auth/callback/pocket-id") return true;
   if (p === "/api/invites/accept") return true;

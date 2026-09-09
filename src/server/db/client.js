@@ -62,6 +62,42 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at DESC)
   `);
 
+  for (const sql of [
+    `ALTER TABLE projects ADD COLUMN artist_slug TEXT`,
+    `ALTER TABLE projects ADD COLUMN owner_email TEXT`,
+  ]) {
+    try {
+      await db.execute(sql);
+    } catch {
+      /* already exists */
+    }
+  }
+
+  try {
+    await db.execute(
+      `CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_email)`,
+    );
+  } catch {
+    /* ok */
+  }
+
+  // Rattache les projets orphelins à l’owner de l’artiste lié
+  try {
+    await db.execute(`
+      UPDATE projects
+      SET owner_email = (
+        SELECT a.owner_email FROM artists a
+        WHERE a.slug = projects.artist_slug
+        LIMIT 1
+      )
+      WHERE (owner_email IS NULL OR owner_email = '')
+        AND artist_slug IS NOT NULL
+        AND artist_slug != ''
+    `);
+  } catch {
+    /* artists table may not exist yet on first boot */
+  }
+
   await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_events_project ON project_events(project_id, created_at DESC)
   `);
@@ -179,6 +215,7 @@ export async function ensureSchema() {
     `ALTER TABLE users ADD COLUMN credits_balance INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE users ADD COLUMN publish_plus INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE users ADD COLUMN billing_updated_at TEXT`,
+    `ALTER TABLE users ADD COLUMN credits_period TEXT`,
   ]) {
     try {
       await db.execute(sql);
