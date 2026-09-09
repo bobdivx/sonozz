@@ -1,15 +1,37 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { getSessionFromCookies } from "../server/auth.js";
-import { isStripeConfigured, getStripeConfig } from "../server/stripe.js";
+import {
+  isStripeConfigured,
+  isCreditsPackConfigured,
+  getStripeConfig,
+} from "../server/stripe.js";
+import { getBillingState } from "../server/billing.js";
 
 export const prerender = false;
 
 const session = getSessionFromCookies(Astro.cookies);
+if (!session?.email) {
+  return Astro.redirect("/login?next=%2Fbilling");
+}
+
 const configured = isStripeConfigured();
+const creditsOk = isCreditsPackConfigured();
 const cfg = getStripeConfig();
 const hasPublishPlus = Boolean(cfg.pricePublishPlus);
-const email = session?.email || "";
+const email = session.email;
+let billing = {
+  plan: "free",
+  credits: 0,
+  publishPlus: false,
+  subscriptionStatus: null,
+  stripeCustomerId: null,
+};
+try {
+  billing = await getBillingState(email);
+} catch (e) {
+  console.warn("[billing.astro] state", e?.message || e);
+}
 ---
 
 <Layout
@@ -34,8 +56,30 @@ const email = session?.email || "";
       <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">Abonnement</h1>
       <p class="mt-2 max-w-2xl text-sm text-base-content/65">
         Connecté·e en tant que <span class="font-medium text-base-content/90">{email}</span>.
-        Le paiement est géré par Stripe Checkout (clés à configurer côté serveur).
       </p>
+
+      <div class="mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-base-content/10 bg-base-200/40 px-4 py-3 text-sm">
+        <span>Plan : <strong class="uppercase">{billing.plan}</strong></span>
+        <span class="opacity-40">·</span>
+        <span>Crédits : <strong>{billing.credits}</strong></span>
+        {billing.publishPlus && (
+          <>
+            <span class="opacity-40">·</span>
+            <span class="badge badge-primary badge-sm">Publish+</span>
+          </>
+        )}
+        {billing.subscriptionStatus && (
+          <>
+            <span class="opacity-40">·</span>
+            <span class="text-base-content/60">{billing.subscriptionStatus}</span>
+          </>
+        )}
+        {billing.stripeCustomerId && (
+          <button type="button" class="btn btn-ghost btn-sm ml-auto" data-portal>
+            Gérer l’abonnement
+          </button>
+        )}
+      </div>
 
       {!configured && (
         <div class="alert alert-warning mt-6 max-w-2xl text-sm">
@@ -46,9 +90,10 @@ const email = session?.email || "";
         </div>
       )}
 
+      <p id="billing-success" class="mt-4 hidden text-sm text-success" role="status"></p>
       <p id="billing-error" class="mt-4 hidden text-sm text-error" role="alert"></p>
 
-      <div class="mt-8 grid gap-4 lg:grid-cols-2">
+      <div class="mt-8 grid gap-4 lg:grid-cols-3">
         <article class="relative flex flex-col rounded-2xl border-2 border-primary/50 bg-gradient-to-b from-primary/15 to-base-100/90 p-6 shadow-lg shadow-primary/10">
           <span class="absolute -top-3 left-4 rounded-full bg-primary px-3 py-0.5 text-[11px] font-bold uppercase tracking-wide text-primary-content">Recommandé</span>
           <h2 class="font-display text-xl font-bold">Pro</h2>
@@ -64,9 +109,28 @@ const email = session?.email || "";
             class="btn btn-primary btn-block mt-6"
             data-plan="pro"
             data-checkout
-            disabled={!configured}
+            disabled={!configured || billing.plan === "pro"}
           >
-            Passer Pro
+            {billing.plan === "pro" ? "Déjà Pro" : "Passer Pro"}
+          </button>
+        </article>
+
+        <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
+          <h2 class="font-display text-xl font-bold">Pack crédits</h2>
+          <p class="mt-1 text-lg font-bold text-base-content/80">+{cfg.creditsPerPack} générations</p>
+          <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
+            <li>Achat unique (pas d’abo)</li>
+            <li>S’ajoute à ton solde</li>
+            <li>Utile en Free ou en complément</li>
+          </ul>
+          <button
+            type="button"
+            class="btn btn-outline btn-block mt-6 border-base-content/20"
+            data-plan="credits"
+            data-checkout
+            disabled={!creditsOk}
+          >
+            {creditsOk ? "Acheter des crédits" : "Crédits (prix non configuré)"}
           </button>
         </article>
 
@@ -94,10 +158,18 @@ const email = session?.email || "";
 
   <script>
     const errEl = document.getElementById("billing-error");
+    const okEl = document.getElementById("billing-success");
     function showError(msg) {
       if (!errEl) return;
       errEl.textContent = msg || "Erreur";
       errEl.classList.remove("hidden");
+      okEl?.classList.add("hidden");
+    }
+    function showOk(msg) {
+      if (!okEl) return;
+      okEl.textContent = msg || "OK";
+      okEl.classList.remove("hidden");
+      errEl?.classList.add("hidden");
     }
 
     async function startCheckout(plan, btn) {
@@ -114,13 +186,32 @@ const email = session?.email || "";
           credentials: "same-origin",
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data.error || `HTTP ${res.status}`);
-        }
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         if (!data.url) throw new Error("URL Checkout manquante");
         window.location.href = data.url;
       } catch (e) {
         showError(e?.message || "Impossible de démarrer le paiement");
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    }
+
+    async function openPortal(btn) {
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Ouverture…";
+      try {
+        const res = await fetch("/api/billing/portal", {
+          method: "POST",
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        if (!data.url) throw new Error("URL Portal manquante");
+        window.location.href = data.url;
+      } catch (e) {
+        showError(e?.message || "Impossible d’ouvrir le portail");
         btn.disabled = false;
         btn.textContent = prev;
       }
@@ -132,13 +223,21 @@ const email = session?.email || "";
         if (plan) startCheckout(plan, btn);
       });
     });
+    document.querySelectorAll("[data-portal]").forEach((btn) => {
+      btn.addEventListener("click", () => openPortal(btn));
+    });
 
     const params = new URLSearchParams(window.location.search);
+    if (params.get("billing") === "success") {
+      showOk("Paiement reçu — ton plan / crédits se mettent à jour sous peu (webhook).");
+    }
+    if (params.get("billing") === "cancel") {
+      showError("Paiement annulé.");
+    }
     const preselect = params.get("plan");
-    if (preselect === "publish_plus" || preselect === "pro") {
+    if (preselect === "publish_plus" || preselect === "pro" || preselect === "credits") {
       const target = document.querySelector(`[data-checkout][data-plan="${preselect}"]`);
       if (target && !target.disabled) {
-        // Soft highlight only — user clicks to pay
         target.classList.add("ring", "ring-primary", "ring-offset-2");
       }
     }

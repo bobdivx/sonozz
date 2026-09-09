@@ -171,6 +171,30 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_album_tracks_project ON album_tracks(project_id)
   `);
 
+  for (const sql of [
+    `ALTER TABLE users ADD COLUMN stripe_customer_id TEXT`,
+    `ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'`,
+    `ALTER TABLE users ADD COLUMN subscription_status TEXT`,
+    `ALTER TABLE users ADD COLUMN subscription_id TEXT`,
+    `ALTER TABLE users ADD COLUMN credits_balance INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN publish_plus INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN billing_updated_at TEXT`,
+  ]) {
+    try {
+      await db.execute(sql);
+    } catch {
+      /* already exists */
+    }
+  }
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS stripe_events (
+      id TEXT PRIMARY KEY,
+      type TEXT,
+      processed_at TEXT NOT NULL
+    )
+  `);
+
   ready = true;
 }
 
