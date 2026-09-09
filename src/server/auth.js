@@ -211,6 +211,8 @@ export function isPublicPath(pathname) {
 
   // Stripe Checkout webhook (signature vérifiée dans la route)
   if (p === "/api/billing/webhook") return true;
+  // Pricing quotas for landing (read-only)
+  if (p === "/api/billing/plans") return true;
 
   if (p.startsWith("/_astro/") || p.startsWith("/assets/")) return true;
   if (p === "/favicon.ico" || p === "/favicon.svg" || p === "/logo.png" || p === "/apple-touch-icon.png") return true;

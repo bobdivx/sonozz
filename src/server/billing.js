@@ -3,6 +3,7 @@
  */
 import { getDb, ensureSchema } from "./db.js";
 import { findUserByEmail, createUser } from "./users.js";
+import { getBillingPlans } from "./plans.js";
 
 export { findUserByEmail };
 
@@ -118,7 +119,11 @@ export async function applyCheckoutCompleted(session, cfg) {
   const customerId = session?.customer || null;
 
   if (plan === "credits") {
-    const pack = Number(cfg?.creditsPerPack || 20) || 20;
+    let pack = Number(cfg?.creditsPerPack || 20) || 20;
+    try {
+      const plans = await getBillingPlans();
+      if (plans?.creditsPack?.credits) pack = Number(plans.creditsPack.credits) || pack;
+    } catch { /* keep env default */ }
     await ensureSchema();
     const user = await ensureUserForBilling(email);
     const db = getDb();
