@@ -39,6 +39,18 @@ export default function AccountPage() {
           </span>
         </p>
 
+        <div class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4">
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-base-content/50">
+            Abonnement
+          </h2>
+          <p class="text-sm text-base-content/65">
+            Passe Pro, achète des crédits ou gère ton abo Stripe.
+          </p>
+          <a href="/billing" class="btn btn-primary btn-sm mt-3">
+            Ouvrir la facturation
+          </a>
+        </div>
+
         <ChangePasswordForm />
 
         <div>
