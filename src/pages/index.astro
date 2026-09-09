@@ -1,6 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { getSessionFromCookies } from "../server/auth.js";
+import { getBillingPlans, planBullets, defaultBillingPlans } from "../server/plans.js";
 
 export const prerender = false;
 
@@ -8,6 +9,16 @@ const session = getSessionFromCookies(Astro.cookies);
 if (session) {
   return Astro.redirect("/studio");
 }
+
+let plans;
+try {
+  plans = await getBillingPlans();
+} catch {
+  plans = defaultBillingPlans();
+}
+const freeBullets = planBullets(plans, "free");
+const proBullets = planBullets(plans, "pro");
+const publishBullets = planBullets(plans, "publish_plus");
 ---
 
 <Layout
@@ -70,16 +81,13 @@ if (session) {
     <section id="pricing" class="border-y border-base-content/10 bg-base-200/30">
       <div class="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
         <h2 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">Offre simple</h2>
-        <p class="mt-2 max-w-2xl text-sm text-base-content/60">Les crédits de génération sont le levier principal. Paiement Pro via Stripe Checkout (config serveur).</p>
+        <p class="mt-2 max-w-2xl text-sm text-base-content/60">1 crédit = 1 génération de titre. Quotas Free / Pro / Publish+ gérés depuis /admin.</p>
         <div class="mt-8 grid gap-4 lg:grid-cols-3">
           <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
             <h3 class="font-display text-xl font-bold">Free</h3>
-            <p class="mt-1 text-3xl font-extrabold">0&nbsp;€</p>
+            <p class="mt-1 text-3xl font-extrabold">{plans.free.priceLabel}</p>
             <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
-              <li>1 artiste</li>
-              <li>Générations limitées / mois</li>
-              <li>Lecteur public <code class="text-xs">/play</code></li>
-              <li>Watermark ou qualité limitée</li>
+              {freeBullets.map((b) => <li>{b}</li>)}
             </ul>
             <a href="/login" class="btn btn-outline btn-block mt-6 border-base-content/20">Commencer</a>
           </article>
@@ -87,23 +95,18 @@ if (session) {
           <article class="relative flex flex-col rounded-2xl border-2 border-primary/50 bg-gradient-to-b from-primary/15 to-base-100/90 p-6 shadow-lg shadow-primary/10">
             <span class="absolute -top-3 left-4 rounded-full bg-primary px-3 py-0.5 text-[11px] font-bold uppercase tracking-wide text-primary-content">Recommandé</span>
             <h3 class="font-display text-xl font-bold">Pro</h3>
-            <p class="mt-1 text-3xl font-extrabold">12&nbsp;€<span class="text-base font-semibold text-base-content/50">/mois</span></p>
+            <p class="mt-1 text-3xl font-extrabold">{plans.pro.priceMonthlyEur}&nbsp;€<span class="text-base font-semibold text-base-content/50">/mois</span></p>
             <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
-              <li>Plus de crédits</li>
-              <li>Multi-albums</li>
-              <li>Export propre</li>
-              <li>Sans watermark</li>
+              {proBullets.map((b) => <li>{b}</li>)}
             </ul>
             <a href="/login?next=%2Fbilling" class="btn btn-primary btn-block mt-6">Passer Pro</a>
           </article>
 
           <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
             <h3 class="font-display text-xl font-bold">Publish+</h3>
-            <p class="mt-1 text-lg font-bold text-base-content/80">Add-on</p>
+            <p class="mt-1 text-lg font-bold text-base-content/80">{plans.publishPlus.priceLabel}</p>
             <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
-              <li>Pipeline DistroKid (ou équivalent)</li>
-              <li>Suivi statut : en cours / publié / échec</li>
-              <li>Idéal pour sortir vraiment en stores</li>
+              {publishBullets.map((b) => <li>{b}</li>)}
             </ul>
             <a href="/login?next=%2Fbilling%3Fplan%3Dpublish_plus" class="btn btn-outline btn-block mt-6 border-base-content/20">Demander Publish+</a>
           </article>
