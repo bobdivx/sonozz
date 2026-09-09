@@ -7,6 +7,7 @@ import {
   getStripeConfig,
 } from "../server/stripe.js";
 import { getBillingState } from "../server/billing.js";
+import { getBillingPlans, planBullets, defaultBillingPlans } from "../server/plans.js";
 
 export const prerender = false;
 
@@ -32,6 +33,17 @@ try {
 } catch (e) {
   console.warn("[billing.astro] state", e?.message || e);
 }
+
+let plans;
+try {
+  plans = await getBillingPlans();
+} catch {
+  plans = defaultBillingPlans();
+}
+const freeBullets = planBullets(plans, "free");
+const proBullets = planBullets(plans, "pro");
+const creditBullets = planBullets(plans, "credits");
+const publishBullets = planBullets(plans, "publish_plus");
 ---
 
 <Layout
@@ -56,6 +68,7 @@ try {
       <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">Abonnement</h1>
       <p class="mt-2 max-w-2xl text-sm text-base-content/65">
         Connecté·e en tant que <span class="font-medium text-base-content/90">{email}</span>.
+        1 crédit = 1 {plans.creditUnitLabel}.
       </p>
 
       <div class="mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-base-content/10 bg-base-200/40 px-4 py-3 text-sm">
@@ -85,7 +98,7 @@ try {
         <div class="alert alert-warning mt-6 max-w-2xl text-sm">
           <span>
             Stripe n’est pas encore configuré (<code class="text-xs">STRIPE_SECRET_KEY</code> /
-            <code class="text-xs">STRIPE_PRICE_PRO</code>). Les boutons resteront désactivés jusqu’aux clés.
+            <code class="text-xs">STRIPE_PRICE_PRO</code>).
           </span>
         </div>
       )}
@@ -97,12 +110,9 @@ try {
         <article class="relative flex flex-col rounded-2xl border-2 border-primary/50 bg-gradient-to-b from-primary/15 to-base-100/90 p-6 shadow-lg shadow-primary/10">
           <span class="absolute -top-3 left-4 rounded-full bg-primary px-3 py-0.5 text-[11px] font-bold uppercase tracking-wide text-primary-content">Recommandé</span>
           <h2 class="font-display text-xl font-bold">Pro</h2>
-          <p class="mt-1 text-3xl font-extrabold">12&nbsp;€<span class="text-base font-semibold text-base-content/50">/mois</span></p>
+          <p class="mt-1 text-3xl font-extrabold">{plans.pro.priceMonthlyEur}&nbsp;€<span class="text-base font-semibold text-base-content/50">/mois</span></p>
           <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
-            <li>Plus de crédits</li>
-            <li>Multi-albums</li>
-            <li>Export propre</li>
-            <li>Sans watermark</li>
+            {proBullets.map((b) => <li>{b}</li>)}
           </ul>
           <button
             type="button"
@@ -117,11 +127,9 @@ try {
 
         <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
           <h2 class="font-display text-xl font-bold">Pack crédits</h2>
-          <p class="mt-1 text-lg font-bold text-base-content/80">+{cfg.creditsPerPack} générations</p>
+          <p class="mt-1 text-lg font-bold text-base-content/80">+{plans.creditsPack.credits} · {plans.creditsPack.priceLabel}</p>
           <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
-            <li>Achat unique (pas d’abo)</li>
-            <li>S’ajoute à ton solde</li>
-            <li>Utile en Free ou en complément</li>
+            {creditBullets.map((b) => <li>{b}</li>)}
           </ul>
           <button
             type="button"
@@ -136,11 +144,9 @@ try {
 
         <article class="flex flex-col rounded-2xl border border-base-content/10 bg-base-100/80 p-6 shadow-sm">
           <h2 class="font-display text-xl font-bold">Publish+</h2>
-          <p class="mt-1 text-lg font-bold text-base-content/80">Add-on</p>
+          <p class="mt-1 text-lg font-bold text-base-content/80">{plans.publishPlus.priceLabel}</p>
           <ul class="mt-4 flex-1 space-y-2 text-sm text-base-content/70">
-            <li>Pipeline DistroKid (ou équivalent)</li>
-            <li>Suivi statut : en cours / publié / échec</li>
-            <li>Idéal pour sortir vraiment en stores</li>
+            {publishBullets.map((b) => <li>{b}</li>)}
           </ul>
           <button
             type="button"
@@ -152,6 +158,13 @@ try {
             {hasPublishPlus ? "Souscrire Publish+" : "Publish+ (prix non configuré)"}
           </button>
         </article>
+      </div>
+
+      <div class="mt-8 rounded-2xl border border-base-content/10 bg-base-200/30 p-5">
+        <h2 class="font-display text-lg font-bold">Inclus en Free</h2>
+        <ul class="mt-3 space-y-1 text-sm text-base-content/70">
+          {freeBullets.map((b) => <li>{b}</li>)}
+        </ul>
       </div>
     </section>
   </div>
@@ -233,13 +246,6 @@ try {
     }
     if (params.get("billing") === "cancel") {
       showError("Paiement annulé.");
-    }
-    const preselect = params.get("plan");
-    if (preselect === "publish_plus" || preselect === "pro" || preselect === "credits") {
-      const target = document.querySelector(`[data-checkout][data-plan="${preselect}"]`);
-      if (target && !target.disabled) {
-        target.classList.add("ring", "ring-primary", "ring-offset-2");
-      }
     }
   </script>
 </Layout>
