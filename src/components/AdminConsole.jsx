@@ -16,31 +16,63 @@ function StatCard({ label, value, hint }) {
 function formatDate(iso) {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleString("fr-FR", {
-      dateStyle: "short",
-      timeStyle: "short",
-    });
+    return new Date(iso).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
   } catch {
     return String(iso);
   }
 }
 
+function Num({ label, value, onChange, min = 0 }) {
+  return (
+    <label class="form-control w-full">
+      <span class="label-text text-xs">{label}</span>
+      <input
+        type="number"
+        class="input input-bordered input-sm"
+        min={min}
+        value={value}
+        onInput={(e) => onChange(Number(e.currentTarget.value))}
+      />
+    </label>
+  );
+}
+
 export default function AdminConsole() {
   const [stats, setStats] = useState(null);
+  const [plans, setPlans] = useState(null);
+  const [users, setUsers] = useState([]);
   const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
+  const [savingPlans, setSavingPlans] = useState(false);
+
+  async function reload() {
+    setErr("");
+    const [s, p, u] = await Promise.all([
+      fetch("/api/admin/stats").then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || `stats ${r.status}`);
+        return d;
+      }),
+      fetch("/api/admin/plans").then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || `plans ${r.status}`);
+        return d;
+      }),
+      fetch("/api/admin/users").then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || `users ${r.status}`);
+        return d;
+      }),
+    ]);
+    setStats(s);
+    setPlans(p.plans);
+    setUsers(u.users || []);
+  }
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/admin/stats")
-      .then(async (r) => {
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.error || `Erreur ${r.status}`);
-        return data;
-      })
-      .then((data) => {
-        if (!cancelled) setStats(data);
-      })
+    reload()
       .catch((e) => {
         if (!cancelled) setErr(e.message || "Chargement impossible");
       })
@@ -52,89 +84,268 @@ export default function AdminConsole() {
     };
   }, []);
 
+  async function savePlans() {
+    setSavingPlans(true);
+    setMsg("");
+    setErr("");
+    try {
+      const res = await fetch("/api/admin/plans", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ plans }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setPlans(data.plans);
+      setMsg("Plans enregistrés — landing / billing utilisent ces quotas.");
+    } catch (e) {
+      setErr(e.message || "Sauvegarde plans KO");
+    } finally {
+      setSavingPlans(false);
+    }
+  }
+
+  async function patchUser(email, patch) {
+    setErr("");
+    setMsg("");
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ email, ...patch }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setMsg(`Utilisateur ${email} mis à jour`);
+      await reload();
+    } catch (e) {
+      setErr(e.message || "Maj user KO");
+    }
+  }
+
   return (
-    <AppShell
-      active="admin"
-      title="Admin"
-      subtitle="Métriques produit — réservé au propriétaire"
-    >
-      {loading && (
-        <p class="text-sm text-base-content/60">Chargement des métriques…</p>
-      )}
+    <AppShell active="admin" title="Admin" subtitle="Métriques, plans, crédits & utilisateurs">
+      {loading && <p class="text-sm text-base-content/60">Chargement…</p>}
       {err && (
-        <p class="rounded-md bg-error/15 px-3 py-2 text-sm text-error" role="alert">
+        <p class="mb-4 rounded-md bg-error/15 px-3 py-2 text-sm text-error" role="alert">
           {err}
         </p>
       )}
-      {stats && (
-        <div class="space-y-8">
-          <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="Utilisateurs" value={stats.users} hint="Table users" />
-            <StatCard label="Artistes" value={stats.artists} hint="Noms distincts (projets)" />
-            <StatCard label="Titres / projets" value={stats.tracks} hint="Table projects" />
-            <StatCard
-              label="Événements"
-              value={stats.events ?? stats.generations}
-              hint="project_events (jobs / générations)"
-            />
-          </section>
-
-          <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <StatCard
-              label="Pistes album"
-              value={stats.albumTracks}
-              hint="Table album_tracks"
-            />
-            <StatCard label="MRR" value={null} hint={stats.stripeNote || "à brancher"} />
-            <StatCard label="Churn" value={null} hint={stats.stripeNote || "à brancher"} />
-          </section>
-
-          <section class="rounded-2xl border border-base-content/10 bg-base-200/40 p-5">
-            <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h2 class="font-display text-lg font-bold">Entonnoir & ops</h2>
-              <a class="btn btn-sm btn-outline" href="/parametres">
-                Ouvrir Paramètres
-              </a>
-            </div>
-            <p class="text-sm text-base-content/60">
-              Facturation Stripe, MRR et churn : placeholders — à brancher plus tard.
-              Aucune intégration paiement dans cette version.
-            </p>
-          </section>
-
-          <section class="overflow-hidden rounded-2xl border border-base-content/10">
-            <div class="border-b border-base-content/10 bg-base-200/60 px-4 py-3">
-              <h2 class="font-display text-lg font-bold">Derniers utilisateurs</h2>
-            </div>
-            <div class="overflow-x-auto">
-              <table class="table table-sm">
-                <thead>
-                  <tr>
-                    <th>Email</th>
-                    <th>Créé le</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(stats.recentUsers || []).length === 0 ? (
-                    <tr>
-                      <td colspan="2" class="text-base-content/50">
-                        Aucun utilisateur
-                      </td>
-                    </tr>
-                  ) : (
-                    (stats.recentUsers || []).map((u) => (
-                      <tr key={u.email + String(u.createdAt)}>
-                        <td class="font-mono text-xs sm:text-sm">{u.email}</td>
-                        <td class="text-base-content/70">{formatDate(u.createdAt)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
+      {msg && (
+        <p class="mb-4 rounded-md bg-success/15 px-3 py-2 text-sm text-success" role="status">
+          {msg}
+        </p>
       )}
+
+      {stats && (
+        <section class="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard label="Utilisateurs" value={stats.users} />
+          <StatCard label="Artistes" value={stats.artists} />
+          <StatCard label="Titres / projets" value={stats.tracks} />
+          <StatCard label="Événements" value={stats.events ?? stats.generations} />
+        </section>
+      )}
+
+      {plans && (
+        <section class="mb-10 space-y-4 rounded-2xl border border-base-content/10 bg-base-200/40 p-5">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 class="font-display text-lg font-bold">Plans & crédits</h2>
+              <p class="text-xs text-base-content/55">
+                1 crédit = 1 {plans.creditUnitLabel || "génération de titre"}. Affiché sur la landing et
+                /billing.
+              </p>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" disabled={savingPlans} onClick={savePlans}>
+              {savingPlans ? "Enregistrement…" : "Enregistrer les plans"}
+            </button>
+          </div>
+
+          <div class="grid gap-4 lg:grid-cols-2">
+            <div class="rounded-xl border border-base-content/10 bg-base-100/80 p-4">
+              <h3 class="font-bold">Free</h3>
+              <div class="mt-3 grid grid-cols-2 gap-2">
+                <Num
+                  label="Artistes max"
+                  value={plans.free.artists}
+                  onChange={(v) => setPlans({ ...plans, free: { ...plans.free, artists: v } })}
+                />
+                <Num
+                  label="Albums max"
+                  value={plans.free.albums}
+                  onChange={(v) => setPlans({ ...plans, free: { ...plans.free, albums: v } })}
+                />
+                <Num
+                  label="Crédits / mois"
+                  value={plans.free.creditsPerMonth}
+                  onChange={(v) => setPlans({ ...plans, free: { ...plans.free, creditsPerMonth: v } })}
+                />
+              </div>
+              <label class="label cursor-pointer justify-start gap-2 mt-2">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  checked={Boolean(plans.free.watermark)}
+                  onChange={(e) =>
+                    setPlans({ ...plans, free: { ...plans.free, watermark: e.currentTarget.checked } })
+                  }
+                />
+                <span class="label-text text-sm">Watermark</span>
+              </label>
+            </div>
+
+            <div class="rounded-xl border border-primary/30 bg-base-100/80 p-4">
+              <h3 class="font-bold">Pro ({plans.pro.priceLabel})</h3>
+              <div class="mt-3 grid grid-cols-2 gap-2">
+                <Num
+                  label="Artistes max"
+                  value={plans.pro.artists}
+                  onChange={(v) => setPlans({ ...plans, pro: { ...plans.pro, artists: v } })}
+                />
+                <Num
+                  label="Albums max"
+                  value={plans.pro.albums}
+                  onChange={(v) => setPlans({ ...plans, pro: { ...plans.pro, albums: v } })}
+                />
+                <Num
+                  label="Crédits / mois"
+                  value={plans.pro.creditsPerMonth}
+                  onChange={(v) => setPlans({ ...plans, pro: { ...plans.pro, creditsPerMonth: v } })}
+                />
+                <Num
+                  label="Prix € / mois"
+                  value={plans.pro.priceMonthlyEur}
+                  onChange={(v) =>
+                    setPlans({
+                      ...plans,
+                      pro: {
+                        ...plans.pro,
+                        priceMonthlyEur: v,
+                        priceLabel: `${v} €/mois`,
+                      },
+                    })
+                  }
+                />
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-base-content/10 bg-base-100/80 p-4">
+              <h3 class="font-bold">Pack crédits</h3>
+              <div class="mt-3 grid grid-cols-2 gap-2">
+                <Num
+                  label="Crédits du pack"
+                  value={plans.creditsPack.credits}
+                  onChange={(v) =>
+                    setPlans({ ...plans, creditsPack: { ...plans.creditsPack, credits: v } })
+                  }
+                />
+                <Num
+                  label="Prix €"
+                  value={plans.creditsPack.priceEur}
+                  onChange={(v) =>
+                    setPlans({
+                      ...plans,
+                      creditsPack: {
+                        ...plans.creditsPack,
+                        priceEur: v,
+                        priceLabel: `${v} €`,
+                      },
+                    })
+                  }
+                />
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-base-content/10 bg-base-100/80 p-4">
+              <h3 class="font-bold">Publish+</h3>
+              <div class="mt-3 grid grid-cols-2 gap-2">
+                <Num
+                  label="Prix € / mois"
+                  value={plans.publishPlus.priceMonthlyEur}
+                  onChange={(v) =>
+                    setPlans({
+                      ...plans,
+                      publishPlus: {
+                        ...plans.publishPlus,
+                        priceMonthlyEur: v,
+                        priceLabel: `${v} €/mois`,
+                      },
+                    })
+                  }
+                />
+              </div>
+              <p class="mt-2 text-xs text-base-content/55">
+                Add-on DistroKid — pas de crédits. Les Price IDs Stripe restent dans les env DevForge.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section class="overflow-hidden rounded-2xl border border-base-content/10">
+        <div class="border-b border-base-content/10 bg-base-200/60 px-4 py-3">
+          <h2 class="font-display text-lg font-bold">Utilisateurs & crédits</h2>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Plan</th>
+                <th>Crédits</th>
+                <th>Publish+</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.length === 0 ? (
+                <tr>
+                  <td colspan="5" class="text-base-content/50">
+                    Aucun utilisateur
+                  </td>
+                </tr>
+              ) : (
+                users.map((u) => (
+                  <tr key={u.id || u.email}>
+                    <td class="font-mono text-xs">
+                      {u.email}
+                      <div class="text-[10px] text-base-content/45">{formatDate(u.createdAt)}</div>
+                    </td>
+                    <td>
+                      <select
+                        class="select select-bordered select-xs"
+                        value={u.plan || "free"}
+                        onChange={(e) => patchUser(u.email, { plan: e.currentTarget.value })}
+                      >
+                        <option value="free">free</option>
+                        <option value="pro">pro</option>
+                      </select>
+                    </td>
+                    <td class="font-mono">{u.credits ?? 0}</td>
+                    <td>{u.publishPlus ? "oui" : "non"}</td>
+                    <td class="whitespace-nowrap">
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-xs"
+                        onClick={() => patchUser(u.email, { creditsDelta: 10 })}
+                      >
+                        +10 crédits
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-xs"
+                        onClick={() => patchUser(u.email, { credits: 0 })}
+                      >
+                        Reset crédits
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </AppShell>
   );
 }
