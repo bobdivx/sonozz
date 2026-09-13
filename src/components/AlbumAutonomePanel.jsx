@@ -19,6 +19,29 @@ function albumStatusLabel(st) {
   return st || "—";
 }
 
+function isBlankTitle(value) {
+  const t = String(value || "").trim();
+  if (!t) return true;
+  return /^(sans\s*titre|untitled|lead|piste\s*\d+)$/i.test(t);
+}
+
+/** Titre d’affichage d’une piste album (évite « Sans titre » si un vrai titre existe). */
+export function albumTrackDisplayTitle(entry, fallbacks = {}) {
+  const candidates = [
+    entry?.lyrics?.title,
+    entry?.workingTitle,
+    entry?.track?.title,
+    entry?.theme,
+    fallbacks.lyricsTitle,
+    fallbacks.trackTitle,
+    fallbacks.leadTitle,
+  ];
+  for (const c of candidates) {
+    if (!isBlankTitle(c)) return String(c).trim();
+  }
+  return entry?.role === "lead" ? "Single lead" : "Sans titre";
+}
+
 /**
  * UI Album autonome (présentation).
  * La génération / persist est gérée par le parent (fiche artiste).
@@ -68,6 +91,7 @@ export default function AlbumAutonomePanel({
   const stale = isAlbumStale(album);
   const canAddSingle =
     Boolean(onAddSingle) && !albumRunning && availableSingles.length > 0;
+  const albumCancelled = album?.status === "cancelled";
 
   let resumeLabel = "Reprendre";
   if (needsMore && !hasWorkLeft) {
@@ -163,6 +187,9 @@ export default function AlbumAutonomePanel({
             {resumeLabel}
           </button>
         )}
+        {albumCancelled && !albumRunning ? (
+          <span class="badge badge-warning badge-sm">Album arrêté</span>
+        ) : null}
         {album && !albumRunning && (
           <button
             type="button"
@@ -220,7 +247,7 @@ export default function AlbumAutonomePanel({
         </div>
       )}
 
-      {progress?.message && (
+      {progress?.message && !albumCancelled && (
         <div class="space-y-1">
           <p class="text-xs text-base-content/60">{progress.message}</p>
           <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
@@ -231,6 +258,12 @@ export default function AlbumAutonomePanel({
           </div>
         </div>
       )}
+      {albumCancelled && canResume ? (
+        <p class="text-xs text-warning">
+          Génération stoppée — clique « {resumeLabel} » pour poursuivre ({albumDoneCount}/
+          {album.targetCount || albumSize} titres).
+        </p>
+      ) : null}
 
       {album?.title && (
         <p class="text-xs text-base-content/55">
@@ -253,22 +286,31 @@ export default function AlbumAutonomePanel({
               class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
             >
               <div class="min-w-0 flex-1">
-                <p class="truncate font-medium">
-                  {entry.index}.{" "}
-                  {entry.lyrics?.title || entry.workingTitle || entry.theme || "Sans titre"}
+                <p class="flex flex-wrap items-center gap-2 truncate font-medium">
+                  <span class="min-w-0 truncate">
+                    {entry.index}.{" "}
+                    {albumTrackDisplayTitle(entry, {
+                      leadTitle: entry.role === "lead" ? leadTitle : "",
+                    })}
+                  </span>
                   {entry.role === "lead" ? (
-                    <span class="badge badge-primary badge-xs ml-2">Lead</span>
+                    <span class="badge badge-primary badge-xs shrink-0">Lead</span>
                   ) : null}
                   {entry.projectId && entry.status === "done" && entry.role !== "lead" ? (
-                    <span class="badge badge-ghost badge-xs ml-2">Single</span>
+                    <span class="badge badge-ghost badge-xs shrink-0">Single</span>
                   ) : null}
                   {entry.featArtist?.name || entry.featuring ? (
-                    <span class="badge badge-secondary badge-xs ml-2">
+                    <span class="badge badge-secondary badge-xs shrink-0">
                       feat. {entry.featArtist?.name || entry.featuring}
                     </span>
                   ) : null}
                 </p>
-                <p class="truncate text-xs text-base-content/50">{entry.theme}</p>
+                {!isBlankTitle(entry.theme) &&
+                albumTrackDisplayTitle(entry, {
+                  leadTitle: entry.role === "lead" ? leadTitle : "",
+                }) !== String(entry.theme || "").trim() ? (
+                  <p class="truncate text-xs text-base-content/50">{entry.theme}</p>
+                ) : null}
                 {entry.error && <p class="text-xs text-error">{entry.error}</p>}
                 {entry.track?.warning && (
                   <p class="text-xs text-warning">{entry.track.warning}</p>

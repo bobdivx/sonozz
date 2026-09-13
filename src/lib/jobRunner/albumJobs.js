@@ -94,7 +94,10 @@ export async function runAlbumBackgroundJob(job) {
   const project = { ...emptyProject(), ...(saved.project || {}) };
   const seed = saved.seed || {};
   const workingRef = { current: project };
-  if (abortState.aborted || project.album?.status === "cancelled") {
+  const wantResume = Boolean(job.resume);
+
+  // Annulation utilisateur pendant le chargement.
+  if (abortState.aborted) {
     if (getJob(id)) {
       patchJob(id, {
         status: "interrupted",
@@ -104,8 +107,37 @@ export async function runAlbumBackgroundJob(job) {
     }
     return;
   }
+
+  // Statut « cancelled » persisté : OK pour une vraie reprise (Compléter),
+  // sinon on s’arrête (ancien job fantôme).
+  if (project.album?.status === "cancelled") {
+    if (!wantResume) {
+      if (getJob(id)) {
+        patchJob(id, {
+          status: "interrupted",
+          phase: "interrupted",
+          message: "Album arrêté",
+        });
+      }
+      return;
+    }
+    project.album = {
+      ...project.album,
+      status: "running",
+      live: {
+        percent: 8,
+        message: "Reprise de l’album…",
+        label: project.album?.title
+          ? `Album · ${project.album.title}`
+          : `Album · ${job.totalCount || project.album?.targetCount || 8} titres`,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    workingRef.current = project;
+  }
+
   const resume =
-    Boolean(job.resume) ||
+    wantResume ||
     (project.album?.status === "running" && (project.album.tracks || []).length > 0);
 
   patchJob(id, {

@@ -156,7 +156,15 @@ export default function ArtistAlbumSection({
   async function persist(nextProject, event, opts = {}) {
     const { skipLocalUpdate = false } = opts;
     const latest = albumWorkingRef.current;
-    if (latest?.album?.status === "cancelled" && nextProject?.album?.status === "running") {
+    // Ignore les writes « running » d’UN MÊME job après annulation.
+    // Une reprise (nouveau jobId) doit pouvoir repasser cancelled → running.
+    if (
+      latest?.album?.status === "cancelled" &&
+      nextProject?.album?.status === "running" &&
+      latest?.album?.jobId &&
+      nextProject?.album?.jobId &&
+      nextProject.album.jobId === latest.album.jobId
+    ) {
       return latest;
     }
     const data = await api.saveProject({
@@ -207,13 +215,20 @@ export default function ArtistAlbumSection({
   }
 
   function buildLeadTrackEntry(base, leadProjectId) {
+    const title =
+      [base?.lyrics?.title, base?.track?.title].find(
+        (t) => String(t || "").trim() && !/^(sans\s*titre|untitled)$/i.test(String(t).trim()),
+      ) ||
+      base?.lyrics?.title ||
+      base?.track?.title ||
+      "Lead";
     return (
       (base?.album?.tracks || []).find((t) => t.role === "lead") || {
         id: createAlbumTrackId(),
         index: 1,
         role: "lead",
         theme: base?.lyrics?.theme || base?.track?.title || "",
-        workingTitle: base?.lyrics?.title || base?.track?.title || "Lead",
+        workingTitle: title,
         lyrics: base?.lyrics || null,
         track: base?.track || null,
         projectId: leadProjectId,
@@ -465,13 +480,58 @@ export default function ArtistAlbumSection({
     startAlbumCreation(totalCount, resume);
   }
 
-  function startAlbumCreation(totalCount, resume = false, prefs = {}) {
+  async function startAlbumCreation(totalCount, resume = false, prefs = {}) {
     const total = Math.min(12, Math.max(3, Number(totalCount) || 8));
     const preferredTitle = String(prefs.title || "").trim();
     const preferredConcept = String(prefs.concept || "").trim();
     const withFeats = Boolean(prefs.withFeats);
     const featArtists = Array.isArray(prefs.featArtists) ? prefs.featArtists : [];
     setError("");
+
+    const base = albumWorkingRef.current || project;
+    if (!base) return;
+
+    // Persister « running » AVANT le job runner — sinon le worker relit
+    // status=cancelled et s’arrête immédiatement (« Album arrêté »).
+    const preJobId = `album-${projectId}-pending`;
+    const nextRunning = {
+      ...base,
+      album: {
+        ...(base.album || {}),
+        ...(preferredTitle ? { title: preferredTitle } : {}),
+        ...(preferredConcept ? { concept: preferredConcept } : {}),
+        targetCount: total,
+        jobId: preJobId,
+        status: "running",
+        withFeats,
+        live: {
+          percent: resume ? 8 : 4,
+          message: resume
+            ? "Reprise de l’album…"
+            : withFeats
+              ? "Démarrage album (feats auto)…"
+              : "Démarrage album…",
+          label: preferredTitle
+            ? `Album · ${preferredTitle}`
+            : base.album?.title
+              ? `Album · ${base.album.title}`
+              : `Album · ${total} titres`,
+        },
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    syncAlbumWorking(nextRunning);
+    try {
+      await persist(nextRunning, {
+        stepKey: "album",
+        eventType: "album",
+        message: resume ? "Album · reprise" : "Album · démarrage",
+      });
+    } catch (e) {
+      setError(e?.message || "Impossible de démarrer l’album");
+      return;
+    }
+
     const jobId = startAlbumJob({
       projectId,
       totalCount: total,
@@ -485,30 +545,13 @@ export default function ArtistAlbumSection({
       featArtists,
     });
     setProject((prev) =>
-      prev
+      prev?.album
         ? {
             ...prev,
             album: {
-              ...(prev.album || {}),
-              ...(preferredTitle ? { title: preferredTitle } : {}),
-              ...(preferredConcept ? { concept: preferredConcept } : {}),
-              targetCount: total,
+              ...prev.album,
               jobId,
               status: "running",
-              withFeats,
-              live: {
-                percent: resume ? 8 : 4,
-                message: resume
-                  ? "Reprise de l’album…"
-                  : withFeats
-                    ? "Démarrage album (feats auto)…"
-                    : "Démarrage album…",
-                label: preferredTitle
-                  ? `Album · ${preferredTitle}`
-                  : prev.album?.title
-                    ? `Album · ${prev.album.title}`
-                    : `Album · ${total} titres`,
-              },
               updatedAt: new Date().toISOString(),
             },
           }
