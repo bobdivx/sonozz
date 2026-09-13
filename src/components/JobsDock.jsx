@@ -173,13 +173,6 @@ function JobsList({ visible, active, recent }) {
           </li>
         ))}
       </ul>
-      {active.length > 0 && (
-        <p class="mt-2 px-1 text-[10px] text-base-content/40">
-          Album, morceau unique, clips (Veo / Seedance / Wan2GP) : tu peux changer de page.
-          Les albums se lancent et se gèrent sur la fiche artiste. Pipeline Auto A→Z : reste
-          sur le Studio.
-        </p>
-      )}
       {recent.length > 0 && (
         <div class="mt-2 flex justify-end px-1">
           <button

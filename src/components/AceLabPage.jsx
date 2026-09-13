@@ -112,10 +112,10 @@ const SETTING_PROFILES = [
   },
   {
     id: "turbo-strict",
-    label: "Turbo 8/0",
-    hint: "force 8 steps · CFG 0",
+    label: "Turbo 8/3",
+    hint: "force 8 steps · CFG 3 (adhérence style)",
     inferenceSteps: 8,
-    guidanceScale: 0,
+    guidanceScale: 3,
     coverStrength: 0.5,
     coverNoise: 0.35,
   },

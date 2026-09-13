@@ -14,8 +14,8 @@
     "test": "node --test ./tests/career.test.js ./tests/artist-name.test.js ./tests/acestep-studio.test.js ./tests/feat-duo-acestep.test.js ./tests/album-tracks.test.js ./tests/album-job-mirror.test.js ./tests/artist-photos.test.js ./tests/artist-draft.test.js ./tests/play-session.test.js ./tests/s3-audio-key.test.js ./tests/music-styles.test.js ./tests/music-lane.test.js ./tests/lyrics-structure.test.js ./tests/artist-top-tracks.test.js ./tests/artist-gender.test.js ./tests/parse-llm-json.test.js ./tests/pocket-id-auth.test.js ./tests/invites-auth.test.js ./tests/songgen-preview.test.js ./tests/artist-timbre.test.js ./tests/artist-delete.test.js"
   },
   "dependencies": {
-    "@astrojs/node": "^11.0.3",
-    "@astrojs/preact": "^6.0.2",
+    "@astrojs/node": "^11.1.5",
+    "@astrojs/preact": "^6.0.5",
     "@aws-sdk/client-s3": "^3.1101.0",
     "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@google/genai": "^2.15.0",
@@ -23,7 +23,7 @@
     "@gradio/client": "^2.4.0",
     "@libsql/client": "^0.17.4",
     "@tailwindcss/vite": "^4.3.3",
-    "astro": "^7.1.6",
+    "astro": "^7.3.2",
     "daisyui": "^5.7.14",
     "lucide-preact": "^1.28.0",
     "nodemailer": "^10.0.0",

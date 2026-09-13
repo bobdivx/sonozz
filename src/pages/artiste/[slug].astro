@@ -1,12 +1,34 @@
 ---
 import Layout from "../../layouts/Layout.astro";
 import ArtistHub from "../../components/ArtistHub.jsx";
+import { getArtistBySlug, getArtistHub } from "../../server/artists.js";
+import { getSessionFromCookies, ROLE_ADMIN } from "../../server/auth.js";
 
 export const prerender = false;
 
 const { slug } = Astro.params;
+const session = getSessionFromCookies(Astro.cookies);
+
+let initialData = null;
+if (session?.email && slug) {
+  try {
+    const artist = await getArtistBySlug(slug);
+    if (artist) {
+      const owner = artist.ownerEmail ? String(artist.ownerEmail).toLowerCase() : null;
+      const allowed =
+        session.role === ROLE_ADMIN ||
+        !owner ||
+        owner === String(session.email).toLowerCase();
+      if (allowed) {
+        initialData = await getArtistHub(slug, { artist });
+      }
+    }
+  } catch {
+    /* client refetch */
+  }
+}
 ---
 
 <Layout title={`SONOZZ — ${slug}`} description={`Fiche ${slug} : catalogue, album, style et coach.`}>
-  <ArtistHub client:load slug={slug} />
+  <ArtistHub client:load slug={slug} initialData={initialData} />
 </Layout>

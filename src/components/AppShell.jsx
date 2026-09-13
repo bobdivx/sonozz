@@ -169,9 +169,9 @@ export default function AppShell({
             </button>
           )}
           <a
-            href={playFocused ? "/play" : "/studio"}
+            href="/studio"
             class="shrink-0 font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl"
-            aria-label="SONOZZ"
+            aria-label="SONOZZ — Studio"
           >
             SONOZZ
           </a>

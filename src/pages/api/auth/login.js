@@ -5,7 +5,6 @@ import {
   isAuthConfigured,
   SESSION_COOKIE,
   sessionCookieOptions,
-  SSO_PASSWORD_BLOCKED,
 } from "../../../server/auth.js";
 import { SSO_HINT_COOKIE, oidcCookieOptions } from "../../../server/oidc.js";
 
@@ -22,9 +21,6 @@ export async function POST({ request, cookies }) {
     if (!email || !password) return error("Email et mot de passe requis", 400);
     const result = await authenticatePassword(email, password);
     if (!result.ok) {
-      if (result.reason === "sso_required") {
-        return error(SSO_PASSWORD_BLOCKED, 403);
-      }
       if (result.reason === "disabled") {
         return error("Compte désactivé", 403);
       }

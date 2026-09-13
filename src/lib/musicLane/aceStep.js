@@ -5,8 +5,14 @@ import { artefactGuardsFromLock, metalBandInstruments } from "./metal.js";
 /**
  * Plancher de qualité prod ACE — court (le plafond style ~700 tronque la fin).
  * Voix dry + air — évite vocoder / saturation. (Le lit band est ailleurs, en tête.)
+ * Rap : paroles rappées (pas « sung » → ACE part en chant pop).
  */
-export function aceStepProductionQualityFloor({ duo = false } = {}) {
+export function aceStepProductionQualityFloor({ duo = false, rap = false } = {}) {
+  if (rap) {
+    return duo
+      ? "clear rapped lyrics, hip-hop flow, airy mix"
+      : "clear rapped lyrics every word intelligible, hip-hop flow, not melodic singing, airy mix";
+  }
   return duo
     ? "clear sung lyrics, airy mix, warm guitar"
     : "clear sung lyrics every word intelligible, airy mix, warm guitar";
@@ -16,17 +22,19 @@ export function aceStepProductionQualityFloor({ duo = false } = {}) {
  * Arc sectionnel COURT — changements d’INSTRUMENTS (pas juste le volume).
  * ACE ignore « thicker » seul → il faut nommer les couches qui entrent/sortent.
  */
-export function aceStepSectionDynamicsCompact({ duo = false } = {}) {
-  const core =
-    "instrument layers change by section (not just louder): verse=sparse bed (bass+light drums) → pre adds keys/pads → chorus=full band (extra guitar layers, pads, wider snare) → thin bridge → densest final — never one flat loop";
+export function aceStepSectionDynamicsCompact({ duo = false, rap = false } = {}) {
+  const core = rap
+    ? "instrument layers change by section (not just louder): verse=sparse 808+hats → pre adds pads/melody → chorus=full beat (extra pads, chopped vocal sample, wider snare) → thin bridge → densest final — never one flat loop"
+    : "instrument layers change by section (not just louder): verse=sparse bed (bass+light drums) → pre adds keys/pads → chorus=full band (extra guitar layers, pads, wider snare) → thin bridge → densest final — never one flat loop";
   if (duo) return `${core}; band lifts under the active tagged singer`;
   return core;
 }
 
 /** Phrase courte pour squelette solo / mustKeep (budget ~360c). */
-export function aceStepSectionDynamicsShort({ duo = false } = {}) {
-  const core =
-    "instrument layers change: verse sparse → chorus adds guitar/keys/pads → thin bridge → densest final — never same loop";
+export function aceStepSectionDynamicsShort({ duo = false, rap = false } = {}) {
+  const core = rap
+    ? "instrument layers change: verse sparse 808+hats → chorus adds pads/melody/chopped vocal → thin bridge → densest final — never same loop"
+    : "instrument layers change: verse sparse → chorus adds guitar/keys/pads → thin bridge → densest final — never same loop";
   if (duo) return `${core}; lifts under active singer`;
   return core;
 }

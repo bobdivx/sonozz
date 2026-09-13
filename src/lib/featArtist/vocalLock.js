@@ -123,7 +123,7 @@ export function aceLeadVocalPhrase(lock, genreBlob = "") {
   else if (/soprano/.test(blob)) register = "bright soprano";
   else if (/breathy|soft|douce/.test(blob)) register = "soft warm tone";
 
-  if (/rap|spoken|rhythmic bark|trap flow/.test(blob)) {
+  if (/rap|spoken|rhythmic bark|trap flow|hip[\s-]?hop|drill|\btrap\b|boom\s*bap/.test(`${blob} ${genreBlob}`)) {
     return `clear natural ${gender} rap vocal, ${register}, dry mix, intelligible lyrics`.slice(0, 95);
   }
 
@@ -136,6 +136,18 @@ export function aceLeadVocalPhrase(lock, genreBlob = "") {
 /** Garde positive anti-vocoder (évite les litanie « no vocoder » qui embrouillent ACE). */
 export function aceOrganicVocalGuard(lock, genreBlob = "") {
   if (wantsProcessedVocals(lock, genreBlob)) return "";
+  const blob = [
+    genreBlob,
+    lock?.genre,
+    lock?.timbreHint,
+    lock?.vocalStyle,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (/trap|hip[\s-]?hop|drill|\brap\b|boom\s*bap|grime|rapped|trap flow/.test(blob)) {
+    return "dry natural rapped vocal, clear diction, hip-hop flow";
+  }
   return "dry natural sung vocal, clear diction, intimate presence";
 }
 

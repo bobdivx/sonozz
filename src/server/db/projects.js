@@ -1,5 +1,13 @@
 import { ensureSchema, getDb, uid } from "./client.js";
 
+/** Aligné sur lightAssetUrl (artists/schema) — évite import circulaire db ↔ artists. */
+function playableAssetUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("/api/")) return url;
+  return null;
+}
+
 function summarize(project = {}, seed = {}) {
   const artistName = project.artist?.name || seed.name || null;
   const trackTitle = project.track?.title || project.lyrics?.title || seed.theme || null;
@@ -30,6 +38,30 @@ function summarize(project = {}, seed = {}) {
   else if (project.trends) status = "trends";
 
   return { title, artistName, trackTitle, status };
+}
+
+/** Colonnes indexables pour /play et /api/library (évite scan json_extract). */
+export function libraryColumnsFromProject(project = {}) {
+  const trackStatus = project?.track?.status || null;
+  const pending =
+    trackStatus === "pending-review" ||
+    trackStatus === "preview-ready" ||
+    Boolean(project?.track?.isPreview);
+  const audioUrl = playableAssetUrl(project?.track?.audioUrl);
+  const coverUrl =
+    playableAssetUrl(project?.cover?.imageUrl) ||
+    playableAssetUrl(project?.album?.cover?.imageUrl);
+  const duration =
+    project?.track?.duration != null && project?.track?.duration !== ""
+      ? String(project.track.duration)
+      : null;
+  return {
+    audioUrl: audioUrl || null,
+    trackStatus,
+    coverUrl: coverUrl || null,
+    trackDuration: duration,
+    hasAudio: audioUrl && !pending ? 1 : 0,
+  };
 }
 
 export function stripHeavyProjectPayload(project = {}) {
@@ -183,6 +215,8 @@ export async function saveProject({ id, project, seed = {}, event, ownerEmail = 
     seed?.artistSlug ||
     null;
 
+  const library = libraryColumnsFromProject(lightProject);
+
   const existing = await db.execute({
     sql: `SELECT id, created_at, owner_email FROM projects WHERE id = ? LIMIT 1`,
     args: [projectId],
@@ -203,7 +237,9 @@ export async function saveProject({ id, project, seed = {}, event, ownerEmail = 
         SET title = ?, artist_name = ?, track_title = ?, status = ?,
             seed_json = ?, project_json = ?, updated_at = ?,
             artist_slug = COALESCE(?, artist_slug),
-            owner_email = COALESCE(owner_email, ?)
+            owner_email = COALESCE(owner_email, ?),
+            audio_url = ?, track_status = ?, cover_url = ?,
+            track_duration = ?, has_audio = ?
         WHERE id = ?
       `,
       args: [
@@ -216,6 +252,11 @@ export async function saveProject({ id, project, seed = {}, event, ownerEmail = 
         now,
         artistSlug,
         owner,
+        library.audioUrl,
+        library.trackStatus,
+        library.coverUrl,
+        library.trackDuration,
+        library.hasAudio,
         projectId,
       ],
     });
@@ -224,8 +265,9 @@ export async function saveProject({ id, project, seed = {}, event, ownerEmail = 
       sql: `
         INSERT INTO projects
           (id, title, artist_name, track_title, status, seed_json, project_json,
-           artist_slug, owner_email, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           artist_slug, owner_email, audio_url, track_status, cover_url,
+           track_duration, has_audio, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       args: [
         projectId,
@@ -237,6 +279,11 @@ export async function saveProject({ id, project, seed = {}, event, ownerEmail = 
         JSON.stringify(lightProject),
         artistSlug,
         owner,
+        library.audioUrl,
+        library.trackStatus,
+        library.coverUrl,
+        library.trackDuration,
+        library.hasAudio,
         now,
         now,
       ],

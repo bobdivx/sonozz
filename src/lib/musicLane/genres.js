@@ -43,6 +43,19 @@ export function isMetalLane(blob = "") {
   );
 }
 
+/** Rap / hip-hop / trap / drill — delivery parlée rythmée, pas chant mélodique. */
+export function isRapLane(blob = "") {
+  const g = norm(blob);
+  if (!g.trim()) return false;
+  // R&B / soul mélodique hors lane (sauf trap-soul explicitement rap).
+  if (/\br&?b\b|\bsoul\b|neo[\s-]?soul|gospel/.test(g) && !/\btrap\b|\brap\b|hip[\s-]?hop|drill/.test(g)) {
+    return false;
+  }
+  return /trap|hip[\s-]?hop|drill|\brap\b|boom\s*bap|grime|cloud\s*rap|uk\s*drill|francophone\s*rap/.test(
+    g,
+  );
+}
+
 /** Retire « not death metal » / « avoid death growl » pour ne pas inverser la lane. */
 
 export function isExtremeMetalLane(blob = "") {

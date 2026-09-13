@@ -28,6 +28,11 @@ export const ACE_STEP_ENGINE_DIT_IDS = [
  * Peak norm Studio défaut −1 dBFS = master trop hot → −2.5 dB de headroom.
  */
 export const ACE_SFT_GUIDANCE = 5.0;
+/**
+ * Turbo distillé : docs ACE souvent CFG=0, mais CFG=0 ignore les captions détaillés
+ * (genre rap, couches instrumentales). 3.0 = adhérence style sans pousser au SFT.
+ */
+export const ACE_TURBO_GUIDANCE = 3.0;
 export const ACE_NORMALIZATION_DB = -2.5;
 /** Timestep shift — docs ACE : 3.0 (défaut API 1.0 = distribution pourrie). */
 export const ACE_TIMESTEP_SHIFT = 3.0;
@@ -39,7 +44,7 @@ export const ACE_STEP_MODELS = [
     id: "acestep-v15-xl-turbo",
     label: "XL Turbo",
     steps: 8,
-    guidance: 0,
+    guidance: ACE_TURBO_GUIDANCE,
     vramGb: 12,
   },
   {
@@ -53,14 +58,14 @@ export const ACE_STEP_MODELS = [
     id: "marcorez8/acestep-v15-xl-turbo-bf16",
     label: "XL Turbo BF16",
     steps: 8,
-    guidance: 0,
+    guidance: ACE_TURBO_GUIDANCE,
     vramGb: 8,
   },
   {
     id: "acestep-v15-xl-turbo-bf16",
     label: "XL Turbo BF16",
     steps: 8,
-    guidance: 0,
+    guidance: ACE_TURBO_GUIDANCE,
     vramGb: 8,
   },
   {
@@ -145,7 +150,7 @@ export function aceStepInferenceForModel(modelId) {
   }
   return {
     inferenceSteps: isTurbo ? 8 : ACE_SFT_STEPS,
-    guidanceScale: isTurbo ? 0 : ACE_SFT_GUIDANCE,
+    guidanceScale: isTurbo ? ACE_TURBO_GUIDANCE : ACE_SFT_GUIDANCE,
     isTurbo,
   };
 }

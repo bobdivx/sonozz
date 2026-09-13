@@ -8,7 +8,6 @@ import {
   isAuthConfigured,
   SESSION_COOKIE,
   sessionCookieOptions,
-  SSO_PASSWORD_BLOCKED,
 } from "../server/auth.js";
 import { isOidcConfigured, SSO_HINT_COOKIE, oidcCookieOptions } from "../server/oidc.js";
 
@@ -51,8 +50,7 @@ if (Astro.request.method === "POST") {
     } else {
       const result = await authenticatePassword(email, password);
       if (!result.ok) {
-        if (result.reason === "sso_required") error = SSO_PASSWORD_BLOCKED;
-        else if (result.reason === "disabled") error = "Compte désactivé";
+        if (result.reason === "disabled") error = "Compte désactivé";
         else error = "Identifiants incorrects";
       } else {
         Astro.cookies.set(
@@ -66,8 +64,6 @@ if (Astro.request.method === "POST") {
     }
   }
 }
-
-const forceSsoUi = error === SSO_PASSWORD_BLOCKED;
 ---
 
 <Layout title="SONOZZ — Connexion" description="Connexion au studio SONOZZ.">
@@ -123,7 +119,7 @@ const forceSsoUi = error === SSO_PASSWORD_BLOCKED;
       initialEmail={postedEmail}
       oidcConfigured={oidcConfigured}
       passwordConfigured={passwordConfigured}
-      preferSso={(preferSso || forceSsoUi) && oidcConfigured}
+      preferSso={preferSso && oidcConfigured}
     />
   </div>
 </Layout>

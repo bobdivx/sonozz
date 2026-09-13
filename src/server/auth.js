@@ -1,7 +1,6 @@
 import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
 import { isOidcConfigured } from "./oidc.js";
 import {
-  isSsoLinkedEmail,
   resolveRoleForEmail,
   resolveSessionRole,
   ROLE_ADMIN,
@@ -11,7 +10,6 @@ import {
 } from "./users.js";
 
 export const SESSION_COOKIE = "sonozz_session";
-export const SSO_PASSWORD_BLOCKED = "Ce compte se connecte avec Pocket ID";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 jours
 
 /**
@@ -69,18 +67,19 @@ export function verifyCredentials(email, password) {
 }
 
 /**
- * Login mot de passe : refuse si CE user a lié Pocket ID.
- * @returns {{ ok: true, role?: string } | { ok: false, reason: 'invalid' | 'sso_required' | 'disabled' }}
+ * Login mot de passe — Pocket ID lié n’empêche pas le mot de passe.
+ * @param {boolean} credentialsOk
+ * @param {boolean} [_ssoLinked] conservé pour compat API / tests
+ * @param {string} [role]
+ * @returns {{ ok: true, role?: string } | { ok: false, reason: 'invalid' | 'disabled' }}
  */
-export function decidePasswordLogin(credentialsOk, ssoLinked, role = ROLE_MEMBER) {
+export function decidePasswordLogin(credentialsOk, _ssoLinked = false, role = ROLE_MEMBER) {
   if (!credentialsOk) return { ok: false, reason: "invalid" };
-  if (ssoLinked) return { ok: false, reason: "sso_required" };
   return { ok: true, role };
 }
 
 export async function authenticatePassword(email, password) {
   const normalized = String(email || "").trim().toLowerCase();
-  const ssoLinked = await isSsoLinkedEmail(normalized);
 
   if (verifyEnvCredentials(normalized, password)) {
     try {
@@ -89,14 +88,14 @@ export async function authenticatePassword(email, password) {
     } catch {
       /* ignore */
     }
-    return decidePasswordLogin(true, ssoLinked, ROLE_ADMIN);
+    return decidePasswordLogin(true, false, ROLE_ADMIN);
   }
 
   try {
     const user = await verifyUserPassword(normalized, password);
     if (!user) return { ok: false, reason: "invalid" };
     const role = resolveRoleForEmail(normalized, user.role);
-    return decidePasswordLogin(true, ssoLinked, role);
+    return decidePasswordLogin(true, false, role);
   } catch {
     return { ok: false, reason: "invalid" };
   }

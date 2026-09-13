@@ -24,7 +24,7 @@ export function studioHref(projectId, stepKey = "tracks") {
   const q = new URLSearchParams();
   if (projectId) q.set("project", String(projectId));
   q.set("step", String(step));
-  return `/?${q.toString()}`;
+  return `/studio?${q.toString()}`;
 }
 
 export function artistHubHref(slug) {

@@ -18,7 +18,7 @@ export async function listArtistReleases(slug, limit = 40, opts = {}) {
     slug;
 
   // Ne jamais SELECT project_json entier (peut peser des dizaines de Mo : clip base64).
-  // json_extract côté Turso ne renvoie que les champs utiles.
+  // Colonnes dénormalisées pour audio/cover ; json_extract seulement pour le reste.
   const res = await db.execute({
     sql: `
       SELECT
@@ -30,12 +30,12 @@ export async function listArtistReleases(slug, limit = 40, opts = {}) {
         artist_slug,
         created_at,
         updated_at,
+        audio_url,
+        track_status,
+        cover_url,
         json_extract(project_json, '$.track.title') AS track_title_json,
         json_extract(project_json, '$.lyrics.title') AS lyrics_title,
         json_extract(project_json, '$.lyrics.theme') AS lyrics_theme,
-        json_extract(project_json, '$.track.audioUrl') AS audio_url,
-        json_extract(project_json, '$.track.status') AS track_status,
-        json_extract(project_json, '$.cover.imageUrl') AS cover_url,
         json_extract(project_json, '$.album.cover.imageUrl') AS album_cover_url,
         json_extract(project_json, '$.artist.imageUrl') AS artist_image,
         json_extract(project_json, '$.distrokid.status') AS once_status,
@@ -100,11 +100,14 @@ export async function listArtistReleases(slug, limit = 40, opts = {}) {
 }
 
 /**
- * Catalogue jouable : tous les projets avec audioUrl (léger, sans project_json entier).
+ * Catalogue jouable via colonnes dénormalisées (index has_audio) — pas de scan json_extract.
+ * @param {number} limit
+ * @param {{ artistSlug?: string }} [opts]
  */
-export async function listLibraryTracks(limit = 200) {
+export async function listLibraryTracks(limit = 200, opts = {}) {
   await ensureArtistSchema();
   const db = getDb();
+  const artistSlug = String(opts.artistSlug || "").trim();
   const res = await db.execute({
     sql: `
       SELECT
@@ -116,28 +119,17 @@ export async function listLibraryTracks(limit = 200) {
         artist_slug,
         created_at,
         updated_at,
-        json_extract(project_json, '$.track.title') AS track_title_json,
-        json_extract(project_json, '$.lyrics.title') AS lyrics_title,
-        json_extract(project_json, '$.track.audioUrl') AS audio_url,
-        json_extract(project_json, '$.track.status') AS track_status,
-        json_extract(project_json, '$.cover.imageUrl') AS cover_url,
-        json_extract(project_json, '$.album.cover.imageUrl') AS album_cover_url,
-        json_extract(project_json, '$.track.duration') AS duration,
-        json_extract(project_json, '$.artist.imageUrl') AS artist_image
+        audio_url,
+        track_status,
+        cover_url,
+        track_duration
       FROM projects
-      WHERE json_extract(project_json, '$.track.audioUrl') IS NOT NULL
-        AND length(json_extract(project_json, '$.track.audioUrl')) > 8
-        AND (
-          json_extract(project_json, '$.track.status') IS NULL
-          OR (
-            json_extract(project_json, '$.track.status') != 'pending-review'
-            AND json_extract(project_json, '$.track.status') != 'preview-ready'
-          )
-        )
+      WHERE has_audio = 1
+        ${artistSlug ? "AND artist_slug = ?" : ""}
       ORDER BY updated_at DESC
       LIMIT ?
     `,
-    args: [limit],
+    args: artistSlug ? [artistSlug, limit] : [limit],
   });
 
   return res.rows
@@ -150,21 +142,18 @@ export async function listLibraryTracks(limit = 200) {
       const audioUrl = lightAssetUrl(row.audio_url);
       if (!audioUrl) return null;
       const photo = artistPhotoPath(row.artist_slug);
-      const artistImage = lightAssetUrl(row.artist_image) || photo;
-      const coverUrl =
-        lightAssetUrl(row.cover_url) || lightAssetUrl(row.album_cover_url) || artistImage;
+      const coverUrl = lightAssetUrl(row.cover_url) || photo;
       return {
         id: row.id,
         title: row.title,
         artistName: row.artist_name || "Artiste inconnu",
-        trackTitle:
-          row.track_title || row.track_title_json || row.lyrics_title || row.title || "Sans titre",
+        trackTitle: row.track_title || row.title || "Sans titre",
         slug: row.artist_slug || null,
         status: row.status,
         coverUrl,
-        artistImage,
+        artistImage: photo,
         audioUrl,
-        duration: row.duration || null,
+        duration: row.track_duration || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       };
@@ -279,7 +268,7 @@ export async function createArtistRelease(slug, { theme = "", variantOf = null, 
     projectId: saved.id,
     slug: artist.slug,
     theme: themeHint || "Nouveau single",
-    studioUrl: `/?project=${saved.id}&step=2`,
+    studioUrl: `/studio?project=${saved.id}&step=2`,
   };
 }
 

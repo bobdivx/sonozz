@@ -39,7 +39,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(aceStepDitSame("acestep-v15-xl-sft", "acestep-v15-xl-turbo-bf16"), false);
     const turbo = aceStepInferenceForModel("acestep-v15-xl-turbo-bf16");
     assert.equal(turbo.inferenceSteps, 8);
-    assert.equal(turbo.guidanceScale, 0);
+    assert.equal(turbo.guidanceScale, 3);
     assert.equal(turbo.isTurbo, true);
     const sft = aceStepInferenceForModel("acestep-v15-xl-sft");
     assert.equal(sft.inferenceSteps, ACE_SFT_STEPS);
@@ -52,7 +52,7 @@ describe("ACE-Step Studio client", () => {
       modelId: "acestep-v15-xl-turbo-bf16",
     });
     assert.equal(body.inferenceSteps, 8);
-    assert.equal(body.guidanceScale, 0);
+    assert.equal(body.guidanceScale, 3);
     assert.equal(body.shift, ACE_TIMESTEP_SHIFT);
   });
 
@@ -65,7 +65,7 @@ describe("ACE-Step Studio client", () => {
       preview: true,
     });
     assert.equal(auto.inferenceSteps, 8);
-    assert.equal(auto.guidanceScale, 0);
+    assert.equal(auto.guidanceScale, 3);
     assert.equal(auto.taskType, undefined);
     assert.equal(auto.enableNormalization, true);
     assert.equal(auto.normalizationDb, -2.5);
@@ -216,7 +216,7 @@ describe("ACE-Step Studio client", () => {
     assert.equal(turbo.instrumental, false);
     assert.equal(turbo.vocalLanguage, "fr");
     assert.equal(turbo.inferenceSteps, 8);
-    assert.equal(turbo.guidanceScale, 0);
+    assert.equal(turbo.guidanceScale, 3);
     assert.ok(turbo.duration <= 45);
     assert.ok(turbo.lyrics.split("\n").length <= 16);
 
@@ -342,7 +342,7 @@ describe("ACE-Step Studio client", () => {
       referenceAudioUrl: "https://audio.example/nem.m4a",
     });
     assert.equal(turbo.taskType, "cover");
-    assert.equal(turbo.guidanceScale, 0);
+    assert.equal(turbo.guidanceScale, 3);
     assert.equal(turbo.inferenceSteps, 8);
 
     const viaGradio = buildAceStepBody({

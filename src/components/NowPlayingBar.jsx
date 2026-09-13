@@ -109,6 +109,7 @@ export default function NowPlayingBar() {
   }, []);
 
   const hidden = pathname === "/login" || pathname === "/403";
+  const overlayOpen = expandedPage;
   const current = currentPlayTrack(session);
   const cover = current?.coverUrl || current?.artistImage || "";
   const shuffle = Boolean(session.shuffle);
@@ -117,7 +118,7 @@ export default function NowPlayingBar() {
 
   useEffect(() => {
     const root = document.documentElement;
-    if (hidden) {
+    if (hidden || overlayOpen) {
       root.style.setProperty("--sonozz-now-playing", "0px");
       return undefined;
     }
@@ -134,9 +135,9 @@ export default function NowPlayingBar() {
     const ro = new ResizeObserver(apply);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [hidden, hasTrack]);
+  }, [hidden, hasTrack, overlayOpen]);
 
-  if (hidden) return null;
+  if (hidden || overlayOpen) return null;
 
   function onOpenPlay(e) {
     if (pathname !== "/play") return;
@@ -161,13 +162,11 @@ export default function NowPlayingBar() {
       role="region"
       aria-label="Play"
     >
-      {/* Progress collée en haut — ne casse pas la grille mobile */}
       <div class="absolute inset-x-0 top-0 z-10">
         {hasTrack ? <ProgressStrip seekable /> : <div class="h-0.5 bg-base-content/10" />}
       </div>
 
       <div class="flex min-h-14 items-center gap-1 px-2 pb-1.5 pt-2.5 sm:min-h-16 sm:gap-2 sm:px-3 sm:pb-2 sm:pt-3 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-3 md:px-4">
-        {/* Now playing */}
         <a
           href="/play"
           class="flex min-w-0 flex-1 items-center gap-2.5 text-left touch-manipulation active:opacity-80 md:pr-4"
@@ -209,7 +208,6 @@ export default function NowPlayingBar() {
           </div>
         </a>
 
-        {/* Contrôles — prev/play/next toujours accessibles sur mobile */}
         <div class="flex shrink-0 items-center justify-center gap-0 sm:gap-0.5 md:gap-1">
           {hasTrack ? (
             <>
@@ -274,7 +272,6 @@ export default function NowPlayingBar() {
           )}
         </div>
 
-        {/* Extras desktop */}
         <div class="hidden items-center justify-end gap-2 md:flex">
           <a
             href="/play"

@@ -1,4 +1,5 @@
 import { createJobId, getJob, subscribeJobs, upsertJob, patchJob } from "../jobStore.js";
+import { studioHref } from "../studio.js";
 import { HTTP_BOUND_TYPES } from "./state.js";
 
 export function waitForJob(jobId, { onUpdate } = {}) {
@@ -29,7 +30,7 @@ export function trackPipelineJob({ jobId, label, projectId, message, progress } 
     message: message || "Pipeline A→Z…",
     label: label || "Pipeline auto",
     projectId: projectId || null,
-    href: projectId ? `/?project=${projectId}` : "/",
+    href: projectId ? studioHref(projectId, "tracks") : "/studio",
   });
   return id;
 }
@@ -49,13 +50,17 @@ export function trackStepJob({
   href,
 } = {}) {
   const id = jobId || createJobId(type === "publish" ? "pub" : "step");
-  const stepHref =
-    href ||
-    (projectId && stepKey
-      ? `/?project=${projectId}&step=${stepKey}`
-      : projectId
-        ? `/?project=${projectId}`
-        : "/");
+  let stepHref = href;
+  if (!stepHref) {
+    if (projectId && stepKey) {
+      const q = new URLSearchParams({ project: String(projectId), step: String(stepKey) });
+      stepHref = `/studio?${q}`;
+    } else if (projectId) {
+      stepHref = studioHref(projectId, "tracks");
+    } else {
+      stepHref = "/studio";
+    }
+  }
   upsertJob({
     id,
     type: type === "publish" ? "publish" : "step",
@@ -104,7 +109,7 @@ export function finishPipelineJob(jobId, { ok, message, projectId } = {}) {
     phase: ok ? "done" : "error",
     progress: ok ? 100 : undefined,
     message: message || (ok ? "Pipeline terminé" : "Pipeline en erreur"),
-    ...(projectId ? { projectId, href: `/?project=${projectId}` } : {}),
+    ...(projectId ? { projectId, href: studioHref(projectId, "tracks") } : {}),
   });
 }
 

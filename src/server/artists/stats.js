@@ -181,10 +181,15 @@ async function enrichStatsFromOnce(stats, releases, onceToken, { keys } = {}) {
   return stats;
 }
 
-export async function computeArtistStats(slug, { onceToken, keys, syncOnce = true } = {}) {
-  const artist = await getArtistBySlug(slug);
+export async function computeArtistStats(
+  slug,
+  { onceToken, keys, syncOnce = true, artist: preloadedArtist, releases: preloadedReleases } = {},
+) {
+  const artist = preloadedArtist || (await getArtistBySlug(slug));
   const prev = artist?.stats || {};
-  const releases = await listArtistReleases(slug, 100, { artistName: artist?.name });
+  const releases =
+    preloadedReleases ||
+    (await listArtistReleases(slug, 100, { artistName: artist?.name }));
   const storedKeys = keys && typeof keys === "object" ? keys : (await getUserKeys()) || {};
   const token = String(onceToken || storedKeys.onceApiToken || "").trim();
   const stats = {
@@ -243,29 +248,54 @@ export async function computeArtistStats(slug, { onceToken, keys, syncOnce = tru
   return stats;
 }
 
-export async function getArtistHub(slug) {
-  const artist = await getArtistBySlug(slug);
+export async function getArtistHub(slug, { artist: preloadedArtist } = {}) {
+  const artist = preloadedArtist || (await getArtistBySlug(slug));
   if (!artist) return null;
-  const releases = await listArtistReleases(slug, 40, { artistName: artist.name });
 
   const cachedAt = artist.stats?.updatedAt ? Date.parse(artist.stats.updatedAt) : 0;
   const fresh = cachedAt && Date.now() - cachedAt < 10 * 60 * 1000;
 
-  // GET hub : jamais de sync ONCE réseau (bloque 2–20 s). Stats locales / cache seulement.
-  const stats = fresh
-    ? {
-        ...artist.stats,
-        tracks: releases.length,
-        withAudio: releases.filter((r) => r.hasAudio).length,
-        withCover: releases.filter((r) => r.hasCover).length,
-      }
-    : await computeArtistStats(slug, { syncOnce: false });
-
   const { listAlbumsByArtist } = await import("../db.js");
-  const albums = await listAlbumsByArtist(slug);
-  const storedKeys = (await getUserKeys()) || {};
-  const onceToken = String(storedKeys.onceApiToken || "").trim();
-  const statsNeedSync = Boolean(onceToken) && needsOnceEnrich(stats, releases);
+
+  // Stats fraîches : releases + albums + clés en parallèle (pas de 2ᵉ scan releases).
+  if (fresh) {
+    const [releases, albums, storedKeys] = await Promise.all([
+      listArtistReleases(slug, 40, { artistName: artist.name }),
+      listAlbumsByArtist(slug),
+      getUserKeys().catch(() => ({})),
+    ]);
+    const stats = {
+      ...artist.stats,
+      tracks: releases.length,
+      withAudio: releases.filter((r) => r.hasAudio).length,
+      withCover: releases.filter((r) => r.hasCover).length,
+    };
+    const onceToken = String(storedKeys?.onceApiToken || "").trim();
+    return {
+      ...artist,
+      stats,
+      releases,
+      albums,
+      career: stats?.career || artist.stats?.career || null,
+      statsNeedSync: Boolean(onceToken) && needsOnceEnrich(stats, releases),
+    };
+  }
+
+  // Cache stale : 1 scan releases (100) partagé stats + hub, albums/clés en parallèle.
+  const [releasesAll, albums, storedKeys] = await Promise.all([
+    listArtistReleases(slug, 100, { artistName: artist.name }),
+    listAlbumsByArtist(slug),
+    getUserKeys().catch(() => ({})),
+  ]);
+  // GET hub : jamais de sync ONCE réseau (bloque 2–20 s).
+  const stats = await computeArtistStats(slug, {
+    syncOnce: false,
+    artist,
+    releases: releasesAll,
+    keys: storedKeys || {},
+  });
+  const releases = releasesAll.slice(0, 40);
+  const onceToken = String(storedKeys?.onceApiToken || "").trim();
 
   return {
     ...artist,
@@ -273,6 +303,6 @@ export async function getArtistHub(slug) {
     releases,
     albums,
     career: stats?.career || artist.stats?.career || null,
-    statsNeedSync,
+    statsNeedSync: Boolean(onceToken) && needsOnceEnrich(stats, releases),
   };
 }

@@ -68,6 +68,42 @@ describe("enforceAceStyleLocks", () => {
     assert.match(a.style, /instrument layers change/i);
   });
 
+  it("lane rap : rapped delivery, pas sung lyrics", () => {
+    const a = assembleAceStepStyle({
+      style: "Rap / Drill francophone",
+      language: "fr",
+      artist: { name: "K", gender: "male", genre: "Rap / Drill francophone" },
+      styleLock: { genreSummary: "Rap / Drill francophone" },
+      lyrics: "[Verse]\nYo le flow",
+    });
+    assert.equal(a.rap, true);
+    assert.equal(a.brief.rap, true);
+    assert.match(a.style, /rap vocal|rapped lyrics|hip-hop flow/i);
+    assert.doesNotMatch(a.style, /sung lyrics/i);
+    assert.match(a.style, /808|trap drums|hi-hats/i);
+    assert.ok(a.brief.mustKeep.some((m) => /rapped|hip-hop flow/i.test(m)));
+
+    const locked = enforceAceStyleLocks(
+      "Rap drill. clear sung lyrics. full band guitar bass drums.",
+      a.brief,
+    );
+    assert.match(locked, /rapped|hip-hop flow|rap vocal/i);
+    assert.doesNotMatch(locked, /clear sung lyrics/i);
+
+    const body = buildAceStepBody({
+      title: "Drill",
+      style: "Rap / Drill francophone",
+      lyrics: "[Verse]\nYo",
+      language: "fr",
+      modelId: "acestep-v15-xl-turbo-bf16",
+      artist: { name: "K", gender: "male", genre: "Rap / Drill francophone" },
+      styleLock: { genreSummary: "Rap / Drill francophone" },
+    });
+    assert.equal(body.guidanceScale, 3);
+    assert.match(body.instruction, /rap lyrics|hip-hop flow|not melodic singing/i);
+    assert.doesNotMatch(body.instruction, /sing lyrics clearly/i);
+  });
+
   it("force un arc instrumental si le caption n’en a pas", () => {
     const out = enforceAceStyleLocks(
       "Indie Pop, female lead vocal. full band guitar bass drums. airy mix.",

@@ -22,27 +22,28 @@ async function requireOwnedArtist(slug, cookies) {
     err.status = 401;
     throw err;
   }
-  if (session.role === ROLE_ADMIN) return session;
   const row = await getArtistBySlug(slug);
   if (!row) {
     const err = new Error("Artiste introuvable");
     err.status = 404;
     throw err;
   }
-  const owner = row.ownerEmail ? String(row.ownerEmail).toLowerCase() : null;
-  if (owner && owner !== session.email.toLowerCase()) {
-    const err = new Error("Cet artiste appartient à un autre compte");
-    err.status = 403;
-    throw err;
+  if (session.role !== ROLE_ADMIN) {
+    const owner = row.ownerEmail ? String(row.ownerEmail).toLowerCase() : null;
+    if (owner && owner !== session.email.toLowerCase()) {
+      const err = new Error("Cet artiste appartient à un autre compte");
+      err.status = 403;
+      throw err;
+    }
   }
-  return session;
+  return { session, artist: row };
 }
 
 export async function GET({ params, cookies }) {
   try {
     const slug = params.slug;
-    await requireOwnedArtist(slug, cookies);
-    const hub = await getArtistHub(slug);
+    const { artist } = await requireOwnedArtist(slug, cookies);
+    const hub = await getArtistHub(slug, { artist });
     if (!hub) return error("Artiste introuvable", 404);
     return json({ artist: hub });
   } catch (e) {
@@ -67,7 +68,7 @@ export async function DELETE({ params, cookies }) {
 export async function POST({ params, request, cookies }) {
   try {
     const slug = params.slug;
-    const session = await requireOwnedArtist(slug, cookies);
+    const { session } = await requireOwnedArtist(slug, cookies);
     const body = await readBody(request);
     const action = body.action || "new-track";
 
@@ -266,7 +267,7 @@ export async function POST({ params, request, cookies }) {
       return json({
         ok: true,
         projectId: updated.id,
-        studioUrl: `/?project=${updated.id}&step=3`,
+        studioUrl: `/studio?project=${updated.id}&step=3`,
       });
     }
 

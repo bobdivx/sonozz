@@ -28,7 +28,10 @@ export function getDb() {
 }
 
 export async function ensureSchema() {
-  if (ready) return;
+  if (ready) {
+    await backfillLibraryColumns(getDb());
+    return;
+  }
   const db = getDb();
 
   await db.execute(`
@@ -65,6 +68,11 @@ export async function ensureSchema() {
   for (const sql of [
     `ALTER TABLE projects ADD COLUMN artist_slug TEXT`,
     `ALTER TABLE projects ADD COLUMN owner_email TEXT`,
+    `ALTER TABLE projects ADD COLUMN audio_url TEXT`,
+    `ALTER TABLE projects ADD COLUMN track_status TEXT`,
+    `ALTER TABLE projects ADD COLUMN cover_url TEXT`,
+    `ALTER TABLE projects ADD COLUMN track_duration TEXT`,
+    `ALTER TABLE projects ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0`,
   ]) {
     try {
       await db.execute(sql);
@@ -76,6 +84,14 @@ export async function ensureSchema() {
   try {
     await db.execute(
       `CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_email)`,
+    );
+  } catch {
+    /* ok */
+  }
+
+  try {
+    await db.execute(
+      `CREATE INDEX IF NOT EXISTS idx_projects_library ON projects(has_audio, updated_at DESC)`,
     );
   } catch {
     /* ok */
@@ -233,6 +249,71 @@ export async function ensureSchema() {
   `);
 
   ready = true;
+  await backfillLibraryColumns(db);
+}
+
+/** Une fois : remplit les colonnes librairie depuis project_json (évite scan json_extract ensuite). */
+async function backfillLibraryColumns(db) {
+  try {
+    const meta = await db.execute({
+      sql: `SELECT value FROM app_meta WHERE key = ? LIMIT 1`,
+      args: ["library_cols_v1"],
+    });
+    if (meta.rows[0]?.value === "1") return;
+  } catch {
+    return;
+  }
+
+  try {
+    await db.execute(`
+      UPDATE projects
+      SET
+        audio_url = CASE
+          WHEN json_extract(project_json, '$.track.audioUrl') LIKE 'http%'
+            OR json_extract(project_json, '$.track.audioUrl') LIKE '/api/%'
+          THEN json_extract(project_json, '$.track.audioUrl')
+          ELSE NULL
+        END,
+        track_status = json_extract(project_json, '$.track.status'),
+        cover_url = CASE
+          WHEN json_extract(project_json, '$.cover.imageUrl') LIKE 'http%'
+            OR json_extract(project_json, '$.cover.imageUrl') LIKE '/api/%'
+          THEN json_extract(project_json, '$.cover.imageUrl')
+          WHEN json_extract(project_json, '$.album.cover.imageUrl') LIKE 'http%'
+            OR json_extract(project_json, '$.album.cover.imageUrl') LIKE '/api/%'
+          THEN json_extract(project_json, '$.album.cover.imageUrl')
+          ELSE NULL
+        END,
+        track_duration = json_extract(project_json, '$.track.duration'),
+        has_audio = CASE
+          WHEN (
+            json_extract(project_json, '$.track.audioUrl') LIKE 'http%'
+            OR json_extract(project_json, '$.track.audioUrl') LIKE '/api/%'
+          )
+          AND length(json_extract(project_json, '$.track.audioUrl')) > 8
+          AND (
+            json_extract(project_json, '$.track.status') IS NULL
+            OR (
+              json_extract(project_json, '$.track.status') != 'pending-review'
+              AND json_extract(project_json, '$.track.status') != 'preview-ready'
+            )
+          )
+          THEN 1
+          ELSE 0
+        END
+    `);
+    const now = new Date().toISOString();
+    await db.execute({
+      sql: `
+        INSERT INTO app_meta (key, value, updated_at)
+        VALUES (?, '1', ?)
+        ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at
+      `,
+      args: ["library_cols_v1", now],
+    });
+  } catch {
+    /* backfill non bloquant — requêtes librairie retombent sur json_extract si besoin */
+  }
 }
 
 async function seedAdminUser(db) {

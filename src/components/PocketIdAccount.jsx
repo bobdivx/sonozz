@@ -17,7 +17,7 @@ export default function PocketIdAccount({ accountPath = "/parametres?section=com
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("pocket") === "linked") {
-      setMessage("Pocket ID lié — la prochaine connexion passera par le SSO.");
+      setMessage("Pocket ID lié — tu peux aussi te connecter avec le SSO.");
       window.history.replaceState({}, "", accountPath);
     }
     const err = params.get("error");
@@ -46,7 +46,7 @@ export default function PocketIdAccount({ accountPath = "/parametres?section=com
       if (!res.ok) throw new Error(json.error || "Déliaison impossible");
       setSsoLinked(false);
       setSsoLinkedAt(null);
-      setMessage("Pocket ID délié — le mot de passe est de nouveau disponible pour ce compte.");
+      setMessage("Pocket ID délié.");
     } catch (e) {
       setMessage(e.message);
     } finally {
@@ -71,7 +71,7 @@ export default function PocketIdAccount({ accountPath = "/parametres?section=com
         <>
           <p class="text-sm text-success">
             Pocket ID lié{ssoLinkedAt ? ` le ${new Date(ssoLinkedAt).toLocaleString("fr-FR")}` : ""}.
-            La connexion mot de passe est désactivée pour ce compte.
+            Tu peux toujours te connecter avec email / mot de passe.
           </p>
           <button type="button" class="btn btn-outline btn-sm gap-2" disabled={busy} onClick={unlink}>
             {busy ? <span class="loading loading-spinner loading-sm" /> : <Unlink size={14} />}
@@ -81,7 +81,7 @@ export default function PocketIdAccount({ accountPath = "/parametres?section=com
       ) : (
         <>
           <p class="text-sm text-base-content/60">
-            Optionnel. Une fois lié, ce compte se connecte uniquement avec Pocket ID.
+            Optionnel. Une fois lié, tu pourras te connecter via Pocket ID ou mot de passe.
           </p>
           <a
             href={`/api/auth/pocket-id?intent=link&next=${encodeURIComponent(accountPath.split("?")[0] || "/compte")}`}

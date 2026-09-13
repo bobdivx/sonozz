@@ -604,10 +604,10 @@ export default function Dashboard() {
       message: `${stepLabel} en cours…`,
       progress: 12,
       href: projectId
-        ? `/?project=${projectId}${goTo ? `&step=${goTo}` : ""}`
+        ? `/studio?project=${projectId}${goTo ? `&step=${goTo}` : ""}`
         : goTo
-          ? `/?step=${goTo}`
-          : "/",
+          ? `/studio?step=${goTo}`
+          : "/studio",
     });
     try {
       patchJob(stepJobId, { progress: 35, message: `Génération ${stepLabel}…` });
@@ -1812,6 +1812,24 @@ export default function Dashboard() {
                 stepKey: "lyrics",
                 eventType: "version-delete",
                 message: "Version de paroles supprimée",
+              });
+            }}
+            onSaveLyrics={(patched, opts = {}) => {
+              setProject((prev) => {
+                const base = normalizeProjectState(prev);
+                const versions = base.lyricsVersions || [];
+                const activeId = base.activeLyricsId;
+                const hasActive = activeId && versions.some((v) => v.id === activeId);
+                const createNew = opts.asNew || !hasActive;
+                const next = createNew
+                  ? appendVersion(base, "lyrics", patched)
+                  : updateVersion(base, "lyrics", activeId, patched);
+                persist(next, {
+                  stepKey: "lyrics",
+                  eventType: createNew ? "lyrics-paste" : "lyrics-edit",
+                  message: createNew ? "Paroles collées" : "Paroles modifiées",
+                });
+                return next;
               });
             }}
           />

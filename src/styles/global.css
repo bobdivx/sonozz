@@ -189,6 +189,20 @@ html[data-sonozz-fill-viewport] #root-app {
   animation: cover-glow 3.2s ease-in-out infinite;
 }
 
+.play-now-blur {
+  transform: scale(1.2);
+  filter: blur(48px) saturate(1.35);
+  opacity: 0.55;
+}
+
+.play-shuffle-cta {
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.play-shuffle-cta:active {
+  filter: brightness(0.96);
+}
+
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0);
 }

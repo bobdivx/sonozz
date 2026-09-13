@@ -17,6 +17,8 @@ import {
   aceStepProductionQualityFloor,
   aceStepBandBedCompact,
   aceStepSectionDynamicsShort,
+  isRapLane,
+  styleLockGenreBlob,
 } from "../../lib/musicLane.js";
 import {
   normalizeFeatArtist,
@@ -260,7 +262,15 @@ export function assembleAceStepStyle({
   const isDuo = Boolean(feat?.name);
   const styleBase = String(style || "");
   const lyricsClean = String(lyrics || "");
-  const qualityFloor = aceStepProductionQualityFloor({ duo: isDuo });
+  const genreBlob = styleLockGenreBlob(styleLock, [
+    styleBase,
+    lead?.genre,
+    lead?.vocalStyle,
+    lead?.voice,
+    feat?.genre,
+  ]);
+  const rap = isRapLane(genreBlob);
+  const qualityFloor = aceStepProductionQualityFloor({ duo: isDuo, rap });
   const duoLangs = isDuo ? resolveDuoLanguages(lead, feat, language) : null;
   const langCode = duoLangs?.bilingual
     ? duoLangs.leadLang
@@ -283,8 +293,13 @@ export function assembleAceStepStyle({
       .join(". ")
       .slice(0, ACE_STYLE_CAP);
   } else {
-    const gender =
-      leadLock?.genderCode === "female"
+    const gender = rap
+      ? leadLock?.genderCode === "female"
+        ? "female lead rap vocal, clear diction, hip-hop flow"
+        : leadLock?.genderCode === "male"
+          ? "male lead rap vocal, clear diction, hip-hop flow"
+          : "lead rap vocal, clear diction, hip-hop flow"
+      : leadLock?.genderCode === "female"
         ? "female lead vocal, clear diction"
         : leadLock?.genderCode === "male"
           ? "male lead vocal, clear diction"
@@ -297,19 +312,20 @@ export function assembleAceStepStyle({
       .slice(0, 32);
     const arrange = normalizeMusicArrange(lead?.musicArrange);
     const bandBed = aceStepBandBedCompact(styleLock, arrange);
-    // Arc PAR PISTE (sonicRole / LLM) — sinon fallback générique.
+    // Arc PAR PISTE (sonicRole / LLM) — sinon fallback générique (rap = 808 layers).
     const trackArc =
       String(lead?.instrumentArc || "").trim() ||
       (normalizeSonicRole(lead?.sonicRole)
         ? composeInstrumentArc(lead.sonicRole, arrange)
         : "") ||
-      aceStepSectionDynamicsShort({ duo: false });
+      aceStepSectionDynamicsShort({ duo: false, rap });
     const albumContrast = String(lead?.albumContrastBit || "").trim() || null;
     // Caption minimal — doublons / pavés → mur de bruit ACE.
     styleFinal = [
       `${genre}. ${gender}`,
       bandBed,
       langBit,
+      rap ? "clear rapped lyrics, not melodic singing" : null,
       trackArc,
       albumContrast,
       mood || null,
@@ -322,6 +338,7 @@ export function assembleAceStepStyle({
   const brief = {
     duo: isDuo,
     bilingual: Boolean(duoLangs?.bilingual),
+    rap,
     leadLang: duoLangs?.leadLang || langCode,
     featLang: duoLangs?.featLang || null,
     lead: lead
@@ -354,6 +371,7 @@ export function assembleAceStepStyle({
         ? `bilingual singer1=${duoLangs.leadLang} singer2=${duoLangs.featLang}`
         : null,
       trackArc: String(lead?.instrumentArc || "").trim() || null,
+      rap,
     }),
   };
 
@@ -362,6 +380,7 @@ export function assembleAceStepStyle({
     langCode,
     duo: isDuo,
     bilingual: Boolean(duoLangs?.bilingual),
+    rap,
     brief,
   };
 }
@@ -473,6 +492,7 @@ export function buildAceStepBody({
     randomSeed: true,
     pollinations: { enabled: false },
   };
+  const rap = Boolean(assembled.rap || assembled.brief?.rap);
   if (/^https?:\/\//i.test(refUrl)) {
     body.referenceAudioUrl = refUrl;
     body.sourceAudioUrl = refUrl;
@@ -485,7 +505,9 @@ export function buildAceStepBody({
     // Cover : instruction courte (pavé long + style = mur de bruit SFT).
     body.instruction = isDuo
       ? "Obey [singer 1]/[singer 2]; keep groove from reference; clear vocals; change instrument layers by section."
-      : "Clear lead vocal; verse sparse band → chorus adds instrument layers → densest final; keep groove from reference.";
+      : rap
+        ? "Clear rapped lead; verse sparse 808+hats → chorus denser beat layers → densest final; keep groove from reference; not melodic singing."
+        : "Clear lead vocal; verse sparse band → chorus adds instrument layers → densest final; keep groove from reference.";
     if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < ACE_SFT_GUIDANCE)) {
       body.guidanceScale = ACE_SFT_GUIDANCE;
     }
@@ -493,7 +515,9 @@ export function buildAceStepBody({
     // text2music : instruction minimale (vide → ACE ignore parfois le style).
     body.instruction = isDuo
       ? "Obey [singer 1]/[singer 2]; change instrument layers by section."
-      : "Follow the style caption; change instrument layers by section (never same loop); sing lyrics clearly.";
+      : rap
+        ? "Follow the style caption; rap lyrics with clear hip-hop flow (not melodic singing); change beat layers by section (never same loop)."
+        : "Follow the style caption; change instrument layers by section (never same loop); sing lyrics clearly.";
   }
   return body;
 }

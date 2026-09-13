@@ -31,13 +31,11 @@ export async function GET({ url }) {
   try {
     const params = new URL(url).searchParams;
     const artistSlug = params.get("artist") || "";
-    let tracks = await listLibraryTracks(200);
-    if (artistSlug) {
-      tracks = tracks.filter(
-        (t) => t.slug === artistSlug || t.slug === decodeURIComponent(artistSlug),
-      );
-    }
-    const artists = (await listArtists(80, { includeAll: true })).map(slimArtistForPlay);
+    const [tracks, artistsRaw] = await Promise.all([
+      listLibraryTracks(200, { artistSlug }),
+      listArtists(80, { includeAll: true }),
+    ]);
+    const artists = artistsRaw.map(slimArtistForPlay);
     return json(
       { tracks, artists },
       200,

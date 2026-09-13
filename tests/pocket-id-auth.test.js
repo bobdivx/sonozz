@@ -8,7 +8,6 @@ import {
   decidePasswordLogin,
   isPublicPath,
   readSessionToken,
-  SSO_PASSWORD_BLOCKED,
 } from "../src/server/auth.js";
 import {
   buildOidcAuthorizeUrl,
@@ -121,17 +120,13 @@ describe("Pocket ID SSO optionnel", () => {
     assert.equal(isPublicPath("/403"), true);
   });
 
-  it("refuse le mot de passe uniquement si CE user a lié le SSO", () => {
+  it("accepte le mot de passe même si CE user a lié le SSO", () => {
     assert.deepEqual(decidePasswordLogin(true, false), { ok: true, role: "member" });
-    assert.deepEqual(decidePasswordLogin(true, true), {
-      ok: false,
-      reason: "sso_required",
-    });
+    assert.deepEqual(decidePasswordLogin(true, true), { ok: true, role: "member" });
     assert.deepEqual(decidePasswordLogin(false, true), {
       ok: false,
       reason: "invalid",
     });
-    assert.equal(SSO_PASSWORD_BLOCKED, "Ce compte se connecte avec Pocket ID");
   });
 
   it("accepte une session HMAC pour un email SSO (pas seulement AUTH_EMAIL)", () => {

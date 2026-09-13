@@ -289,9 +289,10 @@ function styleRowsFromProfile(profile = {}) {
   };
 }
 
-export default function ArtistHub({ slug }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+export default function ArtistHub({ slug, initialData = null }) {
+  const boot = initialData && initialData.slug === slug ? initialData : null;
+  const [data, setData] = useState(boot);
+  const [loading, setLoading] = useState(!boot);
   const [refreshStatsBusy, setRefreshStatsBusy] = useState(false);
   const [createTrackBusy, setCreateTrackBusy] = useState(false);
   const [deleteReleaseBusy, setDeleteReleaseBusy] = useState(false);
@@ -398,6 +399,10 @@ export default function ArtistHub({ slug }) {
   }
 
   useEffect(() => {
+    if (boot) {
+      if (boot.statsNeedSync) void softSyncOnce();
+      return;
+    }
     load();
   }, [slug]);
 
