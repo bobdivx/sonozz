@@ -146,7 +146,7 @@ export function aceOrganicVocalGuard(lock, genreBlob = "") {
     .join(" ")
     .toLowerCase();
   if (/trap|hip[\s-]?hop|drill|\brap\b|boom\s*bap|grime|rapped|trap flow/.test(blob)) {
-    return "dry natural rapped vocal, clear diction, hip-hop flow";
+    return "dry natural rapped vocal, crisp enunciation every word intelligible, hip-hop flow";
   }
   return "dry natural sung vocal, clear diction, intimate presence";
 }

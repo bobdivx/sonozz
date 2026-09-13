@@ -10,8 +10,8 @@ import { artefactGuardsFromLock, metalBandInstruments } from "./metal.js";
 export function aceStepProductionQualityFloor({ duo = false, rap = false } = {}) {
   if (rap) {
     return duo
-      ? "clear rapped lyrics, hip-hop flow, airy mix"
-      : "clear rapped lyrics every word intelligible, hip-hop flow, not melodic singing, airy mix";
+      ? "clear rapped lyrics every word intelligible, crisp enunciation, dry upfront vocal, airy mix"
+      : "clear rapped lyrics every word intelligible, crisp enunciation, dry upfront vocal over the beat, hip-hop flow, not melodic singing, airy mix";
   }
   return duo
     ? "clear sung lyrics, airy mix, warm guitar"
@@ -24,7 +24,7 @@ export function aceStepProductionQualityFloor({ duo = false, rap = false } = {})
  */
 export function aceStepSectionDynamicsCompact({ duo = false, rap = false } = {}) {
   const core = rap
-    ? "instrument layers change by section (not just louder): verse=sparse 808+hats → pre adds pads/melody → chorus=full beat (extra pads, chopped vocal sample, wider snare) → thin bridge → densest final — never one flat loop"
+    ? "instrument layers change by section (not just louder): verse=sparse 808+hats → pre adds pads/melody → chorus=full beat (extra pads, wider snare) → thin bridge → densest final — never one flat loop"
     : "instrument layers change by section (not just louder): verse=sparse bed (bass+light drums) → pre adds keys/pads → chorus=full band (extra guitar layers, pads, wider snare) → thin bridge → densest final — never one flat loop";
   if (duo) return `${core}; band lifts under the active tagged singer`;
   return core;
@@ -33,7 +33,7 @@ export function aceStepSectionDynamicsCompact({ duo = false, rap = false } = {})
 /** Phrase courte pour squelette solo / mustKeep (budget ~360c). */
 export function aceStepSectionDynamicsShort({ duo = false, rap = false } = {}) {
   const core = rap
-    ? "instrument layers change: verse sparse 808+hats → chorus adds pads/melody/chopped vocal → thin bridge → densest final — never same loop"
+    ? "instrument layers change: verse sparse 808+hats → chorus adds pads/melody → thin bridge → densest final — never same loop"
     : "instrument layers change: verse sparse → chorus adds guitar/keys/pads → thin bridge → densest final — never same loop";
   if (duo) return `${core}; lifts under active singer`;
   return core;

@@ -79,16 +79,19 @@ describe("enforceAceStyleLocks", () => {
     assert.equal(a.rap, true);
     assert.equal(a.brief.rap, true);
     assert.match(a.style, /rap vocal|rapped lyrics|hip-hop flow/i);
+    assert.match(a.style, /intelligible|enunciat/i);
     assert.doesNotMatch(a.style, /sung lyrics/i);
     assert.match(a.style, /808|trap drums|hi-hats/i);
-    assert.ok(a.brief.mustKeep.some((m) => /rapped|hip-hop flow/i.test(m)));
+    assert.ok(a.brief.mustKeep.some((m) => /rapped|hip-hop flow|intelligible/i.test(m)));
 
     const locked = enforceAceStyleLocks(
-      "Rap drill. clear sung lyrics. full band guitar bass drums.",
+      "Rap drill. male lead rap vocal. full band 808 bass, trap drums.",
       a.brief,
     );
+    assert.match(locked, /intelligible|enunciat/i);
     assert.match(locked, /rapped|hip-hop flow|rap vocal/i);
     assert.doesNotMatch(locked, /clear sung lyrics/i);
+    assert.ok(locked.length <= 360, `trop long: ${locked.length}`);
 
     const body = buildAceStepBody({
       title: "Drill",
@@ -100,7 +103,7 @@ describe("enforceAceStyleLocks", () => {
       styleLock: { genreSummary: "Rap / Drill francophone" },
     });
     assert.equal(body.guidanceScale, 3);
-    assert.match(body.instruction, /rap lyrics|hip-hop flow|not melodic singing/i);
+    assert.match(body.instruction, /crisp enunciation|every lyric clearly|intelligible/i);
     assert.doesNotMatch(body.instruction, /sing lyrics clearly/i);
   });
 

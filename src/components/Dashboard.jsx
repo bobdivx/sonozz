@@ -1867,6 +1867,36 @@ export default function Dashboard() {
             onMusicArrangeChange={(next) => {
               setProject((prev) => ({ ...prev, musicArrange: next }));
             }}
+            onAceTasteChange={async (nextTaste, message) => {
+              const taste = nextTaste && typeof nextTaste === "object" ? nextTaste : null;
+              const slug = String(project.artist?.slug || "").trim();
+              const artistWithTaste = project.artist
+                ? { ...project.artist, aceTaste: taste }
+                : null;
+              setProject((prev) => {
+                if (!prev.artist) return prev;
+                const next = {
+                  ...prev,
+                  artist: {
+                    ...prev.artist,
+                    aceTaste: taste,
+                  },
+                };
+                persist(next, {
+                  stepKey: "track",
+                  eventType: "ace-taste",
+                  message: message || "Goût ACE mis à jour",
+                });
+                return next;
+              });
+              if (slug && artistWithTaste) {
+                try {
+                  await api.saveArtistProfile(slug, artistWithTaste);
+                } catch (e) {
+                  console.warn("[ace-taste] profil artiste:", e?.message || e);
+                }
+              }
+            }}
             onSelectVersion={(id) => {
               const next = selectVersion(project, "track", id);
               setProject(next);

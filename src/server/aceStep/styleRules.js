@@ -12,7 +12,7 @@ import { isRapLane } from "../../lib/musicLane.js";
 export const ACE_STYLE_CAP = 700;
 
 /** Bump si les règles changent (invalide le cache mémoire). */
-export const ACE_STYLE_RULES_VERSION = 8;
+export const ACE_STYLE_RULES_VERSION = 9;
 
 /** Cible caption — au-delà ACE sature (noise wall). */
 export const ACE_STYLE_TARGET = 360;
@@ -43,14 +43,15 @@ export const ACE_STYLE_MUST_CORE = [
 /** MustKeep LLM — lane rap / hip-hop. */
 export const ACE_STYLE_MUST_CORE_RAP = [
   "full band once (808/trap bed)",
-  "clear rapped lyrics, hip-hop flow, not melodic singing",
+  "clear rapped lyrics every word intelligible, crisp enunciation, hip-hop flow, not melodic singing",
+  "dry upfront lead vocal over the beat (not buried)",
   "airy mix",
   "instrument layers change by section (never same loop)",
 ];
 
 export const ACE_STYLE_FALLBACK_CLARITY = "clear sung lyrics";
 export const ACE_STYLE_FALLBACK_CLARITY_RAP =
-  "clear rapped lyrics, hip-hop flow, not melodic singing";
+  "clear rapped lyrics every word intelligible, crisp enunciation, dry upfront vocal, hip-hop flow, not melodic singing";
 export const ACE_STYLE_FALLBACK_BAND = "full band: guitar, bass, drums, keys";
 export const ACE_STYLE_FALLBACK_BAND_RAP =
   "full band: 808 bass, trap drums, hi-hats, synth pads, piano";
@@ -58,7 +59,7 @@ export const ACE_STYLE_FALLBACK_MIX = "airy mix";
 export const ACE_STYLE_FALLBACK_DYNAMICS =
   "instrument layers change: verse sparse → chorus adds guitar/keys/pads → densest final";
 export const ACE_STYLE_FALLBACK_DYNAMICS_RAP =
-  "instrument layers change: verse sparse 808+hats → chorus adds pads/melody/chopped vocal → densest final — never same loop";
+  "instrument layers change: verse sparse 808+hats → chorus adds pads/melody → densest final — never same loop";
 
 export function briefIsRap(brief = {}) {
   if (brief?.rap === true) return true;
@@ -72,9 +73,11 @@ export function briefIsRap(brief = {}) {
 
 export function aceGenderHardPrefix(genderCode, { rap = false } = {}) {
   if (rap) {
-    if (genderCode === "female") return "female lead rap vocal, woman rapper, clear diction";
-    if (genderCode === "male") return "male lead rap vocal, man rapper, clear diction";
-    return "lead rap vocal, clear diction, hip-hop flow";
+    if (genderCode === "female")
+      return "female lead rap vocal, woman rapper, crisp enunciation every word intelligible";
+    if (genderCode === "male")
+      return "male lead rap vocal, man rapper, crisp enunciation every word intelligible";
+    return "lead rap vocal, crisp enunciation every word intelligible, hip-hop flow";
   }
   if (genderCode === "female") return "female lead vocal, woman singer, clear diction";
   if (genderCode === "male") return "male lead vocal, man singer, clear diction";
@@ -110,7 +113,17 @@ export function buildAceStyleBriefLocks({
     ].filter(Boolean),
     avoid: [
       ...ACE_STYLE_AVOID,
-      ...(rap ? ["melodic pop singing", "belting chorus", "sung ballad"] : []),
+      ...(rap
+        ? [
+            "melodic pop singing",
+            "belting chorus",
+            "sung ballad",
+            "mumbled flow",
+            "slurred words",
+            "buried vocals under 808",
+            "chopped unintelligible lead",
+          ]
+        : []),
     ],
     trackArc: trackArc || null,
     rap: Boolean(rap),
@@ -123,7 +136,7 @@ export function aceStyleLlmRulesBlock(brief = {}) {
   const avoid = (brief.avoid || ACE_STYLE_AVOID).join("; ");
   const trackArc = String(brief?.trackArc || "").trim();
   const delivery = rap
-    ? "genre first as hip-hop/rap, rapped vocals with rhythmic flow (NOT melodic singing), full trap/808 band"
+    ? "genre first as hip-hop/rap, rapped vocals with crisp enunciation every word intelligible (NOT mumbled, NOT melodic singing), dry upfront lead over 808 bed"
     : "genre, full band, clear lyrics, airy mix";
   return `Rules:
 - Output ONE short English style caption (~${ACE_STYLE_TARGET} chars max, prefer ~300).
@@ -132,7 +145,7 @@ export function aceStyleLlmRulesBlock(brief = {}) {
 - Start with gender ONCE: "${aceGenderHardPrefix(brief?.lead?.gender, { rap }) || "lead vocal"}" — never repeat it.
 - Then: ${delivery}, instrument-layer section arc — each ONCE.
 - Name which layers enter/exit (verse sparse → chorus denser) — "thicker" alone is not enough.
-${trackArc ? `- Include this track instrument plan once: "${trackArc.slice(0, 200)}"` : ""}
+${rap ? "- Lead rap must stay dry and upfront; do not bury vocals under the beat; no mumbled or slurred delivery.\n" : ""}${trackArc ? `- Include this track instrument plan once: "${trackArc.slice(0, 200)}"` : ""}
 - No essays, no duplicate sentences, no second genre.`;
 }
 
@@ -167,10 +180,10 @@ export function rewriteOppositeGender(text, genderCode) {
 export function stripGenderPhrases(text) {
   return String(text || "")
     .replace(
-      /\b(female|male) lead (?:rap )?vocal(?:,?\s*(?:woman|man) (?:singer|rapper))?(?:,?\s*clear(?:\s+articulate)?(?:\s+(?:female|male))?\s+(?:voice|diction))?\b\.?\s*/gi,
+      /\b(female|male) lead (?:rap )?vocal(?:,?\s*(?:woman|man) (?:singer|rapper))?(?:,?\s*(?:clear diction|crisp enunciation(?: every word intelligible)?))?\b\.?\s*/gi,
       "",
     )
-    .replace(/\b(woman|man) (?:singer|rapper),?\s*clear diction\b\.?\s*/gi, "")
+    .replace(/\b(woman|man) (?:singer|rapper),?\s*(?:clear diction|crisp enunciation)\b\.?\s*/gi, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -242,18 +255,22 @@ export function enforceAceStyleLocks(caption, brief = {}) {
   // Rap : retirer « sung lyrics » injecté par LLM / squelette pop.
   if (rap) {
     s = s
-      .replace(/\bclear sung lyrics(?: every word intelligible)?\b/gi, "clear rapped lyrics, hip-hop flow")
+      .replace(/\bclear sung lyrics(?: every word intelligible)?\b/gi, "clear rapped lyrics every word intelligible")
       .replace(/\bsung lyrics\b/gi, "rapped lyrics")
       .replace(/\bmelodic (?:pop )?singing\b/gi, "rapped flow");
   }
 
   s = dedupeStyleClauses(s);
 
+  // Rap : exiger intelligibilité (pas seulement « rapped / hip-hop flow »).
   const clarityOk = rap
-    ? /\b(rapped|rap vocal|hip-?hop flow|intelligible|diction)\b/i.test(s)
+    ? /\b(intelligible|enunciat(?:e|ion)|crisp diction|every word)\b/i.test(s)
     : /\b(clear|intelligible|diction)\b/i.test(s);
   if (!clarityOk) {
     s = `${s.replace(/\.\s*$/, "")}. ${rap ? ACE_STYLE_FALLBACK_CLARITY_RAP : ACE_STYLE_FALLBACK_CLARITY}.`;
+  }
+  if (rap && !/\b(upfront|dry (?:natural )?rap|lead (?:rap )?vocal (?:over|upfront)|not buried)\b/i.test(s)) {
+    s = `${s.replace(/\.\s*$/, "")}. dry upfront lead vocal over the beat.`;
   }
   if (!/\b(full band|guitar|bass|drums|808|trap drums)\b/i.test(s)) {
     s = `${s.replace(/\.\s*$/, "")}. ${rap ? ACE_STYLE_FALLBACK_BAND_RAP : ACE_STYLE_FALLBACK_BAND}.`;

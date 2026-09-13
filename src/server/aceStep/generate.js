@@ -99,7 +99,8 @@ export async function startAceStep(keys, {
   // Préférence SFT ignorée en pipeline → Turbo. Lab / forceAceModelId pour forcer SFT.
   const preferredRaw = labMode
     ? null
-    : String(keys?.aceStepPreferredModel || "").trim() || null;
+    : String(artist?.aceTaste?.preferredModel || keys?.aceStepPreferredModel || "").trim() ||
+      null;
   const skipSftPreferred =
     Boolean(preferredRaw) &&
     isAceStepSftModel(preferredRaw) &&

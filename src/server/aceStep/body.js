@@ -30,6 +30,7 @@ import {
 } from "../../lib/featArtist.js";
 import { normalizeMusicArrange } from "../../lib/musicArrange.js";
 import { composeInstrumentArc, normalizeSonicRole } from "../../lib/sonicVariation.js";
+import { applyAceTasteToBody } from "../../lib/aceTaste.js";
 import {
   ACE_STYLE_CAP,
   ACE_STYLE_TARGET,
@@ -295,10 +296,10 @@ export function assembleAceStepStyle({
   } else {
     const gender = rap
       ? leadLock?.genderCode === "female"
-        ? "female lead rap vocal, clear diction, hip-hop flow"
+        ? "female lead rap vocal, crisp enunciation every word intelligible"
         : leadLock?.genderCode === "male"
-          ? "male lead rap vocal, clear diction, hip-hop flow"
-          : "lead rap vocal, clear diction, hip-hop flow"
+          ? "male lead rap vocal, crisp enunciation every word intelligible"
+          : "lead rap vocal, crisp enunciation every word intelligible"
       : leadLock?.genderCode === "female"
         ? "female lead vocal, clear diction"
         : leadLock?.genderCode === "male"
@@ -325,7 +326,7 @@ export function assembleAceStepStyle({
       `${genre}. ${gender}`,
       bandBed,
       langBit,
-      rap ? "clear rapped lyrics, not melodic singing" : null,
+      rap ? "clear rapped lyrics every word intelligible, dry upfront vocal, not melodic singing" : null,
       trackArc,
       albumContrast,
       mood || null,
@@ -506,7 +507,7 @@ export function buildAceStepBody({
     body.instruction = isDuo
       ? "Obey [singer 1]/[singer 2]; keep groove from reference; clear vocals; change instrument layers by section."
       : rap
-        ? "Clear rapped lead; verse sparse 808+hats → chorus denser beat layers → densest final; keep groove from reference; not melodic singing."
+        ? "Clear rapped lead every word intelligible; dry upfront vocal; verse sparse 808+hats → chorus denser beat layers → densest final; keep groove from reference; not melodic singing, not mumbled."
         : "Clear lead vocal; verse sparse band → chorus adds instrument layers → densest final; keep groove from reference.";
     if (!infer.isTurbo && (body.guidanceScale == null || body.guidanceScale < ACE_SFT_GUIDANCE)) {
       body.guidanceScale = ACE_SFT_GUIDANCE;
@@ -516,8 +517,8 @@ export function buildAceStepBody({
     body.instruction = isDuo
       ? "Obey [singer 1]/[singer 2]; change instrument layers by section."
       : rap
-        ? "Follow the style caption; rap lyrics with clear hip-hop flow (not melodic singing); change beat layers by section (never same loop)."
+        ? "Follow the style caption; rap every lyric clearly with crisp enunciation (not mumbled, not melodic singing); dry upfront vocal over the beat; change beat layers by section (never same loop)."
         : "Follow the style caption; change instrument layers by section (never same loop); sing lyrics clearly.";
   }
-  return body;
+  return applyAceTasteToBody(body, lead?.aceTaste);
 }
