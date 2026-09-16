@@ -4,7 +4,7 @@ WORKDIR /app
 COPY package.json ./
 COPY package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
-ARG CACHEBUST=e118b71-nocache3
+ARG CACHEBUST=bfe550c-login-header
 RUN echo "cachebust=$CACHEBUST"
 COPY . .
 RUN ls -la src/components/PlayerPage.jsx src/pages/play.astro \
