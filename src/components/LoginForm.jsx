@@ -27,11 +27,14 @@ export default function LoginForm({
   preferSso = false,
 }) {
   const [email, setEmail] = useState(String(initialEmail || ""));
-  const [passwordOpen, setPasswordOpen] = useState(!preferSso);
+  // Toujours afficher email/mot de passe (comptes DB) — SSO en complément, pas à la place.
+  const [passwordOpen, setPasswordOpen] = useState(true);
 
   const queryError = ERROR_MESSAGES[errorCode] || "";
   const alert = error || queryError;
   const ssoFirst = preferSso && oidcConfigured;
+  // Formulaire mdp toujours dispo si auth env OU comptes utilisateurs (studio).
+  const showPassword = passwordConfigured !== false;
 
   const ssoButton = oidcConfigured ? (
     <a
@@ -42,7 +45,7 @@ export default function LoginForm({
     </a>
   ) : null;
 
-  const passwordForm = passwordConfigured ? (
+  const passwordForm = showPassword ? (
     <form
       class="space-y-4"
       method="POST"
@@ -98,7 +101,7 @@ export default function LoginForm({
     </form>
   ) : null;
 
-  const divider = oidcConfigured && passwordConfigured ? (
+  const divider = oidcConfigured && showPassword ? (
     <div
       class="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-base-content/40"
       aria-hidden="true"
@@ -113,8 +116,8 @@ export default function LoginForm({
     <div class="space-y-4">
       {ssoFirst && ssoButton}
       {ssoFirst && divider}
-      {passwordOpen || !ssoFirst ? passwordForm : null}
-      {ssoFirst && passwordConfigured && !passwordOpen && (
+      {(passwordOpen || !ssoFirst) && passwordForm}
+      {ssoFirst && showPassword && !passwordOpen && (
         <button
           type="button"
           class="btn btn-ghost btn-sm w-full text-base-content/60"
@@ -125,12 +128,12 @@ export default function LoginForm({
       )}
       {!ssoFirst && divider}
       {!ssoFirst && ssoButton}
-      {!oidcConfigured && passwordConfigured && (
+      {!oidcConfigured && showPassword && (
         <p class="text-center text-xs text-base-content/40">
           Pocket ID non configuré en local (OIDC_* absentes).
         </p>
       )}
-      {!passwordConfigured && alert && (
+      {!showPassword && alert && (
         <p class="rounded-md bg-error/15 px-3 py-2 text-sm text-error" role="alert">
           {alert}
         </p>

@@ -101,7 +101,11 @@ export default function AppShell({
       <div class={fillViewport ? "flex h-dvh flex-col overflow-hidden" : "min-h-screen"}>
         <header class="shrink-0 sticky top-0 z-30 border-b border-base-content/10 bg-base-200/90 backdrop-blur">
           <div class="mx-auto flex max-w-4xl items-center gap-3 px-4 py-3 sm:px-6">
-            <a href="/play" class="font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl">
+            <a
+              href="/"
+              class="font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl"
+              aria-label="SONOZZ — Accueil"
+            >
               SONOZZ
             </a>
             {!hideSearch && (
@@ -129,6 +133,12 @@ export default function AppShell({
             )}
             {hideSearch ? <div class="ml-auto" /> : null}
             {actions ? <div class="shrink-0">{actions}</div> : null}
+            <a
+              href="/login"
+              class="btn btn-ghost btn-sm shrink-0 border border-base-content/15"
+            >
+              Connexion
+            </a>
           </div>
         </header>
         {(title || subtitle) && (
@@ -169,9 +179,9 @@ export default function AppShell({
             </button>
           )}
           <a
-            href="/studio"
+            href="/"
             class="shrink-0 font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl"
-            aria-label="SONOZZ — Studio"
+            aria-label="SONOZZ — Accueil"
           >
             SONOZZ
           </a>

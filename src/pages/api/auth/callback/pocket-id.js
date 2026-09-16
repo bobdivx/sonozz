@@ -129,11 +129,15 @@ export async function GET({ request, cookies, url }) {
     });
   } catch (e) {
     const msg = String(e?.message || "");
+    console.error("[oidc] callback failed:", msg);
     if (/déjà lié/i.test(msg)) {
       return loginError(cookies, "sso_taken");
     }
     if (/invitation|inconnu|désactivé/i.test(msg)) {
       return loginError(cookies, "sso_invite");
+    }
+    if (/Turso|libsql|DATABASE|fetch failed/i.test(msg)) {
+      return loginError(cookies, "sso");
     }
     return loginError(cookies, "sso");
   }

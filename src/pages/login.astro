@@ -31,12 +31,14 @@ if (session) {
 
 let error = "";
 let postedEmail = "";
-const passwordConfigured = isAuthConfigured();
+const envPasswordConfigured = isAuthConfigured();
+// Formulaire toujours affiché : login via users DB même sans AUTH_EMAIL.
+const passwordConfigured = true;
 const oidcConfigured = isOidcConfigured();
 const preferSso = Astro.cookies.get(SSO_HINT_COOKIE)?.value === "1";
 
 if (Astro.request.method === "POST") {
-  if (!passwordConfigured) {
+  if (!envPasswordConfigured && !oidcConfigured) {
     error = "Auth non configurée sur le serveur";
   } else {
     const form = await Astro.request.formData();
