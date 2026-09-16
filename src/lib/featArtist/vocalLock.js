@@ -1,4 +1,4 @@
-import { resolveArtistGender, ARTIST_GENDER_LABELS } from "../artistGender.js";
+import { resolveArtistGender, ARTIST_GENDER_LABELS, adaptVocalTextToGender } from "../artistGender.js";
 
 /** Lock vocal figé pour un artiste (lead ou feat) — jamais croisé. */
 export function vocalLockForArtist(artist) {
@@ -7,13 +7,20 @@ export function vocalLockForArtist(artist) {
   const code = gender?.code || null;
   const lock = artist.styleLock || {};
   const sample = artist.voiceSample || {};
-  const timbre =
+  const timbreRaw =
     sample.songGenTimbre ||
     sample.analyzedTimbre ||
     sample.timbreHint ||
     lock.timbre ||
     null;
-  const vocalStyle = lock.vocalStyle || artist.voice || null;
+  const vocalStyleRaw = lock.vocalStyle || artist.voice || null;
+  const timbre = timbreRaw
+    ? adaptVocalTextToGender(String(timbreRaw).slice(0, 80), code) || String(timbreRaw).slice(0, 80)
+    : null;
+  const vocalStyle = vocalStyleRaw
+    ? adaptVocalTextToGender(String(vocalStyleRaw).slice(0, 100), code) ||
+      String(vocalStyleRaw).slice(0, 100)
+    : null;
 
   let voiceHint = "vocals";
   if (code === "female") voiceHint = "female vocals, woman singer";

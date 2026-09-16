@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { catalogGenresToStyleValues, matchMusicStyleFromGenre, inferLanguageFromStyleRef, styleGenreChips, uniqueGenreLabels, describeStyleMix, formatStyleMixSummary } from "../src/lib/studio.js";
+import { catalogGenresToStyleValues, matchMusicStyleFromGenre, inferLanguageFromStyleRef, styleGenreChips, uniqueGenreLabels, describeStyleMix, formatStyleMixSummary, extrasBeyondStyleLock } from "../src/lib/studio.js";
 
 describe("matchMusicStyleFromGenre", () => {
   it("mappe alternative metal vers Metal, pas Indie", () => {
@@ -71,6 +71,25 @@ describe("catalogGenresToStyleValues", () => {
     assert.deepEqual(catalogGenresToStyleValues(["Rock", "Death Metal"]), [
       "Death Metal / Brutal",
     ]);
+  });
+});
+
+describe("extrasBeyondStyleLock", () => {
+  it("ignore les pastilles auto-mappées du lock (pas un mix extra)", () => {
+    assert.deepEqual(
+      extrasBeyondStyleLock(
+        ["Trap", "Hip-Hop", "Drill"],
+        ["Trap / Cloud rap", "Rap / Drill francophone"],
+      ),
+      [],
+    );
+  });
+
+  it("garde un style vraiment ajouté à la main", () => {
+    assert.deepEqual(
+      extrasBeyondStyleLock(["Trap", "Hip-Hop"], ["Rap / Drill francophone", "Folk / Acoustique"]),
+      ["Folk / Acoustique"],
+    );
   });
 });
 

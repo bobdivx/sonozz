@@ -57,6 +57,7 @@ function voiceAsGenderHint(voice) {
 
 /**
  * Voix / sexe déjà enregistrés sur le profil (création, genderLock, portrait…).
+ * Ne lit PAS styleLock.vocalStyle / timbre : c’est le DNA de la RÉFÉRENCE, pas l’identité.
  * @returns {{ code: "male"|"female"|"nonbinary", label: string } | null}
  */
 export function resolveArtistGender(artist) {
@@ -66,7 +67,6 @@ export function resolveArtistGender(artist) {
     artist.visualIdentity?.gender,
     artist.visualIdentity?.genderLock,
     voiceAsGenderHint(artist.voice),
-    artist.styleLock?.vocalStyle,
     artist.portraitPrompt,
     artist.visualIdentity?.portraitPrompt,
   ];
@@ -75,6 +75,39 @@ export function resolveArtistGender(artist) {
     if (code) return { code, label: ARTIST_GENDER_LABELS[code] };
   }
   return null;
+}
+
+const FEMALE_REGISTER_MAP = [
+  [/\btenor\b/gi, "alto"],
+  [/\bbaritone\b/gi, "mezzo"],
+  [/\bbass vocals?\b/gi, "alto vocals"],
+  [/\bmale\b/gi, "female"],
+  [/\bmasculine\b/gi, "feminine"],
+  [/\bman singer\b/gi, "woman singer"],
+];
+const MALE_REGISTER_MAP = [
+  [/\bmezzo(?:-soprano)?\b/gi, "tenor"],
+  [/\bsoprano\b/gi, "tenor"],
+  [/\balto\b/gi, "tenor"],
+  [/\bfemale\b/gi, "male"],
+  [/\bfeminine\b/gi, "masculine"],
+  [/\bwoman singer\b/gi, "man singer"],
+];
+
+/**
+ * Garde la couleur vocale (raspy, powerful…) mais aligne le registre sur le sexe choisi.
+ * Le DNA catalogue (tenor d’une réf. homme) ne doit pas imposer un personnage homme.
+ */
+export function adaptVocalTextToGender(text, genderCode) {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+  const code = parseGenderCode(genderCode);
+  if (!code || code === "nonbinary") return raw;
+  if (/^bass$/i.test(raw)) return code === "female" ? "alto" : raw;
+  const maps = code === "female" ? FEMALE_REGISTER_MAP : code === "male" ? MALE_REGISTER_MAP : [];
+  let out = raw;
+  for (const [re, to] of maps) out = out.replace(re, to);
+  return out.replace(/\s+/g, " ").trim();
 }
 
 /** Sexe catalogue (MusicBrainz) d’un artiste de référence. */

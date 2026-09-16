@@ -490,6 +490,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
     onGenerate({
       mode: "fiction",
       name: name.trim(),
+      gender: gender || undefined,
       genre: resolvedGenre || undefined,
       genres: resolvedGenres.length ? resolvedGenres : undefined,
       language,

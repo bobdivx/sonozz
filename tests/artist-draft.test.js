@@ -139,6 +139,23 @@ describe("buildArtistDraftPatch", () => {
     assert.equal(patch.genre, "brutal death metal");
   });
 
+  it("le DNA titre copie le style, pas la langue ni le sexe", () => {
+    const patch = artistPatchFromStyleLock(
+      {
+        genreSummary: "Trap",
+        genres: ["Trap", "Drill"],
+        timbre: "raspy tenor",
+        bpm: 140,
+      },
+      { language: "fr", gender: "female" },
+    );
+    assert.equal(patch.language, undefined);
+    assert.equal(patch.gender, undefined);
+    assert.equal(patch.genre, "Trap");
+    assert.deepEqual(patch.genres, ["Trap", "Drill"]);
+    assert.equal(patch.styleLock.timbre, "raspy tenor");
+  });
+
   it("détecte un brouillon déjà identique au profil sauvé", () => {
     const prev = {
       mode: "self",

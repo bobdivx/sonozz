@@ -3,6 +3,8 @@ import { checkArtistNameAvailability } from "../styleReference.js";
 import { isUsableRasterImage, materializeImageForStorage } from "../imagePersist.js";
 import { slugify } from "../artists.js";
 import { coalesceGenres } from "../../lib/musicLane.js";
+import { extrasBeyondStyleLock } from "../../lib/studio.js";
+import { adaptVocalTextToGender } from "../../lib/artistGender.js";
 import { llmJson, requireTextLlm } from "../llm.js";
 import {
   FREE_NAME_PER_ROUND,
@@ -110,14 +112,12 @@ export async function runArtist({
     .trim()
     .slice(0, 120);
 
-  // Mix : DNA de référence (lock) ∪ styles ajoutés par l'utilisateur (jamais un remplacement)
+  // Mix : DNA de référence (lock) ∪ ajouts manuels (pastilles auto-mappées ≠ extras)
   const lockGenres = Array.isArray(styleLock?.genres) ? styleLock.genres : [];
+  const extrasOnly = styleLock ? extrasBeyondStyleLock(lockGenres, userStyles) : [];
   const finalGenres = styleLock
-    ? coalesceGenres([...lockGenres, ...userStyles])
+    ? coalesceGenres([...lockGenres, ...extrasOnly])
     : coalesceGenres(userStyles);
-  const extrasOnly = userStyles.filter(
-    (g) => !lockGenres.some((lg) => String(lg).toLowerCase() === String(g).toLowerCase()),
-  );
   const extraStyleNote =
     styleLock && extrasOnly.length
       ? `
@@ -271,16 +271,19 @@ Les tendances charts ci-dessous sont IGNORÉES si elles contredisent ce lock.
     : `Style(s) musical(aux) imposé(s): ${stylePrompt || "choisis un style cohérent avec les tendances (explicite et précis)"}`
 }
 
-Langue des chansons imposée: ${langName} (code ${lang}) — le catalogue et les paroles seront dans cette langue.
+Langue des chansons imposée: ${langName} (code ${lang}) — le catalogue et les paroles seront dans cette langue. N'importe PAS la langue de l'artiste / titre de référence.
 Indices personnalité / univers (PAS le style musical): ${bioHint || "aucun"}
 Tendances (contexte marché${styleLock ? " — SECONDARY, ne pas écraser le lock" : ""}): ${promptJson(styleLock ? {} : trends || {})}
 
-IMPORTANT — SEXE / PRÉSENTATION (à ne PAS confondre avec le style musical « genre ») :
-- Choisis UN seul gender: "male" | "female" | "nonbinary"${forcedGender ? ` — FORCÉ: "${genderVisualLock(forcedGender, selfAge).code}"` : ""}.
+IMPORTANT — IDENTITÉ ≠ DNA SONORE :
+- Le lock ci-dessus clone le SON (groove, BPM, prod, instruments, couleur vocale). PAS le visage, PAS le sexe, PAS la langue.
+- gender / portrait / legalName sont une identité FICTIONNELLE distincte. vocalRegister « tenor » ou « baritone » décrit la RÉFÉRENCE, ça n'impose PAS un homme.
+- Choisis UN seul gender: "male" | "female" | "nonbinary"${forcedGender ? ` — FORCÉ (copie exacte): "${genderVisualLock(forcedGender, selfAge).code}"` : " — libre, sans recopier le sexe de la référence"}.
 - Tout le profil DOIT coller : name / legalName / aka / bio / voice / look / wardrobe / portraitPrompt.
 - Si gender=male → chanteur homme, voix masculine, portrait d'un homme adulte.
 - Si gender=female → chanteuse femme, voix féminine, portrait d'une femme adulte.
 - Interdit : bio au masculin + portrait féminin (et l'inverse).
+- "voice" reprend la COULEUR / le flow de la référence (raspy, shouted ad-libs, energetic…) mais le registre (tenor/mezzo/alto) colle au gender choisi.
 
 JSON strict:
 {
@@ -308,7 +311,7 @@ JSON strict:
 }
 ${
   styleLock
-    ? `"genre" DOIT être: "${finalGenre}". "genres" DOIT être: ${JSON.stringify(finalGenres)}. "mood" DOIT être proche de: "${styleLock.mood}". "voice" DOIT coller à: "${styleLock.vocalStyle}".`
+    ? `"genre" DOIT être: "${finalGenre}". "genres" DOIT être: ${JSON.stringify(finalGenres)}. "mood" DOIT être proche de: "${styleLock.mood}". "voice" reprend la couleur de "${styleLock.vocalStyle}" adaptée au gender choisi (pas le sexe de la référence).`
     : finalGenre
       ? `Le champ "genre" DOIT résumer le STYLE MUSICAL: "${finalGenre}". "genres" = ${JSON.stringify(finalGenres)}. Ce n'est PAS le sexe.`
       : ""
@@ -364,7 +367,8 @@ JSON strict: { "names": [string, string, string, string], "name": string, "aka":
 
   // Force paramètres depuis le style lock (la vérité catalogue+LLM)
   const lockedMood = styleLock?.mood || data.mood;
-  const lockedVoice = styleLock?.vocalStyle || data.voice || lock.voiceHint;
+  const lockedVoiceRaw = styleLock?.vocalStyle || data.voice || lock.voiceHint;
+  const lockedVoice = adaptVocalTextToGender(lockedVoiceRaw, lock.code) || lockedVoiceRaw;
   const lockedInfluences = styleLock?.influences?.length
     ? styleLock.influences
     : Array.isArray(data.influences)

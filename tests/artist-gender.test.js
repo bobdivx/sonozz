@@ -5,6 +5,7 @@ import {
   resolveArtistGender,
   withResolvedArtistGender,
   inferGenderFromStyleRef,
+  adaptVocalTextToGender,
 } from "../src/lib/artistGender.js";
 
 describe("resolveArtistGender", () => {
@@ -52,6 +53,25 @@ describe("resolveArtistGender", () => {
   it("parse le sexe MusicBrainz Female / Male", () => {
     assert.equal(parseGenderCode("Female"), "female");
     assert.equal(parseGenderCode("Male"), "male");
+  });
+
+  it("n’infère pas le sexe depuis le timbre de la référence (tenor)", () => {
+    assert.equal(
+      resolveArtistGender({
+        styleLock: { vocalStyle: "energetic raspy tenor", vocalRegister: "tenor" },
+      }),
+      null,
+    );
+  });
+});
+
+describe("adaptVocalTextToGender", () => {
+  it("garde la couleur, change le registre", () => {
+    assert.equal(
+      adaptVocalTextToGender("powerful, slightly raspy tenor", "female"),
+      "powerful, slightly raspy alto",
+    );
+    assert.equal(adaptVocalTextToGender("bright mezzo", "male"), "bright tenor");
   });
 });
 

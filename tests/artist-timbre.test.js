@@ -58,4 +58,20 @@ describe("artistTimbre", () => {
     assert.equal(artistHasLockedTimbre(locked), true);
     assert.equal(locked.voiceSample.timbreSource, "profile-synth");
   });
+
+  it("adapte le tenor de la référence à une artiste femme", async () => {
+    const { synthesizeArtistTimbreDna } = await import("../src/server/artistTimbre.js");
+    const dna = synthesizeArtistTimbreDna({
+      name: "Nova",
+      gender: "female",
+      styleLock: {
+        vocalRegister: "tenor",
+        timbre: "powerful slightly raspy tenor",
+        vocalStyle: "energetic anthemic tenor",
+      },
+    });
+    assert.match(dna.vocalRegister, /alto|mezzo/i);
+    assert.doesNotMatch(dna.songGenTimbre, /tenor/i);
+    assert.doesNotMatch(dna.vocalStyle, /tenor/i);
+  });
 });

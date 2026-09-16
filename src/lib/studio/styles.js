@@ -52,8 +52,8 @@ export function matchMusicStyleFromGenre(raw) {
     { re: /gospel|worship|inspirational/, value: "Gospel / Inspirational" },
     { re: /neo-?soul|quiet storm/, value: "Neo-soul / Quiet storm" },
     { re: /r&?b|soul/, value: "R&B / Soul moderne" },
-    { re: /drill|rap|hip[\s-]?hop/, value: "Rap / Drill francophone" },
     { re: /trap|cloud/, value: "Trap / Cloud rap" },
+    { re: /drill|\brap\b|hip[\s-]?hop/, value: "Rap / Drill francophone" },
     { re: /boom\s*bap|old\s*school/, value: "Hip-hop old school / Boom bap" },
     { re: /amapiano/, value: "Amapiano / Afro-house" },
     { re: /afro|afrobeats/, value: "Afrobeats / Afro-pop" },
@@ -89,6 +89,37 @@ export function matchMusicStyleFromGenre(raw) {
     }
   }
   return null;
+}
+
+/** True si une pastille UI (Rap / Drill…) est déjà couverte par les genres du lock. */
+export function styleValueCoveredByLock(styleValue, lockGenres = []) {
+  const want = String(styleValue || "").trim().toLowerCase();
+  if (!want) return false;
+  const list = Array.isArray(lockGenres) ? lockGenres : [lockGenres];
+  for (const raw of list) {
+    const g = String(raw || "").trim();
+    if (!g) continue;
+    if (g.toLowerCase() === want) return true;
+    const mapped = matchMusicStyleFromGenre(g);
+    if (mapped?.value && mapped.value.toLowerCase() === want) return true;
+    if (mapped?.label && mapped.label.toLowerCase() === want) return true;
+  }
+  return false;
+}
+
+/**
+ * Ajouts manuels au-delà du DNA de référence.
+ * Les pastilles auto-mappées (Hip-Hop → Rap / Drill) ne comptent pas comme un mix extra.
+ */
+export function extrasBeyondStyleLock(lockGenres = [], userStyles = []) {
+  const lock = (Array.isArray(lockGenres) ? lockGenres : [lockGenres])
+    .map((g) => String(g || "").trim())
+    .filter(Boolean);
+  const user = (Array.isArray(userStyles) ? userStyles : [userStyles])
+    .map((g) => String(g || "").trim())
+    .filter(Boolean);
+  if (!lock.length) return user;
+  return user.filter((g) => !styleValueCoveredByLock(g, lock));
 }
 
 /** Genres catalogue (iTunes/Spotify) → values MUSIC_STYLES, dédupliquées. */

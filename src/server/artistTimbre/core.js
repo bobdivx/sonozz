@@ -1,3 +1,5 @@
+import { adaptVocalTextToGender } from "../../lib/artistGender.js";
+
 /**
  * Timbre figé sur le profil artiste — source de vérité pour ACE / SongGen / duo.
  */
@@ -83,6 +85,10 @@ export function synthesizeArtistTimbreDna(artist) {
     else if (/mezzo/i.test(voiceBlob)) register = "mezzo";
     else register = registerFromGender;
   }
+  register = adaptVocalTextToGender(register, gender) || register;
+  if (!/tenor|baritone|bass|alto|soprano|mezzo|spoken|mixed|unknown/i.test(register)) {
+    register = registerFromGender;
+  }
 
   const delivery = [];
   if (/rap|spoken|parlé/i.test(voiceBlob)) delivery.push("spoken-sung");
@@ -96,6 +102,7 @@ export function synthesizeArtistTimbreDna(artist) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 80);
+  songGenTimbre = adaptVocalTextToGender(songGenTimbre, gender) || songGenTimbre;
 
   if (!songGenTimbre || songGenTimbre.split(/\s+/).length < 2) {
     songGenTimbre = [...qualities.slice(0, 2), register, ...delivery.slice(0, 1)]
@@ -105,9 +112,10 @@ export function synthesizeArtistTimbreDna(artist) {
   }
 
   const vocalStyle =
-    String(lock.vocalStyle || artist.voice || "")
-      .trim()
-      .slice(0, 120) || `${qualities[0]} ${register} vocals`;
+    adaptVocalTextToGender(
+      String(lock.vocalStyle || artist.voice || "").trim().slice(0, 120),
+      gender,
+    ) || `${qualities[0]} ${register} vocals`;
 
   return {
     timbre: songGenTimbre,
