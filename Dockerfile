@@ -4,6 +4,9 @@ WORKDIR /app
 COPY package.json ./
 COPY package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# Bust stale layer cache when git SHA advances but Docker still reuses old COPY/build
+ARG SONOZZ_GIT_SHA=unknown
+RUN echo "sonozz-build=$SONOZZ_GIT_SHA"
 COPY . .
 RUN npm run build
 
