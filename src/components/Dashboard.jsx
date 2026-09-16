@@ -162,7 +162,30 @@ function applySongTitle(project, title) {
 }
 
 export default function Dashboard() {
-  const [step, setStep] = useState(1);
+  const [step, setStepState] = useState(() => {
+    if (typeof window === "undefined") return 1;
+    const s = Number(new URLSearchParams(window.location.search).get("step"));
+    return s >= 1 && s <= STEPS.length ? s : 1;
+  });
+
+  function setStep(action) {
+    setStepState((prev) => {
+      const next = typeof action === "function" ? action(prev) : action;
+      try {
+        if (typeof window !== "undefined") {
+          const url = new URL(window.location.href);
+          if (next >= 1 && next <= STEPS.length) {
+            url.searchParams.set("step", String(next));
+          }
+          window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+        }
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
+
   const [project, setProject] = useState(emptyProject);
   const [loading, setLoading] = useState(false);
   const [stepProgress, setStepProgress] = useState(null);
@@ -189,12 +212,19 @@ export default function Dashboard() {
   });
   const [catalogArtists, setCatalogArtists] = useState([]);
   const [published, setPublished] = useState(false);
-  const [projectId, setProjectId] = useState(null);
+  const [projectId, setProjectId] = useState(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("project") || null;
+  });
   const [historyOpen, setHistoryOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
-  /** Accueil studio `/` uniquement — masqué quand un projet est ouvert via ?project= */
-  const [showHomePipeline, setShowHomePipeline] = useState(true);
+  /** Accueil studio `/` uniquement — masqué quand un projet est ouvert via ?project= ou ?step= */
+  const [showHomePipeline, setShowHomePipeline] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const p = new URLSearchParams(window.location.search);
+    return !p.get("project") && !p.get("step");
+  });
   /** Projets récents pour la home studio (style catalogue). */
   const [recentProjects, setRecentProjects] = useState([]);
   /** Génération album lancée dans cet onglet (évite d’écraser l’état live par le poll). */

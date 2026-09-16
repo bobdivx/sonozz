@@ -1,8 +1,27 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import ArtistsIndex from "../components/ArtistsIndex.jsx";
+import { listArtists } from "../server/artists.js";
+import { getSessionFromCookies } from "../server/auth.js";
+
+export const prerender = false;
+
+const session = getSessionFromCookies(Astro.cookies);
+
+/** null = pas de SSR / erreur → refetch client ; [] = compte sans artistes */
+let initialArtists = null;
+if (session?.email) {
+  try {
+    initialArtists = await listArtists(80, {
+      ownerEmail: session.email,
+      fields: "lite",
+    });
+  } catch {
+    initialArtists = null;
+  }
+}
 ---
 
 <Layout title="SONOZZ — Artistes" description="Profils artistes SONOZZ : identité, catalogue, albums et coach.">
-  <ArtistsIndex client:load />
+  <ArtistsIndex client:load initialArtists={initialArtists} />
 </Layout>

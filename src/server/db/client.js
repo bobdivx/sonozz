@@ -2,6 +2,8 @@ import { createClient } from "@libsql/client";
 
 let client;
 let ready;
+/** Évite un SELECT app_meta à chaque ensure une fois le backfill library confirmé. */
+let libraryColsReady = false;
 
 function getTursoEnv() {
   const meta = import.meta.env || {};
@@ -28,6 +30,7 @@ export function getDb() {
 }
 
 export async function ensureSchema() {
+  if (ready && libraryColsReady) return;
   if (ready) {
     await backfillLibraryColumns(getDb());
     return;
@@ -254,12 +257,17 @@ export async function ensureSchema() {
 
 /** Une fois : remplit les colonnes librairie depuis project_json (évite scan json_extract ensuite). */
 async function backfillLibraryColumns(db) {
+  if (libraryColsReady) return;
+
   try {
     const meta = await db.execute({
       sql: `SELECT value FROM app_meta WHERE key = ? LIMIT 1`,
       args: ["library_cols_v1"],
     });
-    if (meta.rows[0]?.value === "1") return;
+    if (meta.rows[0]?.value === "1") {
+      libraryColsReady = true;
+      return;
+    }
   } catch {
     return;
   }
@@ -311,6 +319,7 @@ async function backfillLibraryColumns(db) {
       `,
       args: ["library_cols_v1", now],
     });
+    libraryColsReady = true;
   } catch {
     /* backfill non bloquant — requêtes librairie retombent sur json_extract si besoin */
   }

@@ -23,6 +23,7 @@ export async function GET({ url, cookies }) {
     const artists = await listArtists(80, {
       ownerEmail: session.email,
       includeAll: scopeAll,
+      fields: "lite",
     });
     return json({ artists });
   } catch (e) {
@@ -91,7 +92,7 @@ export async function POST({ request, cookies }) {
     }
     if (session.role !== ROLE_ADMIN) return error("Réservé admin", 403);
     const synced = await syncArtistsFromProjects();
-    const artists = await listArtists(80, { includeAll: true });
+    const artists = await listArtists(80, { includeAll: true, fields: "lite" });
     return json({ synced: synced.length, artists });
   } catch (e) {
     const status = e.code === "QUOTA_ARTISTS" ? 403 : 500;

@@ -171,7 +171,7 @@ function CatalogTrackCard({
         </button>
       ) : (
         <a
-          href={studioHref(r.id, "lyrics")}
+          href={studioHref(r.id, "tracks")}
           class="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-base-300 sm:h-20 sm:w-20"
         >
           {r.coverUrl ? (
@@ -221,7 +221,7 @@ function CatalogTrackCard({
               ONCE
             </a>
           )}
-          <a class="btn btn-ghost btn-xs rounded-full" href={studioHref(r.id, "lyrics")}>
+          <a class="btn btn-ghost btn-xs rounded-full" href={studioHref(r.id, "tracks")}>
             Ouvrir le morceau
           </a>
           <button

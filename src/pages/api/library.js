@@ -1,26 +1,7 @@
 import { json, error } from "../../server/http.js";
 import { listLibraryTracks, listArtists } from "../../server/artists.js";
-import { listArtistImageUrl } from "../../lib/artistPhotos.js";
 
 export const prerender = false;
-
-function slimArtistForPlay(artist) {
-  const profile = artist?.profile || {};
-  return {
-    id: artist.id,
-    slug: artist.slug,
-    name: artist.name,
-    stats: artist.stats || {},
-    createdAt: artist.createdAt,
-    updatedAt: artist.updatedAt,
-    profile: {
-      name: profile.name || artist.name,
-      aka: profile.aka || null,
-      genre: profile.genre || null,
-      imageUrl: listArtistImageUrl(artist.slug, profile, artist.updatedAt),
-    },
-  };
-}
 
 /**
  * GET /api/library — catalogue jouable (titres + artistes).
@@ -31,11 +12,10 @@ export async function GET({ url }) {
   try {
     const params = new URL(url).searchParams;
     const artistSlug = params.get("artist") || "";
-    const [tracks, artistsRaw] = await Promise.all([
+    const [tracks, artists] = await Promise.all([
       listLibraryTracks(200, { artistSlug }),
-      listArtists(80, { includeAll: true }),
+      listArtists(80, { includeAll: true, fields: "lite" }),
     ]);
-    const artists = artistsRaw.map(slimArtistForPlay);
     return json(
       { tracks, artists },
       200,

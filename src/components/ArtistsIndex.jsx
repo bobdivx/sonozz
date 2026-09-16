@@ -14,12 +14,11 @@ function artistMissingTimbre(a) {
   );
 }
 
-const AUTO_TIMBRE_KEY = "sonozz.timbre.autobackfill.v1";
-
-export default function ArtistsIndex() {
-  const [artists, setArtists] = useState([]);
+export default function ArtistsIndex({ initialArtists = null }) {
+  const hasInitial = Array.isArray(initialArtists);
+  const [artists, setArtists] = useState(hasInitial ? initialArtists : []);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasInitial);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [timbreBusy, setTimbreBusy] = useState(false);
   const [timbreMsg, setTimbreMsg] = useState("");
@@ -32,10 +31,10 @@ export default function ArtistsIndex() {
     return data.artists || [];
   }
 
-  async function backfillTimbres({ silent = false } = {}) {
+  async function backfillTimbres() {
     if (timbreBusy) return;
     setTimbreBusy(true);
-    if (!silent) setTimbreMsg("");
+    setTimbreMsg("");
     try {
       const res = await api.backfillArtistTimbres({ limit: 80 });
       const r = res?.report || {};
@@ -46,38 +45,18 @@ export default function ArtistsIndex() {
         ".";
       setTimbreMsg(msg);
       await reloadArtists();
-      try {
-        sessionStorage.setItem(AUTO_TIMBRE_KEY, String(Date.now()));
-      } catch {
-        /* ignore */
-      }
     } catch (e) {
-      if (!silent) setTimbreMsg(e.message || "Backfill timbre impossible");
+      setTimbreMsg(e.message || "Backfill timbre impossible");
     } finally {
       setTimbreBusy(false);
     }
   }
 
   useEffect(() => {
+    if (hasInitial) return;
     (async () => {
       try {
-        const list = await reloadArtists();
-        const missing = list.filter(artistMissingTimbre).length;
-        let recentlyDone = false;
-        try {
-          const t = Number(sessionStorage.getItem(AUTO_TIMBRE_KEY) || 0);
-          recentlyDone = t > 0 && Date.now() - t < 6 * 60 * 60 * 1000;
-        } catch {
-          /* ignore */
-        }
-        if (missing > 0 && !recentlyDone) {
-          setTimbreMsg(
-            `${missing} artiste(s) sans timbre — complément automatique…`,
-          );
-          window.setTimeout(() => {
-            void backfillTimbres({ silent: true });
-          }, 400);
-        }
+        await reloadArtists();
       } catch (e) {
         setError(e.message);
       } finally {
@@ -85,6 +64,8 @@ export default function ArtistsIndex() {
       }
     })();
   }, []);
+
+  const missingTimbre = artists.filter(artistMissingTimbre).length;
 
   return (
     <AppShell active="artistes">
@@ -123,6 +104,11 @@ export default function ArtistsIndex() {
         />
 
         <div class="space-y-8">
+          {missingTimbre > 0 && !timbreMsg ? (
+            <AlertBanner tone="info">
+              {missingTimbre} artiste(s) sans timbre — utilise « Compléter les timbres » si besoin.
+            </AlertBanner>
+          ) : null}
           {timbreMsg ? <AlertBanner tone="info">{timbreMsg}</AlertBanner> : null}
           {error ? <AlertBanner tone="error">{error}</AlertBanner> : null}
 

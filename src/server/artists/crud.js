@@ -157,7 +157,74 @@ export async function syncArtistsFromProjects() {
   return synced;
 }
 
-export async function listArtists(limit = 50, { ownerEmail = null, includeAll = false } = {}) {
+function slimListProfile(profile, slug, updatedAt) {
+  const p = profile && typeof profile === "object" ? profile : {};
+  const timbre =
+    p.voiceSample?.songGenTimbre ||
+    p.voiceSample?.analyzedTimbre ||
+    p.styleLock?.timbre ||
+    null;
+  const voiceSample = timbre
+    ? {
+        guideMode: "timbre",
+        songGenTimbre: p.voiceSample?.songGenTimbre
+          ? String(p.voiceSample.songGenTimbre).slice(0, 80)
+          : undefined,
+        analyzedTimbre: p.voiceSample?.analyzedTimbre
+          ? String(p.voiceSample.analyzedTimbre).slice(0, 80)
+          : undefined,
+      }
+    : p.styleLock?.timbre
+      ? { guideMode: "timbre", songGenTimbre: String(p.styleLock.timbre).slice(0, 80) }
+      : null;
+  return {
+    name: p.name || null,
+    aka: p.aka || null,
+    genre: p.genre || null,
+    genres: Array.isArray(p.genres) ? p.genres.slice(0, 6) : undefined,
+    mode: p.mode || null,
+    gender: p.gender || p.visualIdentity?.gender || null,
+    age: p.age ?? undefined,
+    mood: p.mood || null,
+    voice: p.voice ? String(p.voice).slice(0, 160) : undefined,
+    language: p.language || null,
+    imageUrl: listArtistImageUrl(slug, p, updatedAt),
+    styleLock: p.styleLock?.timbre
+      ? {
+          timbre: String(p.styleLock.timbre).slice(0, 80),
+          matchedName: p.styleLock.matchedName || null,
+          genreSummary: p.styleLock.genreSummary || null,
+        }
+      : null,
+    voiceSample,
+    visualIdentity: p.visualIdentity?.genderLock
+      ? { genderLock: p.visualIdentity.genderLock }
+      : undefined,
+  };
+}
+
+function mapArtistRow(row, { fields = "full" } = {}) {
+  const raw = row.profile_json ? JSON.parse(row.profile_json) : {};
+  const profile =
+    fields === "lite"
+      ? slimListProfile(raw, row.slug, row.updated_at)
+      : { ...raw, imageUrl: listArtistImageUrl(row.slug, raw, row.updated_at) };
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    profile,
+    ownerEmail: row.owner_email || null,
+    stats: row.stats_json ? JSON.parse(row.stats_json) : {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function listArtists(
+  limit = 50,
+  { ownerEmail = null, includeAll = false, fields = "full" } = {},
+) {
   await ensureArtistSchema();
   const db = getDb();
   const owner = ownerEmail ? String(ownerEmail).trim().toLowerCase() : null;
@@ -191,20 +258,7 @@ export async function listArtists(limit = 50, { ownerEmail = null, includeAll = 
     res = await db.execute({ sql: selectSql, args });
   }
 
-  return res.rows.map((row) => {
-    const profile = row.profile_json ? JSON.parse(row.profile_json) : {};
-    profile.imageUrl = listArtistImageUrl(row.slug, profile, row.updated_at);
-    return {
-      id: row.id,
-      slug: row.slug,
-      name: row.name,
-      profile,
-      ownerEmail: row.owner_email || null,
-      stats: row.stats_json ? JSON.parse(row.stats_json) : {},
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
-  });
+  return res.rows.map((row) => mapArtistRow(row, { fields }));
 }
 
 export async function getArtistBySlug(slug) {

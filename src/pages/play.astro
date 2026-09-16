@@ -2,37 +2,18 @@
 import Layout from "../layouts/Layout.astro";
 import PlayerPage from "../components/PlayerPage.jsx";
 import { listLibraryTracks, listArtists } from "../server/artists.js";
-import { listArtistImageUrl } from "../lib/artistPhotos.js";
 
 export const prerender = false;
-
-function slimArtist(artist) {
-  const profile = artist?.profile || {};
-  return {
-    id: artist.id,
-    slug: artist.slug,
-    name: artist.name,
-    stats: artist.stats || {},
-    createdAt: artist.createdAt,
-    updatedAt: artist.updatedAt,
-    profile: {
-      name: profile.name || artist.name,
-      aka: profile.aka || null,
-      genre: profile.genre || null,
-      imageUrl: listArtistImageUrl(artist.slug, profile, artist.updatedAt),
-    },
-  };
-}
 
 let initialTracks = [];
 let initialArtists = [];
 try {
   const [tracks, artists] = await Promise.all([
     listLibraryTracks(200),
-    listArtists(80, { includeAll: true }),
+    listArtists(80, { includeAll: true, fields: "lite" }),
   ]);
   initialTracks = tracks;
-  initialArtists = artists.map(slimArtist);
+  initialArtists = artists;
 } catch {
   /* client refetch */
 }
