@@ -69,7 +69,7 @@ if (Astro.request.method === "POST") {
 ---
 
 <Layout title="SONOZZ — Connexion" description="Connexion au studio SONOZZ.">
-  <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12 pb-32">
+  <div class="mx-auto flex min-h-full max-w-md flex-col justify-center px-6 py-12">
     <div class="mb-8 text-center">
       <img
         src="/logo.png"
@@ -120,7 +120,6 @@ if (Astro.request.method === "POST") {
       errorCode={errorCode}
       initialEmail={postedEmail}
       oidcConfigured={oidcConfigured}
-      passwordConfigured={passwordConfigured}
       preferSso={preferSso && oidcConfigured}
     />
   </div>
