@@ -593,7 +593,10 @@ export default function PlayerPage({ initialTracks = [], initialArtists = [] }) 
                   <header class="flex items-end justify-between gap-3">
                     <div>
                       <p class="text-sm font-medium text-base-content/45">{greeting()}</p>
-                      <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl">
+                      <h1
+                        class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl"
+                        data-play-rev="2026-09-16"
+                      >
                         Écouter
                       </h1>
                     </div>
