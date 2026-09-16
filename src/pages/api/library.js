@@ -14,12 +14,15 @@ export async function GET({ url }) {
     const artistSlug = params.get("artist") || "";
     const [tracks, artists] = await Promise.all([
       listLibraryTracks(200, { artistSlug }),
-      listArtists(80, { includeAll: true, fields: "lite" }),
+      listArtists(80, { includeAll: true, fields: "play" }),
     ]);
     return json(
       { tracks, artists },
       200,
-      { "Cache-Control": "private, max-age=30, stale-while-revalidate=120" },
+      {
+        // Catalogue public : cache court + SWR (prefetch hover / ClientRouter).
+        "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+      },
     );
   } catch (e) {
     return error(e.message || "Erreur bibliothèque", 500);

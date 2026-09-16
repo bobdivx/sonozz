@@ -11,6 +11,8 @@ import {
   Scale,
 } from "lucide-preact";
 import JobsDock, { JobsDockMobile } from "./JobsDock.jsx";
+import { prefetchLibrary } from "../lib/libraryCache.js";
+
 const NAV = [
   { href: "/studio", id: "studio", label: "Studio", icon: Waves },
   { href: "/artistes", id: "artistes", label: "Artistes", icon: UserRound },
@@ -19,6 +21,10 @@ const NAV = [
   { href: "/parametres", id: "parametres", label: "Paramètres", icon: Settings2, adminOnly: true },
   { href: "/compte", id: "compte", label: "Compte", icon: UserRound, memberOnly: true },
 ];
+
+function warmPlayLibrary(href) {
+  if (href === "/play") prefetchLibrary().catch(() => {});
+}
 
 function initialsFromEmail(email) {
   const local = String(email || "").split("@")[0] || "";
@@ -73,6 +79,14 @@ export default function AppShell({
     };
   }, [authed]);
 
+  useEffect(() => {
+    if (!fillViewport) return undefined;
+    document.documentElement.dataset.sonozzFillViewport = "";
+    return () => {
+      delete document.documentElement.dataset.sonozzFillViewport;
+    };
+  }, [fillViewport]);
+
   async function logout() {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
@@ -98,7 +112,7 @@ export default function AppShell({
 
   if (!authed) {
     return (
-      <div class={fillViewport ? "flex h-dvh flex-col overflow-hidden" : "min-h-screen"}>
+      <div class={fillViewport ? "flex h-full flex-col overflow-hidden" : "min-h-full"}>
         <header class="shrink-0 sticky top-0 z-30 border-b border-base-content/10 bg-base-200/90 backdrop-blur">
           <div class="mx-auto flex max-w-4xl items-center gap-3 px-4 py-3 sm:px-6">
             <a
@@ -152,7 +166,7 @@ export default function AppShell({
         <div
           class={
             fillViewport
-              ? "mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-3 py-3 sm:px-6 sm:py-4"
+              ? "flex min-h-0 w-full flex-1 flex-col overflow-hidden"
               : "mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6"
           }
         >
@@ -163,7 +177,7 @@ export default function AppShell({
   }
 
   return (
-    <div class={fillViewport ? "flex h-dvh flex-col overflow-hidden" : "flex min-h-screen flex-col"}>
+    <div class={fillViewport ? "flex h-full flex-col overflow-hidden" : "flex min-h-full flex-col"}>
       <header class="sticky top-0 z-40 shrink-0 border-b border-base-content/10 bg-base-200/90 backdrop-blur-md">
         <div class="flex h-14 items-center gap-2 px-2 sm:h-16 sm:gap-4 sm:px-5 md:px-6">
           {!playFocused && (
@@ -240,9 +254,9 @@ export default function AppShell({
             }`}
             style={{
               top: "var(--sonozz-top-header, 3.5rem)",
-              bottom: "var(--sonozz-now-playing, 5.5rem)",
+              bottom: "var(--sonozz-bottom-chrome, 5.5rem)",
               maxHeight:
-                "calc(100dvh - var(--sonozz-top-header, 3.5rem) - var(--sonozz-now-playing, 5.5rem))",
+                "calc(100dvh - var(--sonozz-top-header, 3.5rem) - var(--sonozz-bottom-chrome, 5.5rem))",
             }}
           >
             <nav class="flex flex-col gap-1 p-3 pt-4" aria-label="Navigation principale">
@@ -259,6 +273,9 @@ export default function AppShell({
                         : "text-base-content/70 hover:bg-base-content/5 hover:text-base-content"
                     }`}
                     onClick={() => setMobileOpen(false)}
+                    onPointerEnter={() => warmPlayLibrary(item.href)}
+                    onPointerDown={() => warmPlayLibrary(item.href)}
+                    onFocus={() => warmPlayLibrary(item.href)}
                   >
                     <Icon size={18} />
                     {item.label}
@@ -309,7 +326,7 @@ export default function AppShell({
           <div
             class={
               fillViewport
-                ? "flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-5"
+                ? "flex min-h-0 flex-1 flex-col overflow-hidden"
                 : "px-4 py-6 sm:px-6 sm:py-8 md:px-10 md:py-8"
             }
           >

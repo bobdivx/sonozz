@@ -39,6 +39,9 @@
   --font-body: "Figtree", "Avenir Next", "Segoe UI", sans-serif;
   --sonozz-now-playing: 5.5rem;
   --sonozz-jobs-dock: 0px;
+  --sonozz-bottom-chrome: calc(
+    var(--sonozz-jobs-dock, 0px) + var(--sonozz-now-playing, 0px)
+  );
   --sonozz-top-header: 3.5rem;
 }
 
@@ -55,9 +58,7 @@ body {
   font-family: var(--font-body);
   background: var(--ink);
   color: var(--fog);
-  scroll-padding-bottom: calc(
-    var(--sonozz-jobs-dock, 0px) + var(--sonozz-now-playing, 5.25rem)
-  );
+  scroll-padding-bottom: var(--sonozz-bottom-chrome);
 }
 
 body {
@@ -83,6 +84,16 @@ body::before {
 main {
   position: relative;
   z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  /* Les bandeaux fixed (lecteur, tâches, …) se posent dans ce padding, jamais sur le contenu. */
+  padding-bottom: var(--sonozz-bottom-chrome);
+}
+
+#root-app > * {
+  flex: 1 1 auto;
 }
 
 html[data-sonozz-fill-viewport],
@@ -92,6 +103,10 @@ html[data-sonozz-fill-viewport] #root-app {
   max-height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+html[data-sonozz-fill-viewport] #root-app > * {
+  min-height: 0;
 }
 
 .font-display {
@@ -205,4 +220,10 @@ html[data-sonozz-fill-viewport] #root-app {
 
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.sonozz-sticky-above-chrome {
+  position: sticky;
+  z-index: 20;
+  bottom: calc(var(--sonozz-bottom-chrome, 0px) + 0.75rem);
 }

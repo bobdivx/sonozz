@@ -1,6 +1,6 @@
 import { getDb, uid, saveProject } from "../db.js";
 import { withResolvedArtistGender, resolveArtistGender } from "../../lib/artistGender.js";
-import { listArtistImageUrl } from "../../lib/artistPhotos.js";
+import { artistPhotoPath, listArtistImageUrl } from "../../lib/artistPhotos.js";
 import { tryParseS3ObjectKey, deleteS3Keys, deleteS3Prefix } from "../s3.js";
 import {
   slugify,
@@ -204,6 +204,21 @@ function slimListProfile(profile, slug, updatedAt) {
 }
 
 function mapArtistRow(row, { fields = "full" } = {}) {
+  if (fields === "play") {
+    const base = artistPhotoPath(row.slug);
+    const token = String(row.updated_at || "")
+      .replace(/[^\w.-]+/g, "")
+      .slice(0, 40);
+    return {
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      profile: {
+        imageUrl: base && token ? `${base}?v=${encodeURIComponent(token)}` : base,
+      },
+      updatedAt: row.updated_at,
+    };
+  }
   const raw = row.profile_json ? JSON.parse(row.profile_json) : {};
   const profile =
     fields === "lite"
@@ -234,14 +249,30 @@ export async function listArtists(
     return [];
   }
 
+  const playLite = fields === "play";
   const selectSql = includeAll
-    ? `
+    ? playLite
+      ? `
+      SELECT id, slug, name, updated_at
+      FROM artists
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `
+      : `
       SELECT id, slug, name, profile_json, stats_json, owner_email, created_at, updated_at
       FROM artists
       ORDER BY updated_at DESC
       LIMIT ?
     `
-    : `
+    : playLite
+      ? `
+      SELECT id, slug, name, updated_at
+      FROM artists
+      WHERE lower(owner_email) = ?
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `
+      : `
       SELECT id, slug, name, profile_json, stats_json, owner_email, created_at, updated_at
       FROM artists
       WHERE lower(owner_email) = ?

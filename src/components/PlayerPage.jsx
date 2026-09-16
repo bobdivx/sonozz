@@ -33,10 +33,13 @@ import {
   setPlayExpanded,
   subscribePlaySession,
 } from "../lib/playSession.js";
+import {
+  bootstrapLibraryFromCache,
+  prefetchLibrary,
+  writeLibraryCache,
+} from "../lib/libraryCache.js";
 
 const RECENT_KEY = "sonozz-play-recent";
-const LIBRARY_CACHE_KEY = "sonozz-play-library-v1";
-const CACHE_TTL_MS = 10 * 60 * 1000;
 
 function formatTime(sec) {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
@@ -88,30 +91,6 @@ function pushRecentId(id) {
   localStorage.setItem(RECENT_KEY, JSON.stringify(next));
 }
 
-function readLibraryCache() {
-  try {
-    const raw = localStorage.getItem(LIBRARY_CACHE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (!data || !Array.isArray(data.tracks)) return null;
-    if (Date.now() - (data.ts || 0) > CACHE_TTL_MS) return null;
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-function writeLibraryCache(tracks, artists) {
-  try {
-    localStorage.setItem(
-      LIBRARY_CACHE_KEY,
-      JSON.stringify({ ts: Date.now(), tracks, artists }),
-    );
-  } catch {
-    /* quota */
-  }
-}
-
 function CoverThumb({ src, class: cls = "", rounded = "rounded", eager = false }) {
   if (src) {
     return (
@@ -131,36 +110,15 @@ function CoverThumb({ src, class: cls = "", rounded = "rounded", eager = false }
   );
 }
 
-function bootstrapLibrary(initialTracks, initialArtists) {
-  if (Array.isArray(initialTracks) && initialTracks.length) {
-    return {
-      tracks: initialTracks,
-      artists: Array.isArray(initialArtists) ? initialArtists : [],
-      loading: false,
-    };
-  }
-  if (typeof window !== "undefined") {
-    const cached = readLibraryCache();
-    if (cached) {
-      return {
-        tracks: cached.tracks,
-        artists: cached.artists || [],
-        loading: false,
-      };
-    }
-  }
-  return { tracks: [], artists: [], loading: true };
-}
-
-export default function PlayerPage({ initialTracks = [], initialArtists = [] }) {
+export default function PlayerPage() {
   const seekRef = useRef(null);
   const touchRef = useRef({ x: 0, y: 0 });
   const searchInputRef = useRef(null);
-  const boot = bootstrapLibrary(initialTracks, initialArtists);
+  const boot = bootstrapLibraryFromCache();
 
   const [tracks, setTracks] = useState(boot.tracks);
   const [artists, setArtists] = useState(boot.artists);
-  const [loading, setLoading] = useState(boot.loading);
+  const [loading, setLoading] = useState(!boot.fromCache);
   const [error, setError] = useState("");
   const [tab, setTab] = useState("home");
   const [filterArtist, setFilterArtist] = useState("");
@@ -326,28 +284,31 @@ export default function PlayerPage({ initialTracks = [], initialArtists = [] }) 
     };
 
     if (boot.tracks.length) {
-      writeLibraryCache(boot.tracks, boot.artists);
       applyDeepLink(boot.tracks);
       setLoading(false);
-      return;
     }
 
+    let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/library");
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Impossible de charger la bibliothèque");
+        const data = await prefetchLibrary();
+        if (cancelled) return;
         const list = data.tracks || [];
         setTracks(list);
         setArtists(data.artists || []);
-        writeLibraryCache(list, data.artists || []);
-        applyDeepLink(list);
+        if (list.length) writeLibraryCache(list, data.artists || []);
+        if (!boot.tracks.length) applyDeepLink(list);
       } catch (e) {
-        setError(e.message);
+        if (cancelled) return;
+        if (!boot.tracks.length) setError(e.message);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -582,12 +543,12 @@ export default function PlayerPage({ initialTracks = [], initialArtists = [] }) 
             <span class="loading loading-spinner loading-lg text-primary" />
           </div>
         )}
-        {error && <p class="mb-2 shrink-0 text-error">{error}</p>}
-        {audioError && <p class="mb-2 shrink-0 text-sm text-warning">{audioError}</p>}
+        {error && <p class="mb-2 shrink-0 px-4 text-error sm:px-6">{error}</p>}
+        {audioError && <p class="mb-2 shrink-0 px-4 text-sm text-warning sm:px-6">{audioError}</p>}
 
         {!loading && (
           <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3">
+            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-6">
               {tab === "home" && (
                 <div class="animate-rise mx-auto w-full max-w-5xl space-y-7 sm:space-y-8">
                   <header class="flex items-end justify-between gap-3">
@@ -870,7 +831,7 @@ export default function PlayerPage({ initialTracks = [], initialArtists = [] }) 
             </div>
 
             <nav
-              class="play-bottom-nav safe-bottom shrink-0 border-t border-base-content/10 bg-base-200/95 backdrop-blur-md"
+              class="play-bottom-nav shrink-0 border-t border-base-content/10 bg-base-200/95 backdrop-blur-md"
               aria-label="Navigation lecteur"
             >
               <div class="mx-auto grid min-h-16 max-w-3xl grid-cols-3 sm:min-h-[4.5rem]">

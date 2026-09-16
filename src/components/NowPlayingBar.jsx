@@ -28,8 +28,13 @@ import {
   setPlayExpanded,
   subscribePlaySession,
 } from "../lib/playSession.js";
+import { prefetchLibrary } from "../lib/libraryCache.js";
 
 const BAR_FALLBACK = "5.25rem";
+
+function warmPlayLibrary() {
+  prefetchLibrary().catch(() => {});
+}
 
 function readPathname() {
   if (typeof location === "undefined") return "";
@@ -171,6 +176,8 @@ export default function NowPlayingBar() {
           href="/play"
           class="flex min-w-0 flex-1 items-center gap-2.5 text-left touch-manipulation active:opacity-80 md:pr-4"
           onClick={onOpenPlay}
+          onPointerEnter={warmPlayLibrary}
+          onFocus={warmPlayLibrary}
         >
           {cover ? (
             <img
@@ -266,6 +273,8 @@ export default function NowPlayingBar() {
               href="/play"
               class="btn btn-primary btn-circle h-11 w-11 min-h-11 min-w-11 touch-manipulation sm:h-12 sm:w-12 sm:min-h-12 sm:min-w-12"
               aria-label="Ouvrir Play"
+              onPointerEnter={warmPlayLibrary}
+              onFocus={warmPlayLibrary}
             >
               <Play size={20} fill="currentColor" class="ml-0.5" />
             </a>
@@ -278,6 +287,8 @@ export default function NowPlayingBar() {
             class="btn btn-ghost btn-circle h-9 w-9 min-h-9 min-w-9 text-base-content/50"
             aria-label="File d’attente"
             onClick={onOpenPlay}
+            onPointerEnter={warmPlayLibrary}
+            onFocus={warmPlayLibrary}
           >
             <ListMusic size={16} />
           </a>

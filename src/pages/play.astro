@@ -1,28 +1,24 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import PlayerPage from "../components/PlayerPage.jsx";
-import { listLibraryTracks, listArtists } from "../server/artists.js";
 
 export const prerender = false;
 
-let initialTracks = [];
-let initialArtists = [];
-try {
-  const [tracks, artists] = await Promise.all([
-    listLibraryTracks(200),
-    listArtists(80, { includeAll: true, fields: "lite" }),
-  ]);
-  initialTracks = tracks;
-  initialArtists = artists;
-} catch {
-  /* client refetch */
-}
+// Pas d’attente Turso ici : le document part tout de suite.
+// Catalogue via cache client + /api/library (prefetch au survol du lien Play).
 ---
 
 <Layout
   title="SONOZZ — Play"
   description="Lecteur multimedia SONOZZ : tous les titres, un artiste ou une file d’attente."
 >
-  <meta name="sonozz-play-rev" content="e118b71-rewrite" />
-  <PlayerPage client:load initialTracks={initialTracks} initialArtists={initialArtists} />
+  <meta name="sonozz-play-rev" content="play-instant-shell" />
+  <PlayerPage client:only="preact">
+    <div
+      slot="fallback"
+      class="flex min-h-[50dvh] flex-1 items-center justify-center text-sm text-base-content/50"
+    >
+      Chargement du lecteur…
+    </div>
+  </PlayerPage>
 </Layout>

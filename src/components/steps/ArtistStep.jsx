@@ -1371,12 +1371,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
       ) : null}
       </div>
 
-      <div
-        class="sticky z-20 rounded-3xl border border-base-content/10 bg-base-200/95 p-4 shadow-xl shadow-black/25 backdrop-blur sm:p-5"
-        style={{
-          bottom: "calc(var(--sonozz-now-playing, 5.25rem) + 0.75rem)",
-        }}
-      >
+      <div class="sonozz-sticky-above-chrome rounded-3xl border border-base-content/10 bg-base-200/95 p-4 shadow-xl shadow-black/25 backdrop-blur sm:p-5">
         <div class="flex flex-wrap items-center gap-3">
           <button
             type="button"
