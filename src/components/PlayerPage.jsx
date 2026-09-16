@@ -48,13 +48,6 @@ function formatTime(sec) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function greeting() {
-  const h = new Date().getHours();
-  if (h < 12) return "Bonjour";
-  if (h < 18) return "Bon après-midi";
-  return "Bonsoir";
-}
-
 function readQuery() {
   if (typeof location === "undefined") return {};
   const p = new URLSearchParams(location.search);
@@ -552,15 +545,12 @@ export default function PlayerPage() {
               {tab === "home" && (
                 <div class="animate-rise mx-auto w-full max-w-5xl space-y-7 sm:space-y-8">
                   <header class="flex items-end justify-between gap-3">
-                    <div>
-                      <p class="text-sm font-medium text-base-content/45">{greeting()}</p>
-                      <h1
-                        class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl"
-                        data-play-rev="2026-09-16"
-                      >
-                        Écouter
-                      </h1>
-                    </div>
+                    <h1
+                      class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl"
+                      data-play-rev="2026-09-16"
+                    >
+                      Écouter
+                    </h1>
                     {queue.length > 0 && (
                       <button
                         type="button"
