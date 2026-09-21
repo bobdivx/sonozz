@@ -32,20 +32,18 @@ const {
     <title>{title}</title>
     <ClientRouter fallback="swap" />
     <style is:global>
-      @keyframes sonozz-vt-fade {
-        from { opacity: 0; }
-        to { opacity: 1; }
-      }
-      ::view-transition-old(root),
-      ::view-transition-new(root) {
-        animation: none;
-        mix-blend-mode: normal;
-      }
+      /* Transition douce sans double-fade avec le contenu hydraté */
       ::view-transition-old(root) {
-        animation: 0.18s ease-in both sonozz-vt-fade reverse;
+        animation: 0.12s ease-out both fade-out;
       }
       ::view-transition-new(root) {
-        animation: 0.28s ease-out both sonozz-vt-fade;
+        animation: 0.16s ease-out both fade-in;
+      }
+      @keyframes fade-out {
+        to { opacity: 0.92; }
+      }
+      @keyframes fade-in {
+        from { opacity: 0.92; }
       }
       @media (prefers-reduced-motion: reduce) {
         ::view-transition-old(root),

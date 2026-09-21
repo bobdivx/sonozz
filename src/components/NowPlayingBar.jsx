@@ -30,6 +30,8 @@ import {
 } from "../lib/playSession.js";
 import { prefetchLibrary } from "../lib/libraryCache.js";
 import { Pressable, usePlayingPulse, useSlideUp } from "./ui/Motion.jsx";
+import AudioBars from "./AudioBars.jsx";
+import { ensurePlayAnalyser } from "../lib/playAnalyser.js";
 
 const BAR_FALLBACK = "5.25rem";
 
@@ -213,12 +215,15 @@ export default function NowPlayingBar() {
                 >
                   {current.trackTitle}
                 </p>
-                <p
-                  class="break-words text-[11px] leading-snug text-base-content/50 sm:text-xs"
-                  title={current.artistName}
-                >
-                  {current.artistName}
-                </p>
+                <div class="mt-0.5 flex items-center gap-2">
+                  <p
+                    class="min-w-0 flex-1 break-words text-[11px] leading-snug text-base-content/50 sm:text-xs"
+                    title={current.artistName}
+                  >
+                    {current.artistName}
+                  </p>
+                  {audioPlaying ? <AudioBars playing bars={4} class="hidden shrink-0 sm:flex" /> : null}
+                </div>
               </>
             ) : (
               <>
@@ -257,7 +262,10 @@ export default function NowPlayingBar() {
                 type="button"
                 class="btn btn-primary btn-circle h-11 w-11 min-h-11 min-w-11 touch-manipulation shadow-lg shadow-primary/25 sm:h-12 sm:w-12 sm:min-h-12 sm:min-w-12"
                 aria-label={audioPlaying ? "Pause" : "Lecture"}
-                onClick={() => togglePlay()}
+                onClick={() => {
+                  ensurePlayAnalyser();
+                  togglePlay();
+                }}
               >
                 {audioPlaying ? (
                   <Pause size={20} fill="currentColor" />

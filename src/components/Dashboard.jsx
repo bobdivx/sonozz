@@ -78,7 +78,7 @@ import {
   trackPipelineJob,
   trackStepJob,
 } from "../lib/jobRunner.js";
-import { PageEnter, Pressable } from "./ui/Motion.jsx";
+import { Pressable, FadeIn } from "./ui/Motion.jsx";
 
 const ICONS = {
   stats: BarChart3,
@@ -1140,7 +1140,7 @@ export default function Dashboard() {
 
   return (
     <AppShell active="studio">
-    <PageEnter class="mx-auto w-full max-w-5xl">
+    <div class="mx-auto w-full max-w-5xl">
       <header class={`${showHomePipeline ? "mb-10 space-y-3 md:mb-14" : "mb-6 space-y-5 md:mb-8 md:space-y-6"}`}>
         <div class="flex flex-wrap items-start gap-4 sm:gap-6">
           <div class="min-w-0 flex-1 space-y-2">
@@ -1783,6 +1783,7 @@ export default function Dashboard() {
 
       {!showHomePipeline && (
       <div class="rounded-2xl bg-base-300/30 p-5 backdrop-blur-sm md:p-8">
+        <FadeIn key={stepKey || step} y={6} duration={0.22}>
         {stepKey === "stats" && (
           <StatsStep
             track={project.track}
@@ -2453,6 +2454,7 @@ export default function Dashboard() {
           />
         )}
 
+        </FadeIn>
       </div>
       )}
 
@@ -2462,7 +2464,7 @@ export default function Dashboard() {
         onClose={() => setHistoryOpen(false)}
         onLoad={loadFromHistory}
       />
-    </PageEnter>
+    </div>
     </AppShell>
   );
 }

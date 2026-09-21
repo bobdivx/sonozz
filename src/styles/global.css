@@ -249,6 +249,26 @@ summary {
   transform: translateY(-2px);
 }
 
+@keyframes sonozz-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.sonozz-shimmer {
+  background-image: linear-gradient(
+    110deg,
+    color-mix(in oklab, var(--fog, #f2efe6) 4%, transparent) 0%,
+    color-mix(in oklab, var(--brass, #c9a227) 12%, transparent) 45%,
+    color-mix(in oklab, var(--fog, #f2efe6) 4%, transparent) 90%
+  );
+  background-size: 200% 100%;
+  animation: sonozz-shimmer 1.35s ease-in-out infinite;
+}
+
 /* UI/UX Pro Max — prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   .animate-rise,
@@ -256,7 +276,8 @@ summary {
   .progress-fill,
   .pipeline-indeterminate,
   .track-gen-step-active,
-  .play-cover-playing {
+  .play-cover-playing,
+  .sonozz-shimmer {
     animation: none !important;
   }
 
@@ -268,5 +289,10 @@ summary {
 
   .sonozz-lift:hover {
     transform: none;
+  }
+
+  .sonozz-shimmer {
+    background-image: none;
+    opacity: 0.55;
   }
 }

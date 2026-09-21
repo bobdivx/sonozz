@@ -1,5 +1,5 @@
 import { useState } from "preact/hooks";
-import { PageEnter, Pressable } from "./ui/Motion.jsx";
+import { Pressable } from "./ui/Motion.jsx";
 
 const ERROR_MESSAGES = {
   sso: "Connexion Pocket ID impossible. Réessaie.",
@@ -116,7 +116,7 @@ export default function LoginForm({
   ) : null;
 
   return (
-    <PageEnter class="space-y-4">
+    <div class="space-y-4">
       {ssoFirst && ssoButton}
       {ssoFirst && divider}
       {(passwordOpen || !ssoFirst) && passwordForm}
@@ -141,6 +141,6 @@ export default function LoginForm({
           {alert}
         </p>
       )}
-    </PageEnter>
+    </div>
   );
 }

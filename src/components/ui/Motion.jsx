@@ -2,7 +2,7 @@ import { useEffect, useRef } from "preact/hooks";
 import { animate, stagger, inView } from "motion";
 import { EASE_OUT_EXPO, EASE_OUT_SOFT, prefersReducedMotion } from "../../lib/motionPrefs.js";
 
-/** Entrée page unique — courte, peu de déplacement (évite l’effet « cascade bizarre »). */
+/** Entrée marketing uniquement — ne pas empiler sur ClientRouter / AppShell. */
 export function PageEnter({
   children,
   class: className = "",
@@ -14,40 +14,32 @@ export function PageEnter({
   useEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
-    if (prefersReducedMotion()) {
-      el.style.opacity = "1";
-      el.style.transform = "none";
-      return undefined;
-    }
+    if (prefersReducedMotion()) return undefined;
     const controls = animate(
       el,
-      { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0px)"] },
-      { duration: 0.32, easing: EASE_OUT_SOFT },
+      { opacity: [0.96, 1], transform: ["translateY(6px)", "translateY(0px)"] },
+      { duration: 0.28, easing: EASE_OUT_SOFT },
     );
     return () => controls.stop();
   }, []);
 
   return (
-    <Tag
-      ref={ref}
-      class={className}
-      style={{ opacity: 0 }}
-      {...rest}
-    >
+    <Tag ref={ref} class={className} {...rest}>
       {children}
     </Tag>
   );
 }
 
 /**
- * Fade léger pour un bloc isolé (modale, overlay) — pas pour wrapper toute une page.
+ * Fade léger pour un bloc isolé (modale, overlay, changement d’étape).
+ * Pas d’opacity:0 au premier paint SSR — évite le flash « double chargement ».
  */
 export function FadeIn({
   children,
   class: className = "",
   delay = 0,
-  y = 8,
-  duration = 0.3,
+  y = 6,
+  duration = 0.22,
   as: Tag = "div",
   ...rest
 }) {
@@ -56,21 +48,17 @@ export function FadeIn({
   useEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
-    if (prefersReducedMotion()) {
-      el.style.opacity = "1";
-      el.style.transform = "none";
-      return undefined;
-    }
+    if (prefersReducedMotion()) return undefined;
     const controls = animate(
       el,
-      { opacity: [0, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
+      { opacity: [0.001, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
       { duration, delay, easing: EASE_OUT_SOFT },
     );
     return () => controls.stop();
   }, [delay, duration, y]);
 
   return (
-    <Tag ref={ref} class={className} style={{ opacity: 0 }} {...rest}>
+    <Tag ref={ref} class={className} {...rest}>
       {children}
     </Tag>
   );
@@ -152,7 +140,7 @@ export function Reveal({
       el.style.transform = "none";
       return undefined;
     }
-    el.style.opacity = "0";
+    el.style.opacity = "0.001";
     el.style.transform = `translateY(${y}px)`;
     return inView(
       el,
@@ -168,7 +156,7 @@ export function Reveal({
   }, [y, duration]);
 
   return (
-    <Tag ref={ref} class={className} style={{ opacity: 0 }} {...rest}>
+    <Tag ref={ref} class={className} {...rest}>
       {children}
     </Tag>
   );

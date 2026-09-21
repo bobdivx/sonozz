@@ -12,6 +12,7 @@ import {
 } from "lucide-preact";
 import JobsDock, { JobsDockMobile } from "./JobsDock.jsx";
 import { prefetchLibrary } from "../lib/libraryCache.js";
+import { clearAuthCache, readAuthCache, writeAuthCache } from "../lib/authCache.js";
 
 const NAV = [
   { href: "/studio", id: "studio", label: "Studio", icon: Waves },
@@ -48,9 +49,13 @@ export default function AppShell({
   hideSearch = false,
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [authed, setAuthed] = useState(false);
-  const [email, setEmail] = useState(null);
-  const [canManageSettings, setCanManageSettings] = useState(false);
+  const cached = typeof window !== "undefined" ? readAuthCache() : null;
+  const [authBoot, setAuthBoot] = useState(() => !cached);
+  const [authed, setAuthed] = useState(() => Boolean(cached?.authenticated));
+  const [email, setEmail] = useState(() => cached?.email || null);
+  const [canManageSettings, setCanManageSettings] = useState(() =>
+    Boolean(cached?.canManageSettings),
+  );
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -60,12 +65,24 @@ export default function AppShell({
       .then((d) => {
         if (cancelled) return;
         const ok = Boolean(d?.authenticated);
+        const next = {
+          authenticated: ok,
+          email: d?.email || null,
+          canManageSettings: Boolean(d?.canManageSettings),
+        };
+        writeAuthCache(next);
         setAuthed(ok);
-        setEmail(d?.email || null);
-        setCanManageSettings(Boolean(d?.canManageSettings));
+        setEmail(next.email);
+        setCanManageSettings(next.canManageSettings);
+        setAuthBoot(false);
       })
       .catch(() => {
-        if (!cancelled) setAuthed(false);
+        if (cancelled) return;
+        writeAuthCache({ authenticated: false, email: null, canManageSettings: false });
+        setAuthed(false);
+        setEmail(null);
+        setCanManageSettings(false);
+        setAuthBoot(false);
       });
     return () => {
       cancelled = true;
@@ -73,11 +90,11 @@ export default function AppShell({
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.sonozzNav = authed ? "sidebar" : "";
+    document.documentElement.dataset.sonozzNav = authed && !authBoot ? "sidebar" : "";
     return () => {
       document.documentElement.dataset.sonozzNav = "";
     };
-  }, [authed]);
+  }, [authed, authBoot]);
 
   useEffect(() => {
     if (!fillViewport) return undefined;
@@ -88,6 +105,7 @@ export default function AppShell({
   }, [fillViewport]);
 
   async function logout() {
+    clearAuthCache();
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } catch {
@@ -109,6 +127,37 @@ export default function AppShell({
     if (item.memberOnly && canManageSettings) return false;
     return true;
   });
+
+  /* Premier paint sans cache : chrome stable + children (pas de swap invité→sidebar). */
+  if (authBoot) {
+    return (
+      <div
+        class={
+          fillViewport
+            ? "flex h-full flex-col overflow-hidden"
+            : "flex min-h-full flex-col"
+        }
+        aria-busy="true"
+      >
+        <header class="sticky top-0 z-40 shrink-0 border-b border-base-content/10 bg-base-200/90 backdrop-blur-md">
+          <div class="flex h-14 items-center gap-2 px-2 sm:h-16 sm:gap-4 sm:px-5 md:px-6">
+            <span class="font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl">
+              SONOZZ
+            </span>
+          </div>
+        </header>
+        <div
+          class={
+            fillViewport
+              ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+              : "px-4 py-6 sm:px-6 sm:py-8 md:px-10 md:py-8"
+          }
+        >
+          {children}
+        </div>
+      </div>
+    );
+  }
 
   if (!authed) {
     return (

@@ -2,7 +2,8 @@ import { useEffect, useState } from "preact/hooks";
 import { Heart, Plus, Sparkles, UserRound, X, AudioWaveform } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import { PageHeader, AlertBanner, EmptyState, ChoiceCard } from "./ui/index.js";
-import { PageEnter, FadeIn } from "./ui/Motion.jsx";
+import { FadeIn } from "./ui/Motion.jsx";
+import { ArtistCardSkeletons } from "./ui/Skeleton.jsx";
 import { listArtistImageUrl } from "../lib/artistPhotos.js";
 import { api } from "../lib/apiClient.js";
 
@@ -70,7 +71,7 @@ export default function ArtistsIndex({ initialArtists = null }) {
 
   return (
     <AppShell active="artistes">
-      <PageEnter class="mx-auto max-w-5xl">
+      <div class="mx-auto max-w-5xl">
         <PageHeader
           eyebrow="Catalogue"
           title="Tes artistes"
@@ -113,16 +114,7 @@ export default function ArtistsIndex({ initialArtists = null }) {
           {timbreMsg ? <AlertBanner tone="info">{timbreMsg}</AlertBanner> : null}
           {error ? <AlertBanner tone="error">{error}</AlertBanner> : null}
 
-          {loading && (
-            <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {[0, 1, 2].map((i) => (
-                <div
-                  key={i}
-                  class="h-72 animate-pulse rounded-3xl bg-base-300/50"
-                />
-              ))}
-            </div>
-          )}
+          {loading && <ArtistCardSkeletons count={3} />}
 
           {!loading && artists.length > 0 && (
             <ul class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -188,7 +180,7 @@ export default function ArtistsIndex({ initialArtists = null }) {
             />
           )}
         </div>
-      </PageEnter>
+      </div>
 
       {pickerOpen && (
         <dialog class="modal modal-open z-[100]" open>

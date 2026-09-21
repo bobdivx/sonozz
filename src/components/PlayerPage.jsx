@@ -17,7 +17,10 @@ import {
   X,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
-import { PageEnter, Pressable, FadeIn } from "./ui/Motion.jsx";
+import { Pressable, FadeIn } from "./ui/Motion.jsx";
+import AudioBars from "./AudioBars.jsx";
+import { PlayHomeSkeleton } from "./ui/Skeleton.jsx";
+import { ensurePlayAnalyser } from "../lib/playAnalyser.js";
 import {
   bindMediaSession,
   cyclePlayRepeat,
@@ -485,7 +488,7 @@ export default function PlayerPage() {
                   }`}
                 >
                   {isCurrent && playing ? (
-                    <span class="inline-block h-2.5 w-2.5 animate-pulse-soft rounded-full bg-primary" />
+                    <AudioBars playing bars={3} class="mx-auto" />
                   ) : (
                     i + 1
                   )}
@@ -533,8 +536,8 @@ export default function PlayerPage() {
     <AppShell active="play" fillViewport playFocused>
       <div class="play-shell relative flex min-h-0 flex-1 flex-col overflow-hidden">
         {loading && (
-          <div class="flex min-h-0 flex-1 items-center justify-center">
-            <span class="loading loading-spinner loading-lg text-primary" />
+          <div class="flex min-h-0 flex-1 overflow-y-auto px-4 pb-4 sm:px-6">
+            <PlayHomeSkeleton />
           </div>
         )}
         {error && <p class="mb-2 shrink-0 px-4 text-error sm:px-6">{error}</p>}
@@ -544,7 +547,7 @@ export default function PlayerPage() {
           <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-6">
               {tab === "home" && (
-                <PageEnter class="mx-auto w-full max-w-5xl space-y-7 sm:space-y-8">
+                <div class="mx-auto w-full max-w-5xl space-y-7 sm:space-y-8">
                   <header class="flex items-end justify-between gap-3">
                     <h1
                       class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl"
@@ -683,11 +686,11 @@ export default function PlayerPage() {
                       Aucun titre audio pour l’instant.
                     </p>
                   )}
-                </PageEnter>
+                </div>
               )}
 
               {tab === "search" && (
-                <PageEnter class="mx-auto w-full max-w-3xl space-y-5">
+                <div class="mx-auto w-full max-w-3xl space-y-5">
                   <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
                     Recherche
                   </h1>
@@ -755,11 +758,11 @@ export default function PlayerPage() {
                       </section>
                     </>
                   )}
-                </PageEnter>
+                </div>
               )}
 
               {tab === "library" && (
-                <PageEnter class="mx-auto w-full max-w-4xl space-y-5">
+                <div class="mx-auto w-full max-w-4xl space-y-5">
                   <div class="flex flex-wrap items-end justify-between gap-3">
                     <div>
                       <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
@@ -818,7 +821,7 @@ export default function PlayerPage() {
                     list={visibleTracks}
                     empty="Aucun titre — génère ou importe un morceau dans le Studio."
                   />
-                </PageEnter>
+                </div>
               )}
             </div>
 
@@ -877,8 +880,9 @@ export default function PlayerPage() {
             >
               <ChevronDown size={28} />
             </button>
-            <p class="font-display text-xs font-bold tracking-[0.18em] text-base-content/55 sm:text-sm">
+            <p class="font-display flex items-center gap-2 text-xs font-bold tracking-[0.18em] text-base-content/55 sm:text-sm">
               EN LECTURE
+              {playing ? <AudioBars playing bars={5} tall class="ml-1" /> : null}
             </p>
             <button
               type="button"
@@ -1027,7 +1031,10 @@ export default function PlayerPage() {
                   type="button"
                   class="btn btn-primary btn-circle h-18 w-18 min-h-[4.5rem] min-w-[4.5rem] cursor-pointer touch-manipulation shadow-xl shadow-primary/30 sm:h-20 sm:w-20 sm:min-h-20 sm:min-w-20"
                   aria-label={playing ? "Pause" : "Lecture"}
-                  onClick={() => togglePlay()}
+                  onClick={() => {
+                    ensurePlayAnalyser();
+                    togglePlay();
+                  }}
                 >
                   {playing ? (
                     <Pause size={34} fill="currentColor" />
