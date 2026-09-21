@@ -168,7 +168,7 @@ export default function NowPlayingBar() {
   return (
     <div
       ref={barRef}
-      class="fixed inset-x-0 bottom-0 z-30 border-t border-base-content/10 bg-base-200/95 backdrop-blur-md safe-bottom"
+      class="fixed inset-x-0 bottom-0 z-30 border-t border-base-content/10 bg-base-200/95 shadow-[0_-12px_40px_rgba(0,0,0,0.35)] backdrop-blur-md safe-bottom"
       role="region"
       aria-label="Play"
     >

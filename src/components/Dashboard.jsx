@@ -78,7 +78,7 @@ import {
   trackPipelineJob,
   trackStepJob,
 } from "../lib/jobRunner.js";
-import { FadeIn, Stagger } from "./ui/Motion.jsx";
+import { PageEnter, Pressable } from "./ui/Motion.jsx";
 
 const ICONS = {
   stats: BarChart3,
@@ -1140,9 +1140,9 @@ export default function Dashboard() {
 
   return (
     <AppShell active="studio">
-    <div class="mx-auto w-full max-w-5xl">
+    <PageEnter class="mx-auto w-full max-w-5xl">
       <header class={`${showHomePipeline ? "mb-10 space-y-3 md:mb-14" : "mb-6 space-y-5 md:mb-8 md:space-y-6"}`}>
-        <FadeIn class="flex flex-wrap items-start gap-4 sm:gap-6" y={12} duration={0.45}>
+        <div class="flex flex-wrap items-start gap-4 sm:gap-6">
           <div class="min-w-0 flex-1 space-y-2">
             <p class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
               {showHomePipeline ? studioGreeting() : "Studio"}
@@ -1188,10 +1188,10 @@ export default function Dashboard() {
               <span class="text-xs text-base-content/45">{saveMsg}</span>
             )}
           </div>
-        </FadeIn>
+        </div>
 
         {albumCtx && !showHomePipeline && (
-          <div class="flex flex-wrap items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs animate-rise">
+          <div class="flex flex-wrap items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs">
             <Library size={12} class="text-primary" />
             <span class="font-medium text-primary">{albumCtx.title}</span>
             {albumCtx.index ? (
@@ -1266,11 +1266,7 @@ export default function Dashboard() {
       {showHomePipeline && (
         <>
           <section id="studio-launch" class="mb-12 md:mb-16">
-            <FadeIn
-              class="overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-base-200/80 via-base-300/40 to-primary/10"
-              y={18}
-              duration={0.5}
-            >
+            <div class="overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-base-200/80 via-base-300/40 to-primary/10">
               <div class="space-y-8 p-6 sm:p-8 md:p-10">
                 <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                   <div class="max-w-lg space-y-2">
@@ -1284,15 +1280,16 @@ export default function Dashboard() {
                       Auto A→Z enchaîne paroles, audio et jaquette. Tu pourras retoucher chaque étape ensuite.
                     </p>
                   </div>
-                  <button
+                  <Pressable
                     type="button"
                     class="btn btn-primary btn-lg gap-2 rounded-full px-8 shadow-lg shadow-primary/20 cursor-pointer"
                     disabled={autoRunning || loading || !seed.artistSlug}
                     onClick={runFullAuto}
+                    scale={0.97}
                   >
                     {autoRunning ? <span class="loading loading-spinner loading-sm" /> : <Zap size={20} />}
                     {autoRunning ? "En cours…" : "Auto A → Z"}
-                  </button>
+                  </Pressable>
                 </div>
 
                 {catalogArtists.length === 0 ? (
@@ -1495,11 +1492,11 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
-            </FadeIn>
+            </div>
           </section>
 
           <section class="mb-12 md:mb-16">
-            <FadeIn class="mb-5 flex flex-wrap items-end justify-between gap-3" delay={0.08} y={10}>
+            <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
               <div>
                 <h2 class="font-display text-xl font-bold tracking-tight sm:text-2xl">Tes artistes</h2>
                 <p class="mt-1 text-sm text-base-content/55">
@@ -1516,13 +1513,10 @@ export default function Dashboard() {
                   <ArrowRight size={14} />
                 </a>
               </div>
-            </FadeIn>
+            </div>
 
             {catalogArtists.length === 0 ? (
-              <FadeIn
-                class="rounded-3xl border border-dashed border-base-content/15 bg-base-200/30 px-6 py-12 text-center"
-                delay={0.1}
-              >
+              <div class="rounded-3xl border border-dashed border-base-content/15 bg-base-200/30 px-6 py-12 text-center">
                 <p class="font-display text-lg font-semibold">Aucun profil pour l’instant</p>
                 <p class="mx-auto mt-2 max-w-md text-sm text-base-content/55">
                   Les artistes que tu crées apparaissent ici — prêts pour générer des titres.
@@ -1531,9 +1525,9 @@ export default function Dashboard() {
                   <Plus size={18} />
                   Créer mon premier artiste
                 </a>
-              </FadeIn>
+              </div>
             ) : (
-              <Stagger class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" step={0.06} y={18} startDelay={0.1}>
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {catalogArtists.slice(0, 6).map((a) => {
                   const selected = seed.artistSlug === a.slug;
                   return (
@@ -1543,7 +1537,7 @@ export default function Dashboard() {
                       class={`group flex cursor-pointer items-center gap-4 rounded-2xl border p-3 text-left transition duration-200 sm:p-4 ${
                         selected
                           ? "border-primary/50 bg-primary/10 shadow-md shadow-primary/10"
-                          : "border-base-content/10 bg-base-200/40 hover:scale-[1.02] hover:border-base-content/20 hover:bg-base-200/70 hover:shadow-lg hover:shadow-black/20"
+                          : "border-base-content/10 bg-base-200/40 hover:scale-[1.015] hover:border-base-content/20 hover:bg-base-200/70 hover:shadow-lg hover:shadow-black/20"
                       }`}
                       onClick={() => {
                         setSeed((s) => ({
@@ -1578,13 +1572,13 @@ export default function Dashboard() {
                     </button>
                   );
                 })}
-              </Stagger>
+              </div>
             )}
           </section>
 
           {recentProjects.length > 0 && (
             <section class="mb-10 md:mb-14">
-              <FadeIn class="mb-5 flex items-end justify-between gap-3" delay={0.12} y={10}>
+              <div class="mb-5 flex items-end justify-between gap-3">
                 <div>
                   <h2 class="font-display text-xl font-bold tracking-tight sm:text-2xl">Continuer</h2>
                   <p class="mt-1 text-sm text-base-content/55">Tes derniers projets ouverts.</p>
@@ -1597,8 +1591,8 @@ export default function Dashboard() {
                   Historique
                   <ArrowRight size={14} />
                 </button>
-              </FadeIn>
-              <Stagger class="-mx-1 flex gap-4 overflow-x-auto px-1 pb-2" step={0.05} y={14} startDelay={0.14}>
+              </div>
+              <div class="-mx-1 flex gap-4 overflow-x-auto px-1 pb-2">
                 {recentProjects.map((p) => (
                   <button
                     key={p.id}
@@ -1615,7 +1609,7 @@ export default function Dashboard() {
                     <p class="mt-0.5 truncate text-xs text-base-content/45">{p.status || "brouillon"}</p>
                   </button>
                 ))}
-              </Stagger>
+              </div>
             </section>
           )}
         </>
@@ -2468,7 +2462,7 @@ export default function Dashboard() {
         onClose={() => setHistoryOpen(false)}
         onLoad={loadFromHistory}
       />
-    </div>
+    </PageEnter>
     </AppShell>
   );
 }

@@ -25,7 +25,7 @@ import { api } from "../lib/apiClient.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
 import StudioGpuMeter from "./StudioGpuMeter.jsx";
 import TrackGenProgress from "./TrackGenProgress.jsx";
-import { FadeIn, Stagger, useSlideUp } from "./ui/Motion.jsx";
+import { useSlideUp } from "./ui/Motion.jsx";
 
 /** Un seul poll album pour sidebar + mobile (sinon 2× GET /api/projects). */
 let albumSyncTimer = null;
@@ -97,11 +97,11 @@ function TypeIcon({ type }) {
 function JobsList({ visible, active, recent }) {
   return (
     <>
-      <Stagger as="ul" class="space-y-2" step={0.04} y={8} duration={0.3} startDelay={0.02}>
+      <ul class="space-y-2">
         {visible.map((job) => (
           <li
             key={job.id}
-            class={`rounded-lg border px-2.5 py-2 ${
+            class={`rounded-lg border px-2.5 py-2 transition duration-200 ${
               job.status === "running"
                 ? "border-primary/30 bg-primary/10"
                 : "border-base-content/10 bg-base-300/40"
@@ -173,7 +173,7 @@ function JobsList({ visible, active, recent }) {
             </div>
           </li>
         ))}
-      </Stagger>
+      </ul>
       {recent.length > 0 && (
         <div class="mt-2 flex justify-end px-1">
           <button
@@ -216,7 +216,7 @@ export function JobsDockSidebar() {
   if (!visible.length) return null;
 
   return (
-    <FadeIn class="border-t border-base-content/10 p-3" y={8} duration={0.35}>
+    <div class="border-t border-base-content/10 p-3">
       <div class="mb-2 flex items-center justify-between gap-2 px-1">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-base-content/50">
           Tâches {active.length ? `(${active.length})` : ""}
@@ -232,7 +232,7 @@ export function JobsDockSidebar() {
         )}
       </div>
       <JobsList visible={visible} active={active} recent={[]} />
-    </FadeIn>
+    </div>
   );
 }
 

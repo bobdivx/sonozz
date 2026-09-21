@@ -1,4 +1,5 @@
 import { useState } from "preact/hooks";
+import { PageEnter, Pressable } from "./ui/Motion.jsx";
 
 const ERROR_MESSAGES = {
   sso: "Connexion Pocket ID impossible. Réessaie.",
@@ -37,12 +38,14 @@ export default function LoginForm({
   const showPassword = passwordConfigured !== false;
 
   const ssoButton = oidcConfigured ? (
-    <a
+    <Pressable
+      as="a"
       href={ssoStartHref(next)}
-      class={`btn w-full ${ssoFirst ? "btn-primary" : "btn-outline"}`}
+      class={`btn w-full cursor-pointer ${ssoFirst ? "btn-primary" : "btn-outline"}`}
+      scale={0.97}
     >
       Continuer avec Pocket ID
-    </a>
+    </Pressable>
   ) : null;
 
   const passwordForm = showPassword ? (
@@ -89,7 +92,7 @@ export default function LoginForm({
         </p>
       )}
 
-      <button type="submit" class="btn btn-ghost w-full border border-base-content/15">
+      <button type="submit" class="btn btn-ghost w-full cursor-pointer border border-base-content/15">
         Se connecter au studio
       </button>
       <p class="text-center text-sm text-base-content/55">
@@ -113,14 +116,14 @@ export default function LoginForm({
   ) : null;
 
   return (
-    <div class="space-y-4">
+    <PageEnter class="space-y-4">
       {ssoFirst && ssoButton}
       {ssoFirst && divider}
       {(passwordOpen || !ssoFirst) && passwordForm}
       {ssoFirst && showPassword && !passwordOpen && (
         <button
           type="button"
-          class="btn btn-ghost btn-sm w-full text-base-content/60"
+          class="btn btn-ghost btn-sm w-full cursor-pointer text-base-content/60"
           onClick={() => setPasswordOpen(true)}
         >
           Connexion email / mot de passe
@@ -138,6 +141,6 @@ export default function LoginForm({
           {alert}
         </p>
       )}
-    </div>
+    </PageEnter>
   );
 }

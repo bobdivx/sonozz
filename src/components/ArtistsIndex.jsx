@@ -2,7 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { Heart, Plus, Sparkles, UserRound, X, AudioWaveform } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import { PageHeader, AlertBanner, EmptyState, ChoiceCard } from "./ui/index.js";
-import { FadeIn, Stagger } from "./ui/Motion.jsx";
+import { PageEnter, FadeIn } from "./ui/Motion.jsx";
 import { listArtistImageUrl } from "../lib/artistPhotos.js";
 import { api } from "../lib/apiClient.js";
 
@@ -70,7 +70,7 @@ export default function ArtistsIndex({ initialArtists = null }) {
 
   return (
     <AppShell active="artistes">
-      <div class="mx-auto max-w-5xl">
+      <PageEnter class="mx-auto max-w-5xl">
         <PageHeader
           eyebrow="Catalogue"
           title="Tes artistes"
@@ -125,14 +125,7 @@ export default function ArtistsIndex({ initialArtists = null }) {
           )}
 
           {!loading && artists.length > 0 && (
-            <Stagger
-              as="ul"
-              class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3"
-              selector=":scope > li"
-              step={0.06}
-              y={20}
-              startDelay={0.05}
-            >
+            <ul class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {artists.map((a) => {
                 const photo =
                   a.profile?.imageUrl || listArtistImageUrl(a.slug, a.profile, a.updatedAt);
@@ -175,7 +168,7 @@ export default function ArtistsIndex({ initialArtists = null }) {
                   </li>
                 );
               })}
-            </Stagger>
+            </ul>
           )}
 
           {!loading && artists.length === 0 && (
@@ -195,14 +188,14 @@ export default function ArtistsIndex({ initialArtists = null }) {
             />
           )}
         </div>
-      </div>
+      </PageEnter>
 
       {pickerOpen && (
         <dialog class="modal modal-open z-[100]" open>
           <FadeIn
             class="modal-box max-w-md space-y-5 rounded-3xl"
-            y={16}
-            duration={0.38}
+            y={10}
+            duration={0.28}
           >
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -220,7 +213,7 @@ export default function ArtistsIndex({ initialArtists = null }) {
                 <X size={16} />
               </button>
             </div>
-            <Stagger class="grid gap-3" step={0.08} y={12} startDelay={0.1}>
+            <div class="grid gap-3">
               <ChoiceCard
                 href="/artiste/nouveau?mode=self"
                 icon={<Heart size={18} />}
@@ -234,7 +227,7 @@ export default function ArtistsIndex({ initialArtists = null }) {
                 title="Artiste fictionnel"
                 description="Identité et style inventés."
               />
-            </Stagger>
+            </div>
           </FadeIn>
           <form method="dialog" class="modal-backdrop">
             <button type="submit" onClick={() => setPickerOpen(false)}>

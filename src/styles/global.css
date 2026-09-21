@@ -116,7 +116,7 @@ html[data-sonozz-fill-viewport] #root-app > * {
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -146,7 +146,7 @@ html[data-sonozz-fill-viewport] #root-app > * {
 }
 
 .animate-rise {
-  animation: rise-in 0.45s ease-out both;
+  animation: rise-in 0.3s ease-out both;
 }
 
 .animate-pulse-soft {
@@ -228,6 +228,27 @@ html[data-sonozz-fill-viewport] #root-app > * {
   bottom: calc(var(--sonozz-bottom-chrome, 0px) + 0.75rem);
 }
 
+/* Interactions premium — hover / focus (UI/UX Pro Max) */
+a,
+button,
+[role="button"],
+.btn,
+summary {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--brass, #c9a227) 80%, white);
+  outline-offset: 2px;
+}
+
+.sonozz-lift {
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s ease;
+}
+.sonozz-lift:hover {
+  transform: translateY(-2px);
+}
+
 /* UI/UX Pro Max — prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   .animate-rise,
@@ -240,7 +261,12 @@ html[data-sonozz-fill-viewport] #root-app > * {
   }
 
   .play-shuffle-cta,
-  .group {
+  .group,
+  .sonozz-lift {
     transition: none !important;
+  }
+
+  .sonozz-lift:hover {
+    transform: none;
   }
 }

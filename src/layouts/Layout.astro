@@ -31,6 +31,29 @@ const {
     />
     <title>{title}</title>
     <ClientRouter fallback="swap" />
+    <style is:global>
+      @keyframes sonozz-vt-fade {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      ::view-transition-old(root),
+      ::view-transition-new(root) {
+        animation: none;
+        mix-blend-mode: normal;
+      }
+      ::view-transition-old(root) {
+        animation: 0.18s ease-in both sonozz-vt-fade reverse;
+      }
+      ::view-transition-new(root) {
+        animation: 0.28s ease-out both sonozz-vt-fade;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        ::view-transition-old(root),
+        ::view-transition-new(root) {
+          animation: none !important;
+        }
+      }
+    </style>
   </head>
   <body>
     <main id="root-app">

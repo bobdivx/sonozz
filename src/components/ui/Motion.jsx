@@ -1,16 +1,144 @@
 import { useEffect, useRef } from "preact/hooks";
-import { animate, stagger } from "motion";
+import { animate, stagger, inView } from "motion";
 import { EASE_OUT_EXPO, EASE_OUT_SOFT, prefersReducedMotion } from "../../lib/motionPrefs.js";
 
+/** Entrée page unique — courte, peu de déplacement (évite l’effet « cascade bizarre »). */
+export function PageEnter({
+  children,
+  class: className = "",
+  as: Tag = "div",
+  ...rest
+}) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    if (prefersReducedMotion()) {
+      el.style.opacity = "1";
+      el.style.transform = "none";
+      return undefined;
+    }
+    const controls = animate(
+      el,
+      { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0px)"] },
+      { duration: 0.32, easing: EASE_OUT_SOFT },
+    );
+    return () => controls.stop();
+  }, []);
+
+  return (
+    <Tag
+      ref={ref}
+      class={className}
+      style={{ opacity: 0 }}
+      {...rest}
+    >
+      {children}
+    </Tag>
+  );
+}
+
 /**
- * Entrée fade + rise (API Motion vanilla — compatible Preact, sans React).
+ * Fade léger pour un bloc isolé (modale, overlay) — pas pour wrapper toute une page.
  */
 export function FadeIn({
   children,
   class: className = "",
   delay = 0,
+  y = 8,
+  duration = 0.3,
+  as: Tag = "div",
+  ...rest
+}) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    if (prefersReducedMotion()) {
+      el.style.opacity = "1";
+      el.style.transform = "none";
+      return undefined;
+    }
+    const controls = animate(
+      el,
+      { opacity: [0, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
+      { duration, delay, easing: EASE_OUT_SOFT },
+    );
+    return () => controls.stop();
+  }, [delay, duration, y]);
+
+  return (
+    <Tag ref={ref} class={className} style={{ opacity: 0 }} {...rest}>
+      {children}
+    </Tag>
+  );
+}
+
+/**
+ * Cascade courte sur une grille — max ~6 items visibles, mouvement discret.
+ * À utiliser hors PageEnter (sinon double opacités).
+ */
+export function Stagger({
+  children,
+  class: className = "",
+  selector = ":scope > *",
+  step = 0.04,
+  y = 10,
+  duration = 0.28,
+  startDelay = 0.02,
+  as: Tag = "div",
+  ...rest
+}) {
+  const ref = useRef(null);
+  const ran = useRef(false);
+
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || ran.current) return undefined;
+    const items = [...root.querySelectorAll(selector)].slice(0, 8);
+    if (!items.length) return undefined;
+    ran.current = true;
+
+    if (prefersReducedMotion()) {
+      items.forEach((el) => {
+        el.style.opacity = "1";
+        el.style.transform = "none";
+      });
+      return undefined;
+    }
+
+    items.forEach((el) => {
+      el.style.opacity = "0";
+    });
+    const controls = animate(
+      items,
+      { opacity: [0, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
+      {
+        delay: stagger(step, { startDelay }),
+        duration,
+        easing: EASE_OUT_SOFT,
+      },
+    );
+    return () => controls.stop();
+  }, [selector, step, y, duration, startDelay]);
+
+  return (
+    <Tag ref={ref} class={className} {...rest}>
+      {children}
+    </Tag>
+  );
+}
+
+/**
+ * Révèle au scroll (sections below-fold) — une fois.
+ */
+export function Reveal({
+  children,
+  class: className = "",
   y = 14,
-  duration = 0.45,
+  duration = 0.38,
   as: Tag = "div",
   ...rest
 }) {
@@ -25,79 +153,77 @@ export function FadeIn({
       return undefined;
     }
     el.style.opacity = "0";
-    const controls = animate(
+    el.style.transform = `translateY(${y}px)`;
+    return inView(
       el,
-      { opacity: [0, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
-      { duration, delay, easing: EASE_OUT_SOFT },
+      () => {
+        animate(
+          el,
+          { opacity: 1, transform: "translateY(0px)" },
+          { duration, easing: EASE_OUT_EXPO },
+        );
+      },
+      { margin: "0px 0px -8% 0px", amount: 0.2 },
     );
-    return () => controls.stop();
-  }, [delay, duration, y]);
+  }, [y, duration]);
 
   return (
-    <Tag ref={ref} class={className} {...rest}>
+    <Tag ref={ref} class={className} style={{ opacity: 0 }} {...rest}>
       {children}
     </Tag>
   );
 }
 
 /**
- * Révèle les enfants en cascade (cartes artistes, nav, étapes).
+ * Hover lift discret (cartes, rows) — CSS-first + motion boost.
  */
-export function Stagger({
+export function HoverLift({
   children,
   class: className = "",
-  selector = ":scope > *",
-  step = 0.055,
-  y = 16,
-  duration = 0.42,
-  startDelay = 0.04,
   as: Tag = "div",
+  scale = 1.015,
+  onPointerEnter,
+  onPointerLeave,
   ...rest
 }) {
   const ref = useRef(null);
 
-  useEffect(() => {
-    const root = ref.current;
-    if (!root) return undefined;
-    const items = root.querySelectorAll(selector);
-    if (!items.length) return undefined;
-    if (prefersReducedMotion()) {
-      items.forEach((el) => {
-        el.style.opacity = "1";
-        el.style.transform = "none";
-      });
-      return undefined;
+  function onEnter(e) {
+    const el = ref.current;
+    if (el && !prefersReducedMotion()) {
+      animate(el, { transform: `scale(${scale})` }, { duration: 0.2, easing: EASE_OUT_SOFT });
     }
-    items.forEach((el) => {
-      el.style.opacity = "0";
-    });
-    const controls = animate(
-      items,
-      { opacity: [0, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
-      {
-        delay: stagger(step, { startDelay }),
-        duration,
-        easing: EASE_OUT_EXPO,
-      },
-    );
-    return () => controls.stop();
-  }, [selector, step, y, duration, startDelay]);
+    onPointerEnter?.(e);
+  }
+  function onLeave(e) {
+    const el = ref.current;
+    if (el && !prefersReducedMotion()) {
+      animate(el, { transform: "scale(1)" }, { duration: 0.22, easing: EASE_OUT_SOFT });
+    }
+    onPointerLeave?.(e);
+  }
 
   return (
-    <Tag ref={ref} class={className} {...rest}>
+    <Tag
+      ref={ref}
+      class={`origin-center will-change-transform ${className}`}
+      {...rest}
+      onPointerEnter={onEnter}
+      onPointerLeave={onLeave}
+    >
       {children}
     </Tag>
   );
 }
 
 /**
- * Micro-interaction press (boutons play, CTA) — scale 0.94 → 1.
+ * Micro-interaction press (boutons play, CTA).
  */
 export function Pressable({
   children,
   class: className = "",
   as: Tag = "button",
-  scale = 0.94,
+  scale = 0.96,
   onPointerDown,
   onPointerUp,
   onPointerLeave,
@@ -109,7 +235,7 @@ export function Pressable({
   function bump(to) {
     const el = ref.current;
     if (!el || prefersReducedMotion()) return;
-    animate(el, { transform: `scale(${to})` }, { duration: 0.16, easing: EASE_OUT_SOFT });
+    animate(el, { transform: `scale(${to})` }, { duration: 0.14, easing: EASE_OUT_SOFT });
   }
 
   return (
@@ -139,13 +265,12 @@ export function Pressable({
   );
 }
 
-/**
- * Slide-in depuis le bas (barre Now Playing).
- */
-export function useSlideUp(ref, { when = true, duration = 0.5 } = {}) {
+export function useSlideUp(ref, { when = true, duration = 0.36 } = {}) {
+  const ran = useRef(false);
   useEffect(() => {
     const el = ref.current;
-    if (!el || !when) return undefined;
+    if (!el || !when || ran.current) return undefined;
+    ran.current = true;
     if (prefersReducedMotion()) {
       el.style.transform = "none";
       el.style.opacity = "1";
@@ -153,16 +278,13 @@ export function useSlideUp(ref, { when = true, duration = 0.5 } = {}) {
     }
     const controls = animate(
       el,
-      { opacity: [0, 1], transform: ["translateY(110%)", "translateY(0%)"] },
-      { duration, easing: EASE_OUT_EXPO },
+      { opacity: [0, 1], transform: ["translateY(100%)", "translateY(0%)"] },
+      { duration, easing: EASE_OUT_SOFT },
     );
     return () => controls.stop();
   }, [ref, when, duration]);
 }
 
-/**
- * Pulse léger sur la jaquette pendant la lecture.
- */
 export function usePlayingPulse(ref, playing) {
   useEffect(() => {
     const el = ref.current;
@@ -173,8 +295,8 @@ export function usePlayingPulse(ref, playing) {
     }
     const controls = animate(
       el,
-      { transform: ["scale(1)", "scale(1.04)", "scale(1)"] },
-      { duration: 2.8, easing: "ease-in-out", repeat: Infinity },
+      { transform: ["scale(1)", "scale(1.03)", "scale(1)"] },
+      { duration: 3.2, easing: "ease-in-out", repeat: Infinity },
     );
     return () => {
       controls.stop();
@@ -183,9 +305,6 @@ export function usePlayingPulse(ref, playing) {
   }, [ref, playing]);
 }
 
-/**
- * Overlay modal : fade backdrop + panel scale/rise.
- */
 export function ModalShell({
   children,
   class: className = "",
@@ -206,16 +325,17 @@ export function ModalShell({
     if (prefersReducedMotion()) {
       backdrop.style.opacity = "1";
       panel.style.opacity = "1";
+      panel.style.transform = "none";
       return undefined;
     }
-    const a = animate(backdrop, { opacity: [0, 1] }, { duration: 0.22, easing: "ease-out" });
+    const a = animate(backdrop, { opacity: [0, 1] }, { duration: 0.18, easing: "ease-out" });
     const b = animate(
       panel,
       {
         opacity: [0, 1],
-        transform: ["translateY(20px) scale(0.96)", "translateY(0px) scale(1)"],
+        transform: ["translateY(12px) scale(0.98)", "translateY(0px) scale(1)"],
       },
-      { duration: 0.38, easing: EASE_OUT_EXPO },
+      { duration: 0.28, easing: EASE_OUT_SOFT },
     );
     return () => {
       a.stop();
@@ -227,14 +347,14 @@ export function ModalShell({
     <div
       ref={backdropRef}
       class={`fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm ${zClass} ${className}`}
-      style={{ opacity: prefersReducedMotion() ? 1 : 0 }}
+      style={{ opacity: 0 }}
       onClick={onBackdrop}
       role="presentation"
     >
       <div
         ref={panelRef}
         class={panelClass}
-        style={{ opacity: prefersReducedMotion() ? 1 : 0 }}
+        style={{ opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
         role={role}
         aria-modal={ariaModal}

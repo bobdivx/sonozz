@@ -23,7 +23,7 @@ import AlbumCreationModal from "./AlbumCreationModal.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
 import TrackCreationModal from "./TrackCreationModal.jsx";
 import TrackReviewPanel from "./TrackReviewPanel.jsx";
-import { FadeIn } from "./ui/Motion.jsx";
+import { PageEnter } from "./ui/Motion.jsx";
 import { AlertBanner, EmptyState } from "./ui/index.js";
 import { api } from "../lib/apiClient.js";
 import { loadKeys } from "../lib/keys.js";
@@ -868,7 +868,7 @@ export default function ArtistHub({ slug, initialData = null }) {
         {msg && <AlertBanner tone="success">{msg}</AlertBanner>}
 
         {data && (
-          <FadeIn class="space-y-8 md:space-y-10" y={16} duration={0.48}>
+          <PageEnter class="space-y-8 md:space-y-10">
             <header class="overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/35 shadow-2xl shadow-black/20">
               <div class="grid md:grid-cols-[minmax(220px,280px)_1fr]">
                 <figure class="relative aspect-square bg-base-300">
@@ -1810,7 +1810,7 @@ export default function ArtistHub({ slug, initialData = null }) {
                 )}
               </section>
             )}
-          </FadeIn>
+          </PageEnter>
         )}
       </div>
 

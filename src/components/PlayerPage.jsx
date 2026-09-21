@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
-import { FadeIn, Pressable, Stagger } from "./ui/Motion.jsx";
+import { PageEnter, Pressable, FadeIn } from "./ui/Motion.jsx";
 import {
   bindMediaSession,
   cyclePlayRepeat,
@@ -544,8 +544,8 @@ export default function PlayerPage() {
           <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-6">
               {tab === "home" && (
-                <div class="mx-auto w-full max-w-5xl space-y-7 sm:space-y-8">
-                  <FadeIn class="flex items-end justify-between gap-3" y={10} duration={0.4} as="header">
+                <PageEnter class="mx-auto w-full max-w-5xl space-y-7 sm:space-y-8">
+                  <header class="flex items-end justify-between gap-3">
                     <h1
                       class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl"
                       data-play-rev="2026-09-16"
@@ -562,38 +562,36 @@ export default function PlayerPage() {
                         File
                       </button>
                     )}
-                  </FadeIn>
+                  </header>
 
                   {tracks.length > 0 && (
-                    <FadeIn delay={0.06} y={14} duration={0.45}>
-                      <Pressable
-                        type="button"
-                        class="play-shuffle-cta flex min-h-[5.5rem] w-full cursor-pointer items-center gap-4 rounded-2xl bg-primary px-5 py-4 text-left text-primary-content shadow-xl shadow-primary/25 touch-manipulation sm:min-h-[6rem] sm:px-6"
-                        scale={0.98}
-                        onClick={() => {
-                          if (!shuffle) setPlayShuffle(true, current);
-                          playList(shuffleCopy(tracks));
-                        }}
-                      >
-                        <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary-content/20 sm:h-16 sm:w-16">
-                          <Shuffle size={28} />
+                    <Pressable
+                      type="button"
+                      class="play-shuffle-cta flex min-h-[5.5rem] w-full cursor-pointer items-center gap-4 rounded-2xl bg-primary px-5 py-4 text-left text-primary-content shadow-xl shadow-primary/25 touch-manipulation sm:min-h-[6rem] sm:px-6"
+                      scale={0.98}
+                      onClick={() => {
+                        if (!shuffle) setPlayShuffle(true, current);
+                        playList(shuffleCopy(tracks));
+                      }}
+                    >
+                      <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary-content/20 sm:h-16 sm:w-16">
+                        <Shuffle size={28} />
+                      </span>
+                      <span class="min-w-0 flex-1">
+                        <span class="font-display block text-xl font-extrabold sm:text-2xl md:text-3xl">
+                          Lecture aléatoire
                         </span>
-                        <span class="min-w-0 flex-1">
-                          <span class="font-display block text-xl font-extrabold sm:text-2xl md:text-3xl">
-                            Lecture aléatoire
-                          </span>
-                          <span class="block text-sm opacity-80 sm:text-base">
-                            {tracks.length} titre{tracks.length > 1 ? "s" : ""} · un tap
-                          </span>
+                        <span class="block text-sm opacity-80 sm:text-base">
+                          {tracks.length} titre{tracks.length > 1 ? "s" : ""} · un tap
                         </span>
-                        <Play size={36} fill="currentColor" class="shrink-0" />
-                      </Pressable>
-                    </FadeIn>
+                      </span>
+                      <Play size={36} fill="currentColor" class="shrink-0" />
+                    </Pressable>
                   )}
 
                   {recentTracks.length > 0 && (
                     <section>
-                      <FadeIn class="mb-3 flex items-end justify-between gap-3" delay={0.1} y={8}>
+                      <div class="mb-3 flex items-end justify-between gap-3">
                         <h2 class="font-display text-xl font-bold sm:text-2xl md:text-3xl">Récents</h2>
                         <button
                           type="button"
@@ -605,8 +603,8 @@ export default function PlayerPage() {
                         >
                           Tout voir
                         </button>
-                      </FadeIn>
-                      <Stagger class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3" step={0.045} y={14} startDelay={0.12}>
+                      </div>
+                      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
                         {recentTracks.map((t, idx) => {
                           const isCurrent = current?.id === t.id;
                           return (
@@ -646,23 +644,21 @@ export default function PlayerPage() {
                             </button>
                           );
                         })}
-                      </Stagger>
+                      </div>
                     </section>
                   )}
 
                   {artistGroups.length > 0 && (
                     <section>
-                      <FadeIn delay={0.14} y={8}>
-                        <h2 class="mb-3 font-display text-xl font-bold sm:text-2xl md:text-3xl">
-                          Artistes
-                        </h2>
-                      </FadeIn>
-                      <Stagger class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5" step={0.04} y={16} startDelay={0.16}>
+                      <h2 class="mb-3 font-display text-xl font-bold sm:text-2xl md:text-3xl">
+                        Artistes
+                      </h2>
+                      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                         {artistGroups.map((a) => (
                           <button
                             key={a.slug}
                             type="button"
-                            class="flex min-h-[8rem] cursor-pointer flex-col items-center gap-2.5 rounded-2xl bg-base-300/50 p-3 text-center touch-manipulation transition duration-200 hover:scale-[1.03] hover:bg-base-300 active:bg-base-300 sm:min-h-[9rem] sm:p-4"
+                            class="flex min-h-[8rem] cursor-pointer flex-col items-center gap-2.5 rounded-2xl bg-base-300/50 p-3 text-center touch-manipulation transition duration-200 hover:scale-[1.02] hover:bg-base-300 active:bg-base-300 sm:min-h-[9rem] sm:p-4"
                             onClick={() => playArtist(a.slug)}
                           >
                             <CoverThumb
@@ -678,7 +674,7 @@ export default function PlayerPage() {
                             </span>
                           </button>
                         ))}
-                      </Stagger>
+                      </div>
                     </section>
                   )}
 
@@ -687,11 +683,11 @@ export default function PlayerPage() {
                       Aucun titre audio pour l’instant.
                     </p>
                   )}
-                </div>
+                </PageEnter>
               )}
 
               {tab === "search" && (
-                <FadeIn class="mx-auto w-full max-w-3xl space-y-5" y={12} duration={0.4}>
+                <PageEnter class="mx-auto w-full max-w-3xl space-y-5">
                   <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
                     Recherche
                   </h1>
@@ -759,11 +755,11 @@ export default function PlayerPage() {
                       </section>
                     </>
                   )}
-                </FadeIn>
+                </PageEnter>
               )}
 
               {tab === "library" && (
-                <FadeIn class="mx-auto w-full max-w-4xl space-y-5" y={12} duration={0.4}>
+                <PageEnter class="mx-auto w-full max-w-4xl space-y-5">
                   <div class="flex flex-wrap items-end justify-between gap-3">
                     <div>
                       <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
@@ -822,7 +818,7 @@ export default function PlayerPage() {
                     list={visibleTracks}
                     empty="Aucun titre — génère ou importe un morceau dans le Studio."
                   />
-                </FadeIn>
+                </PageEnter>
               )}
             </div>
 

@@ -14,7 +14,7 @@ export default function PageHeader({
   class: className = "",
 }) {
   return (
-    <header class={`mb-10 animate-rise space-y-4 md:mb-14 ${className}`}>
+    <header class={`mb-10 space-y-4 md:mb-14 ${className}`}>
       {backHref ? (
         <a
           href={backHref}
