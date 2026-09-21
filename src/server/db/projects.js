@@ -3,7 +3,22 @@ import { ensureSchema, getDb, uid } from "./client.js";
 /** Aligné sur lightAssetUrl (artists/schema) — évite import circulaire db ↔ artists. */
 function playableAssetUrl(url) {
   if (!url || typeof url !== "string") return null;
-  if (/^https?:\/\//i.test(url)) return url;
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      const u = new URL(url);
+      if (/s3\.|scw\.cloud|r2\.cloudflare|sonozz/i.test(u.hostname)) {
+        const hasAmz = [...u.searchParams.keys()].some((k) => /^X-Amz-/i.test(k));
+        if (hasAmz) {
+          u.search = "";
+          u.hash = "";
+          return u.toString();
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return url;
+  }
   if (url.startsWith("/api/")) return url;
   return null;
 }

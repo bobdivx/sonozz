@@ -69,6 +69,10 @@ export function getS3Client() {
       accessKeyId: cfg.accessKeyId,
       secretAccessKey: cfg.secretAccessKey,
     },
+    // Scaleway / R2 / MinIO : les checksums flexibles AWS (SDK ≥ 3.729) cassent GetObject
+    // et injectent x-amz-checksum-mode=ENABLED dans les URL signées → 403.
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
   });
   return client;
 }

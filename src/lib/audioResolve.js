@@ -23,9 +23,26 @@ function looksLikeAudio(buffer) {
  * Préfère `?key=` pour les objets sonozz (bucket privé Scaleway → 403 en URL publique).
  */
 export function playableAudioSrc(audioUrl, s3Key) {
-  const key =
+  let key =
     (typeof s3Key === "string" && /^(audio|clips)\//i.test(s3Key.trim()) && s3Key.trim()) ||
     null;
+  // Catalogue historique : audioUrl signée expirée sans audioS3Key → extraire la clé
+  if (!key && audioUrl && typeof audioUrl === "string") {
+    try {
+      const u = new URL(audioUrl, typeof location !== "undefined" ? location.href : "https://local");
+      if (/s3\.|scw\.cloud|r2\.cloudflare|sonozz/i.test(u.hostname)) {
+        let path = decodeURIComponent(u.pathname.replace(/^\//, ""));
+        if (/^[^/]+\//.test(path) && !/^(audio|clips)\//i.test(path)) {
+          // path-style éventuel bucket/audio/...
+          const rest = path.replace(/^[^/]+\//, "");
+          if (/^(audio|clips)\//i.test(rest)) path = rest;
+        }
+        if (/^(audio|clips)\//i.test(path) && !path.includes("..")) key = path;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
   if (key) {
     return `/api/audio/stream?key=${encodeURIComponent(key)}`;
   }

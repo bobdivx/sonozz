@@ -3,6 +3,7 @@ import { loadAudioBuffer } from "../../../server/audioPersist.js";
 import {
   downloadClipBuffer,
   isS3Configured,
+  isSignedS3Url,
   tryParseS3ObjectKey,
 } from "../../../server/s3.js";
 
@@ -116,13 +117,23 @@ export async function GET({ request }) {
       return error("URL audio invalide", 400);
     }
 
-    // Bucket privé Scaleway : ne pas fetch l’URL publique (403) → SDK
+    // Bucket privé Scaleway : ne pas fetch l’URL publique / signée expirée (403) → SDK
     const s3Key = tryParseS3ObjectKey(url);
+    if (s3Key && !isS3Configured()) {
+      return error(
+        "S3 non configuré — impossible de lire l’audio du bucket privé (configure S3_* )",
+        503,
+      );
+    }
     if (s3Key && isS3Configured()) {
       try {
         const { buffer, mimeType } = await downloadClipBuffer(s3Key);
         return audioResponse(buffer, mimeType, request);
       } catch (e) {
+        // URL présignée morte ou objet privé : le fetch HTTP échouerait aussi en 403
+        if (isSignedS3Url(url) || !/^https?:\/\//i.test(url)) {
+          throw e;
+        }
         console.warn("[audio/stream] S3 key fallback:", e.message);
       }
     }

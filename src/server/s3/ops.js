@@ -6,7 +6,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getS3Client, getS3Config, isS3Configured } from "./client.js";
-import { buildClipObjectKey, publicUrlForKey, tryParseS3ObjectKey } from "./keys.js";
+import { buildClipObjectKey, publicUrlForKey, tryParseS3ObjectKey, isSignedS3Url } from "./keys.js";
 
 /**
  * Upload un buffer vidéo → retourne clé + URL publique (ou signée).
@@ -27,19 +27,12 @@ export async function uploadClipBuffer(buffer, { projectId, mimeType = "video/we
     }),
   );
 
-  let url = publicUrlForKey(objectKey);
-  // Bucket privé sans S3_PUBLIC_URL → URL signée longue durée (7 j)
-  if (!cfg.publicBase) {
-    url = await getSignedUrl(
-      s3,
-      new GetObjectCommand({ Bucket: cfg.bucket, Key: objectKey }),
-      { expiresIn: 60 * 60 * 24 * 7 },
-    );
-  }
-
+  // Toujours une URL canonique (sans signature) pour la DB / le catalogue.
+  // Les URL présignées expirent (~7 j) et cassaient /play après expiration.
+  // Lecture : /api/audio/stream?key=… (SDK) ; externes : signedUrlForKey().
   return {
     key: objectKey,
-    url,
+    url: publicUrlForKey(objectKey),
     mimeType,
     byteLength: buffer.length,
     bucket: cfg.bucket,
@@ -82,10 +75,11 @@ export async function downloadClipBuffer(keyOrUrl) {
         key: parsedKey,
       };
     } catch (e) {
-      // Si la clé ne match pas / accès ko, tenter fetch HTTP (URL signée)
-      if (!/^https?:\/\//i.test(keyOrUrl)) {
+      // Clé brute ou URL déjà signée : pas de fetch HTTP (403 bucket privé / signature morte)
+      if (!/^https?:\/\//i.test(keyOrUrl) || isSignedS3Url(keyOrUrl) || !getS3Config().publicBase) {
         throw new Error(`Lecture S3 « ${parsedKey} »: ${e.message || e}`);
       }
+      console.warn("[s3] GetObject failed, HTTP fallback:", e.message || e);
     }
   }
 

@@ -9,7 +9,10 @@ export {
   buildClipObjectKey,
   isOurS3Hostname,
   tryParseS3ObjectKey,
+  isSignedS3Url,
+  canonicalS3Url,
   isOurS3Url,
+  publicUrlForKey,
 } from "./keys.js";
 
 export {

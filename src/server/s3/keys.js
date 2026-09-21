@@ -103,6 +103,44 @@ export function tryParseS3ObjectKey(urlOrKey = "") {
   return null;
 }
 
+/** True si l’URL porte une signature AWS/S3 (X-Amz-*). */
+export function isSignedS3Url(url = "") {
+  if (!url || typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
+  try {
+    const u = new URL(url);
+    return [...u.searchParams.keys()].some((k) => /^X-Amz-/i.test(k));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * URL canonique sans query signée — pour stocker / renvoyer une URL durable.
+ * Les URL présignées expirent (souvent 7 j) ; le chemin + clé suffisent au proxy SDK.
+ */
+export function canonicalS3Url(urlOrKey = "") {
+  const raw = String(urlOrKey || "").trim();
+  if (!raw) return null;
+  const key = tryParseS3ObjectKey(raw);
+  if (key) {
+    try {
+      return publicUrlForKey(key);
+    } catch {
+      /* publicUrlForKey exige une config S3 partielle */
+    }
+  }
+  if (!/^https?:\/\//i.test(raw)) return null;
+  try {
+    const u = new URL(raw);
+    if (!isOurS3Hostname(u.hostname)) return raw;
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+
 export function isOurS3Url(url = "") {
   return Boolean(tryParseS3ObjectKey(url));
 }

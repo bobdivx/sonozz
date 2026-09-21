@@ -3,7 +3,14 @@
  * et les data: sont trop lourds pour Turso.
  */
 
-import { isS3Configured, uploadClipBuffer, tryParseS3ObjectKey, downloadClipBuffer } from "./s3.js";
+import {
+  isS3Configured,
+  uploadClipBuffer,
+  tryParseS3ObjectKey,
+  downloadClipBuffer,
+  canonicalS3Url,
+  isSignedS3Url,
+} from "./s3.js";
 
 export function isEphemeralAudioUrl(url = "") {
   if (!url || typeof url !== "string") return false;
@@ -113,7 +120,7 @@ export async function loadAudioBuffer(source) {
     throw new Error("URL audio non supportée (http(s) ou data:audio requis)");
   }
 
-  // Bucket privé : lire via SDK plutôt que l’URL publique (403)
+  // Bucket privé : lire via SDK plutôt que l’URL publique / signée expirée (403)
   const s3Key = tryParseS3ObjectKey(source);
   if (s3Key && isS3Configured()) {
     try {
@@ -123,8 +130,9 @@ export async function loadAudioBuffer(source) {
       }
       return { buffer, mimeType: sniffMime(buffer, mimeType) };
     } catch (e) {
+      if (isSignedS3Url(source)) throw e;
       console.warn("[audioPersist] S3 SDK:", e.message);
-      // continue vers fetch HTTP (URL signée éventuelle)
+      // continue vers fetch HTTP (URL publique éventuelle)
     }
   }
 
@@ -216,7 +224,8 @@ export async function materializeAudioForStorage(audioUrl, { projectId = "anon",
   ) {
     if (/s3\.|scw\.cloud|r2\.cloudflare|digitaloceanspaces|sonozz/i.test(audioUrl)) {
       const key = tryParseS3ObjectKey(audioUrl);
-      return { url: audioUrl, s3Key: key || undefined, reused: true };
+      const url = canonicalS3Url(audioUrl) || audioUrl;
+      return { url, s3Key: key || undefined, reused: true };
     }
   }
 

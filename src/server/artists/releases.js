@@ -7,6 +7,7 @@ import {
   resolveArtistProfileForRelease,
   recoverArtistGenderFromProjects,
 } from "./profile.js";
+import { tryParseS3ObjectKey } from "../s3.js";
 
 export async function listArtistReleases(slug, limit = 40, opts = {}) {
   await ensureArtistSchema();
@@ -93,6 +94,7 @@ export async function listArtistReleases(slug, limit = 40, opts = {}) {
       releaseId: row.release_id || null,
       coverUrl,
       audioUrl,
+      audioS3Key: audioUrl ? tryParseS3ObjectKey(row.audio_url || audioUrl) || undefined : undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -143,6 +145,7 @@ export async function listLibraryTracks(limit = 200, opts = {}) {
       if (!audioUrl) return null;
       const photo = artistPhotoPath(row.artist_slug);
       const coverUrl = lightAssetUrl(row.cover_url) || photo;
+      const audioS3Key = tryParseS3ObjectKey(row.audio_url || audioUrl);
       return {
         id: row.id,
         title: row.title,
@@ -153,6 +156,7 @@ export async function listLibraryTracks(limit = 200, opts = {}) {
         coverUrl,
         artistImage: photo,
         audioUrl,
+        audioS3Key: audioS3Key || undefined,
         duration: row.track_duration || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
