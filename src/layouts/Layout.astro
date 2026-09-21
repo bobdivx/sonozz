@@ -32,26 +32,30 @@ const {
     <title>{title}</title>
     <ClientRouter fallback="swap" />
     <style is:global>
-      /* Transition douce sans double-fade avec le contenu hydraté */
-      ::view-transition-old(root) {
-        animation: 0.12s ease-out both fade-out;
-      }
+      /*
+        Pas d'animation root — évite vignettes / clips circulaires
+        (ClientRouter + background fixed sous Chrome).
+      */
+      ::view-transition-old(root),
       ::view-transition-new(root) {
-        animation: 0.16s ease-out both fade-in;
+        animation: none;
+        mix-blend-mode: normal;
       }
-      @keyframes fade-out {
-        to { opacity: 0.92; }
-      }
-      @keyframes fade-in {
-        from { opacity: 0.92; }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        ::view-transition-old(root),
-        ::view-transition-new(root) {
-          animation: none !important;
-        }
+      ::view-transition-group(root) {
+        animation: none;
       }
     </style>
+    <script is:inline>
+      /* Nettoie les flags layout laissés par une page précédente (ex. /play). */
+      document.addEventListener("astro:before-preparation", () => {
+        delete document.documentElement.dataset.sonozzFillViewport;
+        delete document.documentElement.dataset.playExpanded;
+      });
+      document.addEventListener("astro:after-swap", () => {
+        delete document.documentElement.dataset.sonozzFillViewport;
+        delete document.documentElement.dataset.playExpanded;
+      });
+    </script>
   </head>
   <body>
     <main id="root-app">

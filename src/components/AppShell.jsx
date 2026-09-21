@@ -89,15 +89,21 @@ export default function AppShell({
     };
   }, []);
 
+  /* Pendant le boot : chrome app optimiste (évite remount children + double fetch). */
+  const showAppChrome = authed || authBoot;
+
   useEffect(() => {
-    document.documentElement.dataset.sonozzNav = authed && !authBoot ? "sidebar" : "";
+    document.documentElement.dataset.sonozzNav = showAppChrome ? "sidebar" : "";
     return () => {
       document.documentElement.dataset.sonozzNav = "";
     };
-  }, [authed, authBoot]);
+  }, [showAppChrome]);
 
   useEffect(() => {
-    if (!fillViewport) return undefined;
+    if (!fillViewport) {
+      delete document.documentElement.dataset.sonozzFillViewport;
+      return undefined;
+    }
     document.documentElement.dataset.sonozzFillViewport = "";
     return () => {
       delete document.documentElement.dataset.sonozzFillViewport;
@@ -128,38 +134,7 @@ export default function AppShell({
     return true;
   });
 
-  /* Premier paint sans cache : chrome stable + children (pas de swap invité→sidebar). */
-  if (authBoot) {
-    return (
-      <div
-        class={
-          fillViewport
-            ? "flex h-full flex-col overflow-hidden"
-            : "flex min-h-full flex-col"
-        }
-        aria-busy="true"
-      >
-        <header class="sticky top-0 z-40 shrink-0 border-b border-base-content/10 bg-base-200/90 backdrop-blur-md">
-          <div class="flex h-14 items-center gap-2 px-2 sm:h-16 sm:gap-4 sm:px-5 md:px-6">
-            <span class="font-display text-lg font-extrabold tracking-[0.08em] text-primary sm:text-xl">
-              SONOZZ
-            </span>
-          </div>
-        </header>
-        <div
-          class={
-            fillViewport
-              ? "flex min-h-0 flex-1 flex-col overflow-hidden"
-              : "px-4 py-6 sm:px-6 sm:py-8 md:px-10 md:py-8"
-          }
-        >
-          {children}
-        </div>
-      </div>
-    );
-  }
-
-  if (!authed) {
+  if (!showAppChrome) {
     return (
       <div class={fillViewport ? "flex h-full flex-col overflow-hidden" : "min-h-full"}>
         <header class="shrink-0 sticky top-0 z-30 border-b border-base-content/10 bg-base-200/90 backdrop-blur">
@@ -226,7 +201,10 @@ export default function AppShell({
   }
 
   return (
-    <div class={fillViewport ? "flex h-full flex-col overflow-hidden" : "flex min-h-full flex-col"}>
+    <div
+      class={fillViewport ? "flex h-full flex-col overflow-hidden" : "flex min-h-full flex-col"}
+      aria-busy={authBoot ? "true" : undefined}
+    >
       <header class="sticky top-0 z-40 shrink-0 border-b border-base-content/10 bg-base-200/90 backdrop-blur-md">
         <div class="flex h-14 items-center gap-2 px-2 sm:h-16 sm:gap-4 sm:px-5 md:px-6">
           {!playFocused && (

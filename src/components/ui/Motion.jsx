@@ -51,10 +51,14 @@ export function FadeIn({
     if (prefersReducedMotion()) return undefined;
     const controls = animate(
       el,
-      { opacity: [0.001, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
+      { opacity: [0.92, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
       { duration, delay, easing: EASE_OUT_SOFT },
     );
-    return () => controls.stop();
+    return () => {
+      controls.stop();
+      el.style.opacity = "1";
+      el.style.transform = "none";
+    };
   }, [delay, duration, y]);
 
   return (
@@ -97,19 +101,22 @@ export function Stagger({
       return undefined;
     }
 
-    items.forEach((el) => {
-      el.style.opacity = "0";
-    });
     const controls = animate(
       items,
-      { opacity: [0, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
+      { opacity: [0.92, 1], transform: [`translateY(${y}px)`, "translateY(0px)"] },
       {
         delay: stagger(step, { startDelay }),
         duration,
         easing: EASE_OUT_SOFT,
       },
     );
-    return () => controls.stop();
+    return () => {
+      controls.stop();
+      items.forEach((el) => {
+        el.style.opacity = "1";
+        el.style.transform = "none";
+      });
+    };
   }, [selector, step, y, duration, startDelay]);
 
   return (

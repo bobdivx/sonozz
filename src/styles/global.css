@@ -67,7 +67,8 @@ body {
     radial-gradient(ellipse 60% 40% at 90% 0%, rgba(61, 107, 90, 0.2), transparent 50%),
     radial-gradient(ellipse 50% 30% at 50% 100%, rgba(212, 120, 74, 0.12), transparent 55%),
     linear-gradient(180deg, #0c0f12 0%, #111418 40%, #0a0d10 100%);
-  background-attachment: fixed;
+  /* fixed + View Transitions = vignettes / clips circulaires sous Chrome */
+  background-attachment: scroll;
 }
 
 body::before {
@@ -87,13 +88,18 @@ main {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   min-height: 100dvh;
   /* Les bandeaux fixed (lecteur, tâches, …) se posent dans ce padding, jamais sur le contenu. */
   padding-bottom: var(--sonozz-bottom-chrome);
 }
 
+/* Remplit la hauteur sans centrer verticalement le contenu court */
 #root-app > * {
-  flex: 1 1 auto;
+  flex: 1 0 auto;
+  width: 100%;
+  align-self: stretch;
 }
 
 html[data-sonozz-fill-viewport],
@@ -107,6 +113,7 @@ html[data-sonozz-fill-viewport] #root-app {
 
 html[data-sonozz-fill-viewport] #root-app > * {
   min-height: 0;
+  flex: 1 1 auto;
 }
 
 .font-display {
