@@ -1,8 +1,10 @@
 /**
  * Stockage objet S3-compatible (AWS S3, Cloudflare R2, MinIO, Garage, Coolify…).
  *
- * Important : Vite/Astro n’injecte que les `import.meta.env.S3_*` en accès STATIQUE.
+ * Important : Vite/Astro n’injecte que les `import.meta.env.*` en accès STATIQUE.
  * `import.meta.env[name]` dynamique reste toujours vide.
+ *
+ * Prod DevForge : souvent SCW_* (Scaleway) plutôt que S3_*.
  */
 
 import {
@@ -11,24 +13,69 @@ import {
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 
+function firstNonEmpty(...values) {
+  for (const v of values) {
+    const s = String(v || "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
 function readS3Env() {
   const meta = import.meta.env || {};
   const proc = typeof process !== "undefined" ? process.env || {} : {};
-  const pick = (key) => String(meta[key] || proc[key] || "").trim();
+
   // Accès statiques pour le bundler Vite (ne pas factoriser en meta[name])
-  const bucket = String(meta.S3_BUCKET || proc.S3_BUCKET || "").trim();
-  const accessKeyId = String(meta.S3_ACCESS_KEY_ID || proc.S3_ACCESS_KEY_ID || "").trim();
-  const secretAccessKey = String(
-    meta.S3_SECRET_ACCESS_KEY || proc.S3_SECRET_ACCESS_KEY || "",
-  ).trim();
-  const region = String(meta.S3_REGION || proc.S3_REGION || "auto").trim() || "auto";
-  const endpoint = String(meta.S3_ENDPOINT || proc.S3_ENDPOINT || "").trim() || undefined;
-  const publicBase = String(meta.S3_PUBLIC_URL || proc.S3_PUBLIC_URL || "")
-    .trim()
-    .replace(/\/$/, "");
-  const forcePathStyleRaw = String(
-    meta.S3_FORCE_PATH_STYLE || proc.S3_FORCE_PATH_STYLE || "",
-  ).trim();
+  const bucket = firstNonEmpty(
+    meta.S3_BUCKET,
+    proc.S3_BUCKET,
+    meta.SCW_BUCKET,
+    proc.SCW_BUCKET,
+  );
+  const accessKeyId = firstNonEmpty(
+    meta.S3_ACCESS_KEY_ID,
+    proc.S3_ACCESS_KEY_ID,
+    meta.SCW_ACCESS_KEY,
+    proc.SCW_ACCESS_KEY,
+    meta.AWS_ACCESS_KEY_ID,
+    proc.AWS_ACCESS_KEY_ID,
+  );
+  const secretAccessKey = firstNonEmpty(
+    meta.S3_SECRET_ACCESS_KEY,
+    proc.S3_SECRET_ACCESS_KEY,
+    meta.SCW_SECRET_KEY,
+    proc.SCW_SECRET_KEY,
+    meta.AWS_SECRET_ACCESS_KEY,
+    proc.AWS_SECRET_ACCESS_KEY,
+  );
+  const region =
+    firstNonEmpty(meta.S3_REGION, proc.S3_REGION, meta.SCW_REGION, proc.SCW_REGION) ||
+    "auto";
+
+  let endpoint =
+    firstNonEmpty(meta.S3_ENDPOINT, proc.S3_ENDPOINT) || undefined;
+  // Scaleway : dériver l’endpoint si seul SCW_REGION est fourni
+  if (!endpoint && region && region !== "auto" && (bucket || accessKeyId)) {
+    const looksScw = Boolean(
+      firstNonEmpty(meta.SCW_BUCKET, proc.SCW_BUCKET, meta.SCW_ACCESS_KEY, proc.SCW_ACCESS_KEY),
+    );
+    if (looksScw || /^(fr-par|nl-ams|pl-waw)$/i.test(region)) {
+      endpoint = `https://s3.${region}.scw.cloud`;
+    }
+  }
+
+  const publicBase = firstNonEmpty(
+    meta.S3_PUBLIC_URL,
+    proc.S3_PUBLIC_URL,
+    meta.PUBLIC_OBJECT_STORAGE_URL,
+    proc.PUBLIC_OBJECT_STORAGE_URL,
+  ).replace(/\/$/, "");
+
+  const forcePathStyleRaw = firstNonEmpty(
+    meta.S3_FORCE_PATH_STYLE,
+    proc.S3_FORCE_PATH_STYLE,
+  );
+
   return {
     bucket,
     accessKeyId,
@@ -37,8 +84,6 @@ function readS3Env() {
     endpoint,
     publicBase,
     forcePathStyle: forcePathStyleRaw === "1" || forcePathStyleRaw === "true",
-    // unused helper kept for clarity
-    pick,
   };
 }
 
@@ -57,7 +102,7 @@ export function getS3Client() {
   if (client) return client;
   if (!isS3Configured()) {
     throw new Error(
-      "S3 non configuré. Ajoute S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY (et S3_ENDPOINT pour R2/MinIO) dans .env",
+      "S3 non configuré. Ajoute S3_BUCKET + S3_ACCESS_KEY_ID + S3_SECRET_ACCESS_KEY (ou SCW_BUCKET + SCW_ACCESS_KEY + SCW_SECRET_KEY) dans l’env.",
     );
   }
   const cfg = getS3Config();
@@ -80,7 +125,7 @@ export function getS3Client() {
 /** Ping config (bucket accessible) + nombre d’objets. */
 export async function testS3Connection() {
   if (!isS3Configured()) {
-    return { ok: false, message: "Variables S3 manquantes", configured: false };
+    return { ok: false, message: "Variables S3 / SCW manquantes", configured: false };
   }
   try {
     const s3 = getS3Client();
