@@ -29,6 +29,7 @@ import {
   subscribePlaySession,
 } from "../lib/playSession.js";
 import { prefetchLibrary } from "../lib/libraryCache.js";
+import { Pressable, usePlayingPulse, useSlideUp } from "./ui/Motion.jsx";
 
 const BAR_FALLBACK = "5.25rem";
 
@@ -47,6 +48,7 @@ function readPathname() {
  */
 export default function NowPlayingBar() {
   const barRef = useRef(null);
+  const coverRef = useRef(null);
   const [pathname, setPathname] = useState(readPathname);
   const [session, setSession] = useState(() =>
     typeof window === "undefined"
@@ -142,6 +144,9 @@ export default function NowPlayingBar() {
     return () => ro.disconnect();
   }, [hidden, hasTrack, overlayOpen]);
 
+  useSlideUp(barRef, { when: !hidden && !overlayOpen, duration: 0.48 });
+  usePlayingPulse(coverRef, audioPlaying && hasTrack);
+
   if (hidden || overlayOpen) return null;
 
   function onOpenPlay(e) {
@@ -181,22 +186,25 @@ export default function NowPlayingBar() {
         >
           {cover ? (
             <img
+              ref={coverRef}
               src={cover}
               alt=""
-              class="h-11 w-11 shrink-0 rounded object-cover sm:h-12 sm:w-12"
+              class="h-11 w-11 shrink-0 rounded object-cover shadow-md shadow-black/40 will-change-transform sm:h-12 sm:w-12"
               width="48"
               height="48"
             />
           ) : (
-            <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-base-300 sm:h-12 sm:w-12">
+            <div
+              ref={coverRef}
+              class="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-base-300 will-change-transform sm:h-12 sm:w-12"
+            >
               {current ? (
                 <Music2 size={18} class="opacity-40" />
               ) : (
                 <Headphones size={18} class="opacity-50" />
               )}
             </div>
-          )}
-          <div class="min-w-0 flex-1 overflow-hidden">
+          )}          <div class="min-w-0 flex-1 overflow-hidden">
             {current ? (
               <>
                 <p
@@ -245,9 +253,9 @@ export default function NowPlayingBar() {
               >
                 <SkipBack size={18} fill="currentColor" />
               </button>
-              <button
+              <Pressable
                 type="button"
-                class="btn btn-primary btn-circle h-11 w-11 min-h-11 min-w-11 touch-manipulation sm:h-12 sm:w-12 sm:min-h-12 sm:min-w-12"
+                class="btn btn-primary btn-circle h-11 w-11 min-h-11 min-w-11 touch-manipulation shadow-lg shadow-primary/25 sm:h-12 sm:w-12 sm:min-h-12 sm:min-w-12"
                 aria-label={audioPlaying ? "Pause" : "Lecture"}
                 onClick={() => togglePlay()}
               >
@@ -256,7 +264,7 @@ export default function NowPlayingBar() {
                 ) : (
                   <Play size={20} fill="currentColor" class="ml-0.5" />
                 )}
-              </button>
+              </Pressable>
               <button
                 type="button"
                 class="btn btn-ghost btn-circle h-10 w-10 min-h-10 min-w-10 touch-manipulation sm:h-9 sm:w-9 sm:min-h-9 sm:min-w-9"

@@ -5,6 +5,7 @@ import StyleArtistPicker from "./StyleArtistPicker.jsx";
 import StyleTrackPicker from "./StyleTrackPicker.jsx";
 import FeatArtistPicker from "./FeatArtistPicker.jsx";
 import { normalizeFeatArtist } from "../lib/featArtist.js";
+import { ModalShell, Pressable } from "./ui/Motion.jsx";
 
 /**
  * Modal de confirmation lors de la création d'un nouveau morceau.
@@ -165,11 +166,15 @@ export default function TrackCreationModal({
   const displayReferenceTrack = currentReferenceTrack || "Aucun titre de référence";
 
   return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-rise">
-      <div class="relative mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-base-content/10 bg-base-200 p-6 shadow-2xl">
+    <ModalShell
+      onBackdrop={onClose}
+      panelClass="relative mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-base-content/10 bg-base-200 p-6 shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+    >
         <button
           type="button"
-          class="btn btn-ghost btn-circle btn-sm absolute right-4 top-4"
+          class="btn btn-ghost btn-circle btn-sm absolute right-4 top-4 cursor-pointer"
           onClick={onClose}
           aria-label="Fermer"
         >
@@ -369,14 +374,13 @@ export default function TrackCreationModal({
         </div>
 
         <div class="mt-6 flex gap-2">
-          <button type="button" class="btn btn-ghost flex-1" onClick={onClose}>
+          <button type="button" class="btn btn-ghost flex-1 cursor-pointer" onClick={onClose}>
             Annuler
           </button>
-          <button type="button" class="btn btn-primary flex-1" onClick={handleConfirm}>
+          <Pressable type="button" class="btn btn-primary flex-1 cursor-pointer" onClick={handleConfirm}>
             Confirmer
-          </button>
+          </Pressable>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

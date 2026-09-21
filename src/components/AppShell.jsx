@@ -11,6 +11,7 @@ import {
   Scale,
 } from "lucide-preact";
 import JobsDock, { JobsDockMobile } from "./JobsDock.jsx";
+import { FadeIn, Stagger } from "./ui/Motion.jsx";
 import { prefetchLibrary } from "../lib/libraryCache.js";
 
 const NAV = [
@@ -259,7 +260,14 @@ export default function AppShell({
                 "calc(100dvh - var(--sonozz-top-header, 3.5rem) - var(--sonozz-bottom-chrome, 5.5rem))",
             }}
           >
-            <nav class="flex flex-col gap-1 p-3 pt-4" aria-label="Navigation principale">
+            <Stagger
+              class="flex flex-col gap-1 p-3 pt-4"
+              as="nav"
+              aria-label="Navigation principale"
+              step={0.04}
+              y={10}
+              duration={0.35}
+            >
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = active === item.id;
@@ -267,9 +275,9 @@ export default function AppShell({
                   <a
                     key={item.id}
                     href={item.href}
-                    class={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
+                    class={`flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition duration-200 ${
                       isActive
-                        ? "bg-primary/15 font-semibold text-primary"
+                        ? "bg-primary/15 font-semibold text-primary shadow-sm shadow-primary/10"
                         : "text-base-content/70 hover:bg-base-content/5 hover:text-base-content"
                     }`}
                     onClick={() => setMobileOpen(false)}
@@ -282,7 +290,7 @@ export default function AppShell({
                   </a>
                 );
               })}
-            </nav>
+            </Stagger>
 
             <div class="min-h-0 flex-1 overflow-y-auto">
               <div class="hidden md:block">
@@ -310,7 +318,11 @@ export default function AppShell({
 
         <div class={`min-w-0 flex-1 ${fillViewport ? "flex min-h-0 flex-col overflow-hidden" : ""}`}>
           {(title || subtitle) && (
-            <div class="flex shrink-0 items-start justify-between gap-3 px-4 pb-2 pt-5 md:px-8 md:pt-7">
+            <FadeIn
+              class="flex shrink-0 items-start justify-between gap-3 px-4 pb-2 pt-5 md:px-8 md:pt-7"
+              y={10}
+              duration={0.4}
+            >
               <div class="min-w-0">
                 {title && (
                   <h1 class="font-display text-2xl font-extrabold tracking-tight sm:text-3xl md:text-4xl">
@@ -321,17 +333,20 @@ export default function AppShell({
                   <p class="mt-1 max-w-2xl text-sm text-base-content/60 md:text-base">{subtitle}</p>
                 )}
               </div>
-            </div>
+            </FadeIn>
           )}
-          <div
+          <FadeIn
             class={
               fillViewport
                 ? "flex min-h-0 flex-1 flex-col overflow-hidden"
                 : "px-4 py-6 sm:px-6 sm:py-8 md:px-10 md:py-8"
             }
+            delay={0.06}
+            y={12}
+            duration={0.48}
           >
             {children}
-          </div>
+          </FadeIn>
         </div>
       </div>
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { Library, Users, X } from "lucide-preact";
 import { albumsApi } from "../lib/albumsApi.js";
 import { featPoolFromCatalog } from "../lib/albumAutoFeats.js";
+import { ModalShell, Pressable } from "./ui/Motion.jsx";
 
 export default function AlbumCreationModal({
   slug,
@@ -137,21 +138,17 @@ export default function AlbumCreationModal({
   }
 
   return (
-    <div
-      class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-rise"
-      onClick={() => !loading && onClose?.()}
-      role="presentation"
+    <ModalShell
+      zClass="z-[100]"
+      onBackdrop={() => !loading && onClose?.()}
+      panelClass="relative mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-base-content/10 bg-base-200 p-6 shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="album-create-title"
     >
-      <div
-        class="relative mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-base-content/10 bg-base-200 p-6 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="album-create-title"
-      >
         <button
           type="button"
-          class="btn btn-ghost btn-circle btn-sm absolute right-4 top-4"
+          class="btn btn-ghost btn-circle btn-sm absolute right-4 top-4 cursor-pointer"
           onClick={onClose}
           disabled={loading}
           aria-label="Fermer"
@@ -311,12 +308,12 @@ export default function AlbumCreationModal({
           )}
 
           <div class="flex flex-wrap justify-end gap-2 pt-2">
-            <button type="button" class="btn btn-ghost" onClick={onClose} disabled={loading}>
+            <button type="button" class="btn btn-ghost cursor-pointer" onClick={onClose} disabled={loading}>
               Annuler
             </button>
-            <button
+            <Pressable
               type="submit"
-              class="btn btn-primary"
+              class="btn btn-primary cursor-pointer"
               disabled={loading || !leadId || leadCandidates.length === 0}
             >
               {loading ? (
@@ -326,10 +323,9 @@ export default function AlbumCreationModal({
               ) : (
                 "Créer et lancer"
               )}
-            </button>
+            </Pressable>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

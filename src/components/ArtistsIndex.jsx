@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { Heart, Plus, Sparkles, UserRound, X, AudioWaveform } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
 import { PageHeader, AlertBanner, EmptyState, ChoiceCard } from "./ui/index.js";
+import { FadeIn, Stagger } from "./ui/Motion.jsx";
 import { listArtistImageUrl } from "../lib/artistPhotos.js";
 import { api } from "../lib/apiClient.js";
 
@@ -124,7 +125,14 @@ export default function ArtistsIndex({ initialArtists = null }) {
           )}
 
           {!loading && artists.length > 0 && (
-            <ul class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <Stagger
+              as="ul"
+              class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3"
+              selector=":scope > li"
+              step={0.06}
+              y={20}
+              startDelay={0.05}
+            >
               {artists.map((a) => {
                 const photo =
                   a.profile?.imageUrl || listArtistImageUrl(a.slug, a.profile, a.updatedAt);
@@ -132,14 +140,14 @@ export default function ArtistsIndex({ initialArtists = null }) {
                   <li key={a.slug}>
                     <a
                       href={`/artiste/${a.slug}`}
-                      class="group block overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/40 transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-xl hover:shadow-black/20"
+                      class="group block cursor-pointer overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/40 transition duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl hover:shadow-black/20"
                     >
                       <div class="relative aspect-[4/5] bg-base-300">
                         {photo ? (
                           <img
                             src={photo}
                             alt=""
-                            class="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]"
+                            class="h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]"
                           />
                         ) : (
                           <div class="flex h-full items-center justify-center">
@@ -167,7 +175,7 @@ export default function ArtistsIndex({ initialArtists = null }) {
                   </li>
                 );
               })}
-            </ul>
+            </Stagger>
           )}
 
           {!loading && artists.length === 0 && (
@@ -191,7 +199,11 @@ export default function ArtistsIndex({ initialArtists = null }) {
 
       {pickerOpen && (
         <dialog class="modal modal-open z-[100]" open>
-          <div class="modal-box max-w-md space-y-5 rounded-3xl">
+          <FadeIn
+            class="modal-box max-w-md space-y-5 rounded-3xl"
+            y={16}
+            duration={0.38}
+          >
             <div class="flex items-start justify-between gap-3">
               <div>
                 <h3 class="font-display text-xl font-semibold">Nouveau profil</h3>
@@ -201,14 +213,14 @@ export default function ArtistsIndex({ initialArtists = null }) {
               </div>
               <button
                 type="button"
-                class="btn btn-ghost btn-circle shrink-0"
+                class="btn btn-ghost btn-circle shrink-0 cursor-pointer"
                 aria-label="Fermer"
                 onClick={() => setPickerOpen(false)}
               >
                 <X size={16} />
               </button>
             </div>
-            <div class="grid gap-3">
+            <Stagger class="grid gap-3" step={0.08} y={12} startDelay={0.1}>
               <ChoiceCard
                 href="/artiste/nouveau?mode=self"
                 icon={<Heart size={18} />}
@@ -222,8 +234,8 @@ export default function ArtistsIndex({ initialArtists = null }) {
                 title="Artiste fictionnel"
                 description="Identité et style inventés."
               />
-            </div>
-          </div>
+            </Stagger>
+          </FadeIn>
           <form method="dialog" class="modal-backdrop">
             <button type="submit" onClick={() => setPickerOpen(false)}>
               Fermer

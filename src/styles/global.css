@@ -227,3 +227,20 @@ html[data-sonozz-fill-viewport] #root-app > * {
   z-index: 20;
   bottom: calc(var(--sonozz-bottom-chrome, 0px) + 0.75rem);
 }
+
+/* UI/UX Pro Max — prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-pulse-soft,
+  .progress-fill,
+  .pipeline-indeterminate,
+  .track-gen-step-active,
+  .play-cover-playing {
+    animation: none !important;
+  }
+
+  .play-shuffle-cta,
+  .group {
+    transition: none !important;
+  }
+}

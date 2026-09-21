@@ -25,6 +25,7 @@ import { api } from "../lib/apiClient.js";
 import { mirrorAlbumJob } from "../lib/albumJobMirror.js";
 import StudioGpuMeter from "./StudioGpuMeter.jsx";
 import TrackGenProgress from "./TrackGenProgress.jsx";
+import { FadeIn, Stagger, useSlideUp } from "./ui/Motion.jsx";
 
 /** Un seul poll album pour sidebar + mobile (sinon 2× GET /api/projects). */
 let albumSyncTimer = null;
@@ -96,7 +97,7 @@ function TypeIcon({ type }) {
 function JobsList({ visible, active, recent }) {
   return (
     <>
-      <ul class="space-y-2">
+      <Stagger as="ul" class="space-y-2" step={0.04} y={8} duration={0.3} startDelay={0.02}>
         {visible.map((job) => (
           <li
             key={job.id}
@@ -172,12 +173,12 @@ function JobsList({ visible, active, recent }) {
             </div>
           </li>
         ))}
-      </ul>
+      </Stagger>
       {recent.length > 0 && (
         <div class="mt-2 flex justify-end px-1">
           <button
             type="button"
-            class="text-[10px] text-base-content/40 hover:text-base-content"
+            class="cursor-pointer text-[10px] text-base-content/40 hover:text-base-content"
             onClick={() => clearFinishedJobs()}
           >
             Effacer terminées
@@ -215,7 +216,7 @@ export function JobsDockSidebar() {
   if (!visible.length) return null;
 
   return (
-    <div class="border-t border-base-content/10 p-3">
+    <FadeIn class="border-t border-base-content/10 p-3" y={8} duration={0.35}>
       <div class="mb-2 flex items-center justify-between gap-2 px-1">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-base-content/50">
           Tâches {active.length ? `(${active.length})` : ""}
@@ -223,7 +224,7 @@ export function JobsDockSidebar() {
         {recent.length > 0 && (
           <button
             type="button"
-            class="text-[10px] text-base-content/40 hover:text-base-content"
+            class="cursor-pointer text-[10px] text-base-content/40 hover:text-base-content"
             onClick={() => clearFinishedJobs()}
           >
             Effacer
@@ -231,7 +232,7 @@ export function JobsDockSidebar() {
         )}
       </div>
       <JobsList visible={visible} active={active} recent={[]} />
-    </div>
+    </FadeIn>
   );
 }
 
@@ -282,6 +283,8 @@ export function JobsDockMobile() {
       document.documentElement.style.setProperty("--sonozz-jobs-dock", "0px");
     };
   }, []);
+
+  useSlideUp(barRef, { when: visible.length > 0, duration: 0.4 });
 
   if (!visible.length) return null;
 

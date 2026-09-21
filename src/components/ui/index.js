@@ -3,3 +3,4 @@ export { default as SectionCard } from "./SectionCard.jsx";
 export { default as AlertBanner } from "./AlertBanner.jsx";
 export { default as EmptyState } from "./EmptyState.jsx";
 export { default as ChoiceCard } from "./ChoiceCard.jsx";
+export { FadeIn, Stagger, Pressable, useSlideUp, usePlayingPulse, ModalShell } from "./Motion.jsx";

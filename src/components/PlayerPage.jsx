@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-preact";
 import AppShell from "./AppShell.jsx";
+import { FadeIn, Pressable, Stagger } from "./ui/Motion.jsx";
 import {
   bindMediaSession,
   cyclePlayRepeat,
@@ -543,8 +544,8 @@ export default function PlayerPage() {
           <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-6">
               {tab === "home" && (
-                <div class="animate-rise mx-auto w-full max-w-5xl space-y-7 sm:space-y-8">
-                  <header class="flex items-end justify-between gap-3">
+                <div class="mx-auto w-full max-w-5xl space-y-7 sm:space-y-8">
+                  <FadeIn class="flex items-end justify-between gap-3" y={10} duration={0.4} as="header">
                     <h1
                       class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl"
                       data-play-rev="2026-09-16"
@@ -554,46 +555,49 @@ export default function PlayerPage() {
                     {queue.length > 0 && (
                       <button
                         type="button"
-                        class="btn btn-ghost btn-md gap-2 touch-manipulation sm:btn-lg sm:min-h-14"
+                        class="btn btn-ghost btn-md gap-2 cursor-pointer touch-manipulation sm:btn-lg sm:min-h-14"
                         onClick={() => setExpanded(true)}
                       >
                         <ListMusic size={20} />
                         File
                       </button>
                     )}
-                  </header>
+                  </FadeIn>
 
                   {tracks.length > 0 && (
-                    <button
-                      type="button"
-                      class="play-shuffle-cta flex min-h-[5.5rem] w-full items-center gap-4 rounded-2xl bg-primary px-5 py-4 text-left text-primary-content shadow-xl shadow-primary/25 touch-manipulation active:scale-[0.99] sm:min-h-[6rem] sm:px-6"
-                      onClick={() => {
-                        if (!shuffle) setPlayShuffle(true, current);
-                        playList(shuffleCopy(tracks));
-                      }}
-                    >
-                      <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary-content/20 sm:h-16 sm:w-16">
-                        <Shuffle size={28} />
-                      </span>
-                      <span class="min-w-0 flex-1">
-                        <span class="font-display block text-xl font-extrabold sm:text-2xl md:text-3xl">
-                          Lecture aléatoire
+                    <FadeIn delay={0.06} y={14} duration={0.45}>
+                      <Pressable
+                        type="button"
+                        class="play-shuffle-cta flex min-h-[5.5rem] w-full cursor-pointer items-center gap-4 rounded-2xl bg-primary px-5 py-4 text-left text-primary-content shadow-xl shadow-primary/25 touch-manipulation sm:min-h-[6rem] sm:px-6"
+                        scale={0.98}
+                        onClick={() => {
+                          if (!shuffle) setPlayShuffle(true, current);
+                          playList(shuffleCopy(tracks));
+                        }}
+                      >
+                        <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary-content/20 sm:h-16 sm:w-16">
+                          <Shuffle size={28} />
                         </span>
-                        <span class="block text-sm opacity-80 sm:text-base">
-                          {tracks.length} titre{tracks.length > 1 ? "s" : ""} · un tap
+                        <span class="min-w-0 flex-1">
+                          <span class="font-display block text-xl font-extrabold sm:text-2xl md:text-3xl">
+                            Lecture aléatoire
+                          </span>
+                          <span class="block text-sm opacity-80 sm:text-base">
+                            {tracks.length} titre{tracks.length > 1 ? "s" : ""} · un tap
+                          </span>
                         </span>
-                      </span>
-                      <Play size={36} fill="currentColor" class="shrink-0" />
-                    </button>
+                        <Play size={36} fill="currentColor" class="shrink-0" />
+                      </Pressable>
+                    </FadeIn>
                   )}
 
                   {recentTracks.length > 0 && (
                     <section>
-                      <div class="mb-3 flex items-end justify-between gap-3">
+                      <FadeIn class="mb-3 flex items-end justify-between gap-3" delay={0.1} y={8}>
                         <h2 class="font-display text-xl font-bold sm:text-2xl md:text-3xl">Récents</h2>
                         <button
                           type="button"
-                          class="min-h-11 px-2 text-sm font-semibold text-primary touch-manipulation sm:text-base"
+                          class="min-h-11 cursor-pointer px-2 text-sm font-semibold text-primary touch-manipulation sm:text-base"
                           onClick={() => {
                             setFilterArtist("");
                             setTab("library");
@@ -601,15 +605,15 @@ export default function PlayerPage() {
                         >
                           Tout voir
                         </button>
-                      </div>
-                      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
+                      </FadeIn>
+                      <Stagger class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3" step={0.045} y={14} startDelay={0.12}>
                         {recentTracks.map((t, idx) => {
                           const isCurrent = current?.id === t.id;
                           return (
                             <button
                               key={t.id}
                               type="button"
-                              class={`group flex min-h-[4.75rem] items-center gap-0 overflow-hidden rounded-md bg-base-300/70 text-left touch-manipulation transition hover:bg-base-300 active:bg-base-300 sm:min-h-[5.25rem] ${
+                              class={`group flex min-h-[4.75rem] cursor-pointer items-center gap-0 overflow-hidden rounded-md bg-base-300/70 text-left touch-manipulation transition duration-200 hover:bg-base-300 hover:scale-[1.01] active:bg-base-300 sm:min-h-[5.25rem] ${
                                 isCurrent ? "ring-1 ring-primary/40" : ""
                               }`}
                               onClick={() => playTrack(t, recentTracks)}
@@ -642,21 +646,23 @@ export default function PlayerPage() {
                             </button>
                           );
                         })}
-                      </div>
+                      </Stagger>
                     </section>
                   )}
 
                   {artistGroups.length > 0 && (
                     <section>
-                      <h2 class="mb-3 font-display text-xl font-bold sm:text-2xl md:text-3xl">
-                        Artistes
-                      </h2>
-                      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                      <FadeIn delay={0.14} y={8}>
+                        <h2 class="mb-3 font-display text-xl font-bold sm:text-2xl md:text-3xl">
+                          Artistes
+                        </h2>
+                      </FadeIn>
+                      <Stagger class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5" step={0.04} y={16} startDelay={0.16}>
                         {artistGroups.map((a) => (
                           <button
                             key={a.slug}
                             type="button"
-                            class="flex min-h-[8rem] flex-col items-center gap-2.5 rounded-2xl bg-base-300/50 p-3 text-center touch-manipulation active:bg-base-300 sm:min-h-[9rem] sm:p-4"
+                            class="flex min-h-[8rem] cursor-pointer flex-col items-center gap-2.5 rounded-2xl bg-base-300/50 p-3 text-center touch-manipulation transition duration-200 hover:scale-[1.03] hover:bg-base-300 active:bg-base-300 sm:min-h-[9rem] sm:p-4"
                             onClick={() => playArtist(a.slug)}
                           >
                             <CoverThumb
@@ -672,7 +678,7 @@ export default function PlayerPage() {
                             </span>
                           </button>
                         ))}
-                      </div>
+                      </Stagger>
                     </section>
                   )}
 
@@ -685,7 +691,7 @@ export default function PlayerPage() {
               )}
 
               {tab === "search" && (
-                <div class="animate-rise mx-auto w-full max-w-3xl space-y-5">
+                <FadeIn class="mx-auto w-full max-w-3xl space-y-5" y={12} duration={0.4}>
                   <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
                     Recherche
                   </h1>
@@ -753,11 +759,11 @@ export default function PlayerPage() {
                       </section>
                     </>
                   )}
-                </div>
+                </FadeIn>
               )}
 
               {tab === "library" && (
-                <div class="animate-rise mx-auto w-full max-w-4xl space-y-5">
+                <FadeIn class="mx-auto w-full max-w-4xl space-y-5" y={12} duration={0.4}>
                   <div class="flex flex-wrap items-end justify-between gap-3">
                     <div>
                       <h1 class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
@@ -816,7 +822,7 @@ export default function PlayerPage() {
                     list={visibleTracks}
                     empty="Aucun titre — génère ou importe un morceau dans le Studio."
                   />
-                </div>
+                </FadeIn>
               )}
             </div>
 
@@ -853,7 +859,11 @@ export default function PlayerPage() {
       </div>
 
       {current && expanded && (
-        <div class="play-now-overlay fixed inset-0 z-50 flex flex-col overflow-hidden bg-base-200 animate-rise">
+        <FadeIn
+          class="play-now-overlay fixed inset-0 z-50 flex flex-col overflow-hidden bg-base-200"
+          y={0}
+          duration={0.35}
+        >
           {cover ? (
             <div class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
               <img src={cover} alt="" class="play-now-blur h-full w-full object-cover" />
@@ -1011,15 +1021,15 @@ export default function PlayerPage() {
                 </button>
                 <button
                   type="button"
-                  class="btn btn-ghost btn-circle h-14 min-h-14 w-14 min-w-14 touch-manipulation sm:h-16 sm:min-h-16 sm:w-16 sm:min-w-16"
+                  class="btn btn-ghost btn-circle h-14 min-h-14 w-14 min-w-14 cursor-pointer touch-manipulation sm:h-16 sm:min-h-16 sm:w-16 sm:min-w-16"
                   aria-label="Précédent"
                   onClick={goPrev}
                 >
                   <SkipBack size={30} fill="currentColor" />
                 </button>
-                <button
+                <Pressable
                   type="button"
-                  class="btn btn-primary btn-circle h-18 w-18 min-h-[4.5rem] min-w-[4.5rem] touch-manipulation shadow-xl shadow-primary/30 sm:h-20 sm:w-20 sm:min-h-20 sm:min-w-20"
+                  class="btn btn-primary btn-circle h-18 w-18 min-h-[4.5rem] min-w-[4.5rem] cursor-pointer touch-manipulation shadow-xl shadow-primary/30 sm:h-20 sm:w-20 sm:min-h-20 sm:min-w-20"
                   aria-label={playing ? "Pause" : "Lecture"}
                   onClick={() => togglePlay()}
                 >
@@ -1028,10 +1038,10 @@ export default function PlayerPage() {
                   ) : (
                     <Play size={34} fill="currentColor" class="ml-1" />
                   )}
-                </button>
+                </Pressable>
                 <button
                   type="button"
-                  class="btn btn-ghost btn-circle h-14 min-h-14 w-14 min-w-14 touch-manipulation sm:h-16 sm:min-h-16 sm:w-16 sm:min-w-16"
+                  class="btn btn-ghost btn-circle h-14 min-h-14 w-14 min-w-14 cursor-pointer touch-manipulation sm:h-16 sm:min-h-16 sm:w-16 sm:min-w-16"
                   aria-label="Suivant"
                   onClick={goNext}
                 >
@@ -1039,7 +1049,7 @@ export default function PlayerPage() {
                 </button>
                 <button
                   type="button"
-                  class={`btn btn-ghost btn-square h-12 min-h-12 w-12 min-w-12 touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14 ${
+                  class={`btn btn-ghost btn-square h-12 min-h-12 w-12 min-w-12 cursor-pointer touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14 ${
                     repeat !== "off" ? "text-primary" : "text-base-content/50"
                   }`}
                   aria-label="Répéter"
@@ -1050,7 +1060,7 @@ export default function PlayerPage() {
               </div>
             </div>
           </div>
-        </div>
+        </FadeIn>
       )}
     </AppShell>
   );
