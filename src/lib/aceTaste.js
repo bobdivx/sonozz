@@ -357,6 +357,19 @@ export function hasSavedAceTaste(taste) {
   );
 }
 
+/** Fragments courts pour SongGen / MiniMax (tags ou prompt). */
+export function aceTastePromptBits(taste, { maxBits = 6, maxLen = 40 } = {}) {
+  const t = normalizeAceTaste(taste);
+  const addon = t.styleAddon || composeStyleAddon(t.tags, t.notes);
+  if (!addon) return [];
+  return addon
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, maxBits)
+    .map((s) => s.slice(0, maxLen));
+}
+
 /**
  * Applique le goût utilisateur sur un body ACE déjà construit.
  */

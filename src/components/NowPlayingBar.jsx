@@ -196,18 +196,26 @@ export default function NowPlayingBar() {
               )}
             </div>
           )}
-          <div class="min-w-0 flex-1">
+          <div class="min-w-0 flex-1 overflow-hidden">
             {current ? (
               <>
-                <p class="truncate text-sm font-semibold leading-tight">{current.trackTitle}</p>
-                <p class="truncate text-[11px] leading-tight text-base-content/50 sm:text-xs">
+                <p
+                  class="break-words text-sm font-semibold leading-snug"
+                  title={current.trackTitle}
+                >
+                  {current.trackTitle}
+                </p>
+                <p
+                  class="break-words text-[11px] leading-snug text-base-content/50 sm:text-xs"
+                  title={current.artistName}
+                >
                   {current.artistName}
                 </p>
               </>
             ) : (
               <>
-                <p class="truncate text-sm font-semibold leading-tight">Play</p>
-                <p class="truncate text-[11px] leading-tight text-base-content/50 sm:text-xs">
+                <p class="text-sm font-semibold leading-snug">Play</p>
+                <p class="text-[11px] leading-snug text-base-content/50 sm:text-xs">
                   Tous les titres
                 </p>
               </>

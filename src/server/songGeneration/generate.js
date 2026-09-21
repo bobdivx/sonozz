@@ -32,6 +32,7 @@ import {
   buildSongGenStyleTags,
   buildSongGenInstruments,
 } from "./style.js";
+import { aceTastePromptBits } from "../../lib/aceTaste.js";
 
 const POLL_MS = 3000;
 /** Large sur 3090 : facilement 10–20 min */
@@ -98,6 +99,11 @@ export async function startSongGeneration(
   for (const flavor of genreFlavorTags(genreHint)) {
     if (!styleTags.some((t) => t.toLowerCase() === flavor.toLowerCase())) {
       styleTags.push(flavor);
+    }
+  }
+  for (const bit of aceTastePromptBits(artist?.aceTaste, { maxBits: 6, maxLen: 36 })) {
+    if (!styleTags.some((t) => t.toLowerCase() === bit.toLowerCase())) {
+      styleTags.push(bit);
     }
   }
 

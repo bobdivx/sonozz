@@ -56,7 +56,6 @@ import {
   hasSavedAceTaste,
   toggleAceTasteTag,
   ACE_TASTE_CHIPS,
-  composeStyleAddon,
 } from "../../lib/aceTaste.js";
 import { resolveArtistGender } from "../../lib/artistGender.js";
 import VersionPicker from "../VersionPicker.jsx";
@@ -326,7 +325,6 @@ export default function TracksStep({
 
   const aceTaste = normalizeAceTaste(artist?.aceTaste);
   const tasteSaved = hasSavedAceTaste(aceTaste);
-  const liveStyleAddon = composeStyleAddon(aceTaste.tags, tasteNotes);
 
   async function persistAceTaste(nextTaste, message) {
     if (!onAceTasteChange) return;
@@ -340,11 +338,6 @@ export default function TracksStep({
     } finally {
       setTasteBusy(false);
     }
-  }
-
-  async function saveTasteNotesOnly() {
-    const next = updateAceTasteNotes(aceTaste, tasteNotes);
-    await persistAceTaste(next, "Préférences enregistrées");
   }
 
   async function saveLikedTaste() {
@@ -385,8 +378,21 @@ export default function TracksStep({
 
   async function regenerateWithTasteNotes() {
     const next = updateAceTasteNotes(aceTaste, tasteNotes);
-    await persistAceTaste(next, "Préférences appliquées — relance…");
-    if (onGenerate) onGenerate();
+    setTasteBusy(true);
+    setTasteHint("");
+    try {
+      if (onGenerate) {
+        await onGenerate({ aceTaste: next });
+        setTasteHint("Nouvelle version lancée avec tes corrections");
+      } else if (onAceTasteChange) {
+        await onAceTasteChange(next, "Préférences enregistrées");
+        setTasteHint("Préférences enregistrées");
+      }
+    } catch (e) {
+      setTasteHint(e?.message || "Impossible de relancer");
+    } finally {
+      setTasteBusy(false);
+    }
   }
 
   const hasAceStep = musicProvider === "acestep" && isStudioEnabled(loadKeys(), "acestep");
@@ -919,6 +925,7 @@ export default function TracksStep({
   }
 
   const hasAudio = Boolean(track?.audioUrl);
+  const hasPlayableAudio = Boolean(track?.audioUrl || track?.audioS3Key);
   const previewReady =
     track?.status === "preview-ready" || Boolean(track?.isPreview && track?.audioUrl);
   const audioReady = isTrackAudioFinal(track);
@@ -1045,122 +1052,6 @@ export default function TracksStep({
           ) : null}
         </div>
       )}
-
-      {artist ? (
-        <div class="space-y-3 rounded-xl border border-base-content/10 bg-base-200/30 p-4">
-          <div class="flex flex-wrap items-center gap-2">
-            <MessageSquare size={16} class="text-base-content/50" />
-            <p class="text-sm font-medium">Goût & préférences</p>
-            {aceTaste.likedAt ? (
-              <span class="badge badge-success badge-sm gap-1">
-                <ThumbsUp size={10} />
-                Réglages gardés
-                {aceTaste.guidanceScale != null ? ` · CFG ${aceTaste.guidanceScale}` : ""}
-              </span>
-            ) : tasteSaved ? (
-              <span class="badge badge-ghost badge-sm">Préférences actives</span>
-            ) : null}
-          </div>
-          <p class="text-xs text-base-content/55">
-            Clique les pastilles et/ou écris librement (ex. « pas assez rap US », « plus
-            mélodique », « plus de chœur gospel »). Tout est sauvé sur cet artiste et
-            réappliqué aux prochaines générations.
-          </p>
-          <div class="flex flex-wrap gap-1.5">
-            {ACE_TASTE_CHIPS.map((chip) => {
-              const on = aceTaste.tags.includes(chip.id);
-              return (
-                <button
-                  key={chip.id}
-                  type="button"
-                  title={chip.hint}
-                  disabled={Boolean(loading) || tasteBusy}
-                  class={`btn btn-xs ${on ? "btn-primary" : "btn-outline"}`}
-                  onClick={() => void onToggleTasteChip(chip.id)}
-                >
-                  {chip.label}
-                </button>
-              );
-            })}
-          </div>
-          <textarea
-            class="textarea textarea-bordered w-full text-sm"
-            rows={3}
-            maxLength={500}
-            placeholder="Ex. ça ressemble pas assez à du rap US, je veux plus de chœur gospel, trop peu mélodique…"
-            value={tasteNotes}
-            disabled={Boolean(loading) || tasteBusy}
-            onInput={(e) => setTasteNotes(e.currentTarget.value)}
-          />
-          {liveStyleAddon ? (
-            <p class="text-xs text-base-content/45">
-              Appliqué au prochain style :{" "}
-              <span class="text-base-content/70">{liveStyleAddon}</span>
-            </p>
-          ) : null}
-          <div class="flex flex-wrap gap-2">
-            <button
-              type="button"
-              class="btn btn-primary btn-sm gap-1.5"
-              disabled={
-                Boolean(loading) ||
-                tasteBusy ||
-                (!String(tasteNotes || "").trim() && !aceTaste.tags.length)
-              }
-              onClick={() => void regenerateWithTasteNotes()}
-            >
-              <RefreshCw size={14} />
-              Relancer avec ces préférences
-            </button>
-            <button
-              type="button"
-              class="btn btn-success btn-sm gap-1.5"
-              disabled={
-                Boolean(loading) ||
-                tasteBusy ||
-                !(track?.audioUrl || track?.audioS3Key)
-              }
-              onClick={() => void saveLikedTaste()}
-            >
-              <ThumbsUp size={14} />
-              Ça me plaît — garder ces réglages
-            </button>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm gap-1.5"
-              disabled={
-                tasteBusy ||
-                (!String(tasteNotes || "").trim() && !aceTaste.tags.length)
-              }
-              onClick={() => void saveTasteNotesOnly()}
-            >
-              <Save size={14} />
-              Sauver
-            </button>
-            {aceTaste.likedAt ? (
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm"
-                disabled={tasteBusy}
-                onClick={() => void clearLikedTaste()}
-              >
-                Effacer CFG gardé
-              </button>
-            ) : null}
-            {tasteSaved ? (
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm text-error"
-                disabled={tasteBusy}
-                onClick={() => void resetAllTaste()}
-              >
-                Tout réinitialiser
-              </button>
-            ) : null}
-          </div>
-          {tasteHint ? <p class="text-xs text-base-content/60">{tasteHint}</p> : null}
-        </div>
-      ) : null}
 
       <div class="flex flex-wrap gap-2">
         <button
@@ -1570,6 +1461,139 @@ export default function TracksStep({
               </button>
             </div>
           )}
+
+          {artist && hasPlayableAudio ? (
+            <div class="space-y-4 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/5 via-base-200/40 to-base-200/20 p-5">
+              <div class="space-y-1.5">
+                <div class="flex flex-wrap items-center gap-2">
+                  <MessageSquare size={18} class="text-primary" />
+                  <h3 class="font-display text-lg font-semibold tracking-tight">
+                    Que veux-tu changer ?
+                  </h3>
+                  {aceTaste.likedAt ? (
+                    <span class="badge badge-success badge-sm gap-1">
+                      <ThumbsUp size={10} />
+                      Réglages validés
+                    </span>
+                  ) : null}
+                </div>
+                <p class="max-w-xl text-sm text-base-content/65">
+                  Après ton écoute, dis-nous ce qui cloche. On lance une{" "}
+                  <span class="font-medium text-base-content/85">nouvelle version</span> avec
+                  tes corrections — la version actuelle reste dans l’historique.
+                </p>
+              </div>
+
+              <div class="space-y-2">
+                <p class="text-xs font-medium uppercase tracking-wider text-base-content/45">
+                  Pastilles rapides
+                </p>
+                <div class="flex flex-wrap gap-1.5">
+                  {ACE_TASTE_CHIPS.map((chip) => {
+                    const on = aceTaste.tags.includes(chip.id);
+                    return (
+                      <button
+                        key={chip.id}
+                        type="button"
+                        title={chip.hint}
+                        disabled={Boolean(loading) || tasteBusy}
+                        class={`btn btn-sm ${on ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
+                        onClick={() => void onToggleTasteChip(chip.id)}
+                      >
+                        {chip.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <label class="text-xs font-medium uppercase tracking-wider text-base-content/45">
+                  Ou décris librement
+                </label>
+                <textarea
+                  class="textarea textarea-bordered w-full text-sm leading-relaxed"
+                  rows={3}
+                  maxLength={500}
+                  placeholder="Ex. trop peu mélodique, je veux plus de chœur gospel, pas assez rap US…"
+                  value={tasteNotes}
+                  disabled={Boolean(loading) || tasteBusy}
+                  onInput={(e) => setTasteNotes(e.currentTarget.value)}
+                />
+              </div>
+
+              {aceTaste.tags.length || String(tasteNotes || "").trim() ? (
+                <p class="rounded-lg bg-base-100/60 px-3 py-2 text-xs text-base-content/70">
+                  Tes corrections seront prises en compte sur la{" "}
+                  <span class="font-medium text-base-content">prochaine génération</span> de ce
+                  morceau
+                  {aceTaste.tags.length
+                    ? ` (${aceTaste.tags
+                        .map((id) => ACE_TASTE_CHIPS.find((c) => c.id === id)?.label)
+                        .filter(Boolean)
+                        .join(", ")})`
+                    : ""}
+                  .
+                </p>
+              ) : (
+                <p class="text-xs text-base-content/50">
+                  Choisis des pastilles ou écris une remarque, puis relance.
+                </p>
+              )}
+
+              <div class="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  class="btn btn-primary gap-1.5"
+                  disabled={
+                    Boolean(loading) ||
+                    tasteBusy ||
+                    (!String(tasteNotes || "").trim() && !aceTaste.tags.length)
+                  }
+                  onClick={() => void regenerateWithTasteNotes()}
+                >
+                  {tasteBusy || loading ? (
+                    <span class="loading loading-spinner loading-sm" />
+                  ) : (
+                    <RefreshCw size={16} />
+                  )}
+                  Relancer une nouvelle version
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-outline btn-success gap-1.5"
+                  disabled={Boolean(loading) || tasteBusy || !hasPlayableAudio}
+                  onClick={() => void saveLikedTaste()}
+                >
+                  <ThumbsUp size={16} />
+                  Ça me plaît
+                </button>
+                {tasteSaved ? (
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm text-base-content/55"
+                    disabled={tasteBusy}
+                    onClick={() => void resetAllTaste()}
+                  >
+                    Effacer mes préférences
+                  </button>
+                ) : null}
+                {aceTaste.likedAt ? (
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm text-base-content/55"
+                    disabled={tasteBusy}
+                    onClick={() => void clearLikedTaste()}
+                  >
+                    Oublier les réglages validés
+                  </button>
+                ) : null}
+              </div>
+              {tasteHint ? (
+                <p class="text-xs text-success">{tasteHint}</p>
+              ) : null}
+            </div>
+          ) : null}
 
           <p class="text-xs text-base-content/50">{track.note}</p>
           {track.warning && (

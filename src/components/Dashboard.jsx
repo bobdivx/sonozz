@@ -762,7 +762,7 @@ export default function Dashboard() {
     }
   }
 
-  async function startTrackBackground(preview) {
+  async function startTrackBackground(preview, projectOverride = null) {
     if (!keysReady(loadKeys())) {
       setError("Configure d'abord un LLM (Gemini ou Ollama) dans Paramètres.");
       window.location.href = "/parametres?section=ia";
@@ -770,7 +770,8 @@ export default function Dashboard() {
     }
     setError("");
     try {
-      const saved = await persist(project, {
+      const base = projectOverride || project;
+      const saved = await persist(base, {
         stepKey: "track",
         eventType: "start",
         message: preview ? "Préparation extrait audio" : "Préparation génération audio",
@@ -1899,33 +1900,29 @@ export default function Dashboard() {
             }}
             onAceTasteChange={async (nextTaste, message) => {
               const taste = nextTaste && typeof nextTaste === "object" ? nextTaste : null;
+              if (!project.artist) return null;
               const slug = String(project.artist?.slug || "").trim();
-              const artistWithTaste = project.artist
-                ? { ...project.artist, aceTaste: taste }
-                : null;
-              setProject((prev) => {
-                if (!prev.artist) return prev;
-                const next = {
-                  ...prev,
-                  artist: {
-                    ...prev.artist,
-                    aceTaste: taste,
-                  },
-                };
-                persist(next, {
-                  stepKey: "track",
-                  eventType: "ace-taste",
-                  message: message || "Goût ACE mis à jour",
-                });
-                return next;
+              const next = {
+                ...project,
+                artist: {
+                  ...project.artist,
+                  aceTaste: taste,
+                },
+              };
+              setProject(next);
+              await persist(next, {
+                stepKey: "track",
+                eventType: "ace-taste",
+                message: message || "Goût ACE mis à jour",
               });
-              if (slug && artistWithTaste) {
+              if (slug) {
                 try {
-                  await api.saveArtistProfile(slug, artistWithTaste);
+                  await api.saveArtistProfile(slug, next.artist);
                 } catch (e) {
                   console.warn("[ace-taste] profil artiste:", e?.message || e);
                 }
               }
+              return next;
             }}
             onSelectVersion={(id) => {
               const next = selectVersion(project, "track", id);
@@ -2013,7 +2010,26 @@ export default function Dashboard() {
               }
             }}
             onGeneratePreview={() => startTrackBackground(true)}
-            onGenerate={() => startTrackBackground(false)}
+            onGenerate={async (opts) => {
+              const taste = opts?.aceTaste;
+              if (taste && project.artist) {
+                const next = {
+                  ...project,
+                  artist: {
+                    ...project.artist,
+                    aceTaste: taste,
+                  },
+                };
+                setProject(next);
+                await persist(next, {
+                  stepKey: "track",
+                  eventType: "ace-taste",
+                  message: "Préférences appliquées — nouvelle version…",
+                });
+                return startTrackBackground(false, next);
+              }
+              return startTrackBackground(false);
+            }}
             onCancelGenerate={() => cancelStepGeneration()}
             onAcceptTrackPreview={() => startTrackBackground(false)}
             onRejectTrackPreview={() => {

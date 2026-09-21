@@ -3,15 +3,31 @@
  */
 import nodemailer from "nodemailer";
 
+function envVal(meta, proc, ...keys) {
+  for (const key of keys) {
+    const v = meta[key] ?? proc[key];
+    if (v != null && String(v).length) return String(v);
+  }
+  return "";
+}
+
 export function getMailConfig() {
   const meta = import.meta.env || {};
   const proc = typeof process !== "undefined" ? process.env || {} : {};
-  const host = String(meta.SMTP_HOST || proc.SMTP_HOST || "").trim();
-  const port = Number(meta.SMTP_PORT || proc.SMTP_PORT || 587);
-  const user = String(meta.SMTP_USER || proc.SMTP_USER || "").trim();
-  const pass = String(meta.SMTP_PASS || proc.SMTP_PASS || "");
-  const from = String(meta.SMTP_FROM || proc.SMTP_FROM || "").trim();
-  return { host, port, user, pass, from };
+  const host = envVal(meta, proc, "SMTP_HOST").trim();
+  const port = Number(envVal(meta, proc, "SMTP_PORT") || 587);
+  const user = envVal(meta, proc, "SMTP_USER").trim();
+  // DevForge / certains providers utilisent SMTP_PASSWORD
+  const pass = envVal(meta, proc, "SMTP_PASS", "SMTP_PASSWORD");
+  const from = envVal(meta, proc, "SMTP_FROM").trim();
+  const secureRaw = envVal(meta, proc, "SMTP_SECURE").trim().toLowerCase();
+  const secure =
+    secureRaw === "1" ||
+    secureRaw === "true" ||
+    secureRaw === "yes" ||
+    port === 465 ||
+    port === 2465;
+  return { host, port, user, pass, from, secure };
 }
 
 export function isMailConfigured() {
@@ -46,7 +62,7 @@ function getTransporter() {
     transporter = nodemailer.createTransport({
       host: cfg.host,
       port: cfg.port || 587,
-      secure: cfg.port === 465 || cfg.port === 2465,
+      secure: Boolean(cfg.secure),
       auth: { user: cfg.user, pass: cfg.pass },
     });
   }

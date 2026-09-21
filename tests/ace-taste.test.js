@@ -9,6 +9,7 @@ import {
   normalizeAceTaste,
   clearAceTasteLiked,
   toggleAceTasteTag,
+  aceTastePromptBits,
   ACE_TASTE_CHIPS,
 } from "../src/lib/aceTaste.js";
 import { buildAceStepBody } from "../src/server/aceStep.js";
@@ -87,6 +88,15 @@ describe("aceTaste", () => {
     assert.equal(body.guidanceScale, 3);
     assert.match(body.style, /intelligible|US hip-hop/i);
     assert.match(body.instruction, /User taste|Prefs|User notes/i);
+  });
+
+  it("aceTastePromptBits découpe l’addon", () => {
+    const bits = aceTastePromptBits(
+      { tags: ["us-rap"], notes: "plus de chœur gospel" },
+      { maxBits: 4, maxLen: 40 },
+    );
+    assert.ok(bits.length >= 1);
+    assert.ok(bits.every((b) => typeof b === "string" && b.length <= 40));
   });
 
   it("buildAceStepBody honore artist.aceTaste", () => {

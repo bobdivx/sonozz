@@ -49,6 +49,7 @@ import {
 } from "../../lib/musicArrange.js";
 import { buildSunoPrompt } from "../../lib/sunoPrompt.js";
 import { resolveArtistGender, withResolvedArtistGender } from "../../lib/artistGender.js";
+import { aceTastePromptBits } from "../../lib/aceTaste.js";
 import {
   resolveLanguage,
   languagePromptName,
@@ -132,6 +133,8 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
     .slice(0, 4)
     .map((d) => `avoid ${d}`);
 
+  const tasteBits = aceTastePromptBits(artist?.aceTaste, { maxBits: 5, maxLen: 48 });
+
   const prompt = (
     musicPromptForGen
       ? metal
@@ -141,6 +144,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
             voiceLine,
             ...duoVocalBits.slice(feat ? 99 : 1),
             ...duoStyleBits,
+            ...tasteBits,
             ...qualityBits,
             musicPromptForGen,
             ...banBits,
@@ -151,6 +155,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
         : [
             ...(feat ? duoVocalBits : [vocal.voiceHint]),
             ...duoStyleBits,
+            ...tasteBits,
             ...arrangeBits,
             ...qualityBits,
             musicPromptForGen,
@@ -163,6 +168,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
             ...(feat ? duoVocalBits : [voiceLine]),
             ...duoVocalBits.slice(feat ? 99 : 1),
             ...duoStyleBits,
+            ...tasteBits,
             ...qualityBits,
             artist?.genre || styleLock?.genreSummary || "metal",
             artist?.styleArtists?.length
@@ -177,6 +183,7 @@ function buildTrackMusicPrompt({ lyrics, artist }) {
         : [
           ...(feat ? duoVocalBits : [vocal.voiceHint]),
           ...duoStyleBits,
+          ...tasteBits,
           ...arrangeBits,
           ...qualityBits,
           packed.gospel ? "contemporary gospel soul R&B" : `${artist?.genre || "pop"}`,
