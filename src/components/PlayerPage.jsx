@@ -878,10 +878,10 @@ export default function PlayerPage() {
             </div>
           ) : null}
 
-          <div class="relative z-[1] flex h-14 shrink-0 items-center justify-between px-2 pt-[env(safe-area-inset-top)] sm:h-16 sm:px-4">
+          <div class="relative z-[1] flex h-12 shrink-0 items-center justify-between px-2">
             <button
               type="button"
-              class="btn btn-ghost btn-square h-12 min-h-12 w-12 min-w-12 touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14"
+              class="btn btn-ghost btn-square h-11 min-h-0 w-11 min-w-0 touch-manipulation"
               aria-label="Réduire"
               onClick={() => setExpanded(false)}
             >
@@ -893,7 +893,7 @@ export default function PlayerPage() {
             </p>
             <button
               type="button"
-              class="btn btn-ghost btn-square h-12 min-h-12 w-12 min-w-12 touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14"
+              class="btn btn-ghost btn-square h-11 min-h-0 w-11 min-w-0 touch-manipulation"
               aria-label="File d’attente"
               onClick={() => {
                 setExpanded(false);
@@ -904,14 +904,14 @@ export default function PlayerPage() {
             </button>
           </div>
 
-          <div class="relative z-[1] flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:gap-6 sm:px-8 lg:flex-row lg:items-center lg:justify-center lg:gap-12 lg:px-12 xl:gap-16">
+          <div class="play-now-stage relative z-[1]">
             <div
-              class="flex w-full max-w-[min(100%,22rem)] shrink-0 touch-manipulation select-none justify-center sm:max-w-[min(100%,26rem)] lg:max-w-[min(42vw,28rem)] xl:max-w-[min(40vw,32rem)]"
+              class="play-now-cover touch-manipulation select-none"
               onTouchStart={onCoverTouchStart}
               onTouchEnd={onCoverTouchEnd}
             >
               <div
-                class={`aspect-square w-full overflow-hidden rounded-xl shadow-2xl shadow-black/50 ring-1 ring-base-content/10 ${
+                class={`play-now-cover-frame overflow-hidden rounded-xl shadow-2xl shadow-black/50 ring-1 ring-base-content/10 ${
                   playing ? "play-cover-playing" : ""
                 }`}
               >
@@ -932,18 +932,18 @@ export default function PlayerPage() {
               </div>
             </div>
 
-            <div class="flex w-full max-w-xl shrink-0 flex-col lg:max-w-lg xl:max-w-xl">
-              <div class="py-2 text-center lg:py-3 lg:text-left">
-                <h2 class="font-display line-clamp-2 text-2xl font-extrabold tracking-tight sm:text-3xl md:text-4xl">
+            <div class="play-now-panel text-center">
+              <div class="pb-1">
+                <h2 class="play-now-title font-display line-clamp-2 font-extrabold tracking-tight">
                   {current.trackTitle}
                 </h2>
-                <p class="mt-1 truncate text-base text-base-content/60 sm:text-lg">
+                <p class="mt-1 truncate text-sm text-base-content/60 sm:text-base">
                   {current.artistName}
                 </p>
               </div>
 
               {playerId && (
-                <div class="mb-2 hidden flex-col items-center gap-1 sm:flex lg:items-start">
+                <div class="play-now-rating mb-1 flex flex-col items-center gap-1">
                   <div class="flex gap-1">
                     {[1, 2, 3, 4, 5].map((star) => (
                       <button
@@ -975,10 +975,10 @@ export default function PlayerPage() {
                 </div>
               )}
 
-              <div>
+              <div class="min-w-0">
                 <div
                   ref={seekRef}
-                  class="relative h-12 cursor-pointer touch-manipulation sm:h-14"
+                  class="relative h-10 cursor-pointer touch-manipulation"
                   role="slider"
                   aria-valuemin={0}
                   aria-valuemax={duration || 0}
@@ -1014,10 +1014,10 @@ export default function PlayerPage() {
                 </div>
               </div>
 
-              <div class="mt-2 flex items-center justify-between gap-2 py-2 sm:mt-3 sm:gap-3">
+              <div class="play-now-transport mt-1">
                 <button
                   type="button"
-                  class={`btn btn-ghost btn-square h-12 min-h-12 w-12 min-w-12 touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14 ${
+                  class={`btn btn-ghost btn-square touch-manipulation ${
                     shuffle ? "text-primary" : "text-base-content/50"
                   }`}
                   aria-label="Aléatoire"
@@ -1028,7 +1028,7 @@ export default function PlayerPage() {
                 </button>
                 <button
                   type="button"
-                  class="btn btn-ghost btn-circle h-14 min-h-14 w-14 min-w-14 cursor-pointer touch-manipulation sm:h-16 sm:min-h-16 sm:w-16 sm:min-w-16"
+                  class="btn btn-ghost btn-circle cursor-pointer touch-manipulation"
                   aria-label="Précédent"
                   onClick={goPrev}
                 >
@@ -1036,7 +1036,7 @@ export default function PlayerPage() {
                 </button>
                 <Pressable
                   type="button"
-                  class="btn btn-primary btn-circle h-18 w-18 min-h-[4.5rem] min-w-[4.5rem] cursor-pointer touch-manipulation shadow-xl shadow-primary/30 sm:h-20 sm:w-20 sm:min-h-20 sm:min-w-20"
+                  class="play-now-main btn btn-primary btn-circle cursor-pointer touch-manipulation shadow-xl shadow-primary/30"
                   aria-label={playing ? "Pause" : "Lecture"}
                   onClick={() => {
                     ensurePlayAnalyser();
@@ -1051,7 +1051,7 @@ export default function PlayerPage() {
                 </Pressable>
                 <button
                   type="button"
-                  class="btn btn-ghost btn-circle h-14 min-h-14 w-14 min-w-14 cursor-pointer touch-manipulation sm:h-16 sm:min-h-16 sm:w-16 sm:min-w-16"
+                  class="btn btn-ghost btn-circle cursor-pointer touch-manipulation"
                   aria-label="Suivant"
                   onClick={goNext}
                 >
@@ -1059,7 +1059,7 @@ export default function PlayerPage() {
                 </button>
                 <button
                   type="button"
-                  class={`btn btn-ghost btn-square h-12 min-h-12 w-12 min-w-12 cursor-pointer touch-manipulation sm:h-14 sm:min-h-14 sm:w-14 sm:min-w-14 ${
+                  class={`btn btn-ghost btn-square cursor-pointer touch-manipulation ${
                     repeat !== "off" ? "text-primary" : "text-base-content/50"
                   }`}
                   aria-label="Répéter"
