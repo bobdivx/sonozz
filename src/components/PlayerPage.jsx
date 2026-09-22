@@ -161,10 +161,10 @@ export default function PlayerPage() {
   const current = currentPlayTrack(session);
 
   useEffect(() => {
+    setAudioError("");
     if (!current) {
       setDuration(0);
       setCurrentTime(0);
-      setAudioError("");
       return;
     }
     if (current.duration && Number.isFinite(current.duration) && current.duration > 0) {
@@ -320,8 +320,10 @@ export default function PlayerPage() {
         setDuration(current.duration);
       }
     };
-    const onErr = () =>
+    const onErr = () => {
+      if (!el.error || el.error.code === 1) return;
       setAudioError("Impossible de lire ce fichier — lien expiré ou audio manquant.");
+    };
     el.addEventListener("timeupdate", onTime);
     el.addEventListener("loadedmetadata", onTime);
     el.addEventListener("durationchange", onTime);
@@ -398,15 +400,23 @@ export default function PlayerPage() {
     }
   }
 
-  function playList(list, startId = null) {
+  function playList(list, startId = null, opts = {}) {
     if (!list.length) return;
-    const ordered = shuffle ? shuffleCopy(list) : [...list];
+    const useShuffle = opts.shuffle ?? shuffle;
+    const useRepeat = opts.repeat ?? repeat;
+    const ordered = useShuffle ? shuffleCopy(list) : [...list];
     let i = 0;
     if (startId) {
       const found = ordered.findIndex((t) => t.id === startId);
       if (found >= 0) i = found;
     }
-    startPlayback({ queue: ordered, index: i, shuffle, repeat });
+    startPlayback({
+      queue: ordered,
+      index: i,
+      shuffle: useShuffle,
+      repeat: useRepeat,
+      play: true,
+    });
     setExpanded(true);
   }
 
@@ -572,10 +582,7 @@ export default function PlayerPage() {
                       type="button"
                       class="play-shuffle-cta flex min-h-[5.5rem] w-full cursor-pointer items-center gap-4 rounded-2xl bg-primary px-5 py-4 text-left text-primary-content shadow-xl shadow-primary/25 touch-manipulation sm:min-h-[6rem] sm:px-6"
                       scale={0.98}
-                      onClick={() => {
-                        if (!shuffle) setPlayShuffle(true, current);
-                        playList(shuffleCopy(tracks));
-                      }}
+                      onClick={() => playList(tracks, null, { shuffle: true, repeat: "all" })}
                     >
                       <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary-content/20 sm:h-16 sm:w-16">
                         <Shuffle size={28} />

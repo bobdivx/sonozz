@@ -178,46 +178,39 @@ export default function NowPlayingBar() {
         {hasTrack ? <ProgressStrip seekable /> : <div class="h-0.5 bg-base-content/10" />}
       </div>
 
-      <div class="flex min-h-14 items-center gap-1 px-2 pb-1.5 pt-2.5 sm:min-h-16 sm:gap-2 sm:px-3 sm:pb-2 sm:pt-3 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-3 md:px-4">
+      <div class="flex min-h-14 min-w-0 items-center gap-1 overflow-hidden px-2 pb-1.5 pt-2.5 sm:min-h-16 sm:gap-2 sm:px-3 sm:pb-2 sm:pt-3 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-3 md:px-4">
         <a
           href="/play"
-          class="flex min-w-0 flex-1 items-center gap-2.5 text-left touch-manipulation active:opacity-80 md:pr-4"
+          class="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden text-left touch-manipulation active:opacity-80 md:pr-2"
           onClick={onOpenPlay}
           onPointerEnter={warmPlayLibrary}
           onFocus={warmPlayLibrary}
         >
-          {cover ? (
-            <img
-              ref={coverRef}
-              src={cover}
-              alt=""
-              class="h-11 w-11 shrink-0 rounded object-cover shadow-md shadow-black/40 will-change-transform sm:h-12 sm:w-12"
-              width="48"
-              height="48"
-            />
-          ) : (
-            <div
-              ref={coverRef}
-              class="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-base-300 will-change-transform sm:h-12 sm:w-12"
-            >
-              {current ? (
-                <Music2 size={18} class="opacity-40" />
-              ) : (
-                <Headphones size={18} class="opacity-50" />
-              )}
-            </div>
-          )}          <div class="min-w-0 flex-1 overflow-hidden">
+          <div
+            ref={coverRef}
+            class="h-11 w-11 shrink-0 overflow-hidden rounded bg-base-300 shadow-md shadow-black/40 will-change-transform sm:h-12 sm:w-12"
+          >
+            {cover ? (
+              <img src={cover} alt="" class="h-full w-full object-cover" width="48" height="48" />
+            ) : (
+              <span class="flex h-full w-full items-center justify-center">
+                {current ? (
+                  <Music2 size={18} class="opacity-40" />
+                ) : (
+                  <Headphones size={18} class="opacity-50" />
+                )}
+              </span>
+            )}
+          </div>
+          <div class="min-w-0 flex-1 overflow-hidden">
             {current ? (
               <>
-                <p
-                  class="break-words text-sm font-semibold leading-snug"
-                  title={current.trackTitle}
-                >
+                <p class="truncate text-sm font-semibold leading-snug" title={current.trackTitle}>
                   {current.trackTitle}
                 </p>
-                <div class="mt-0.5 flex items-center gap-2">
+                <div class="mt-0.5 flex min-w-0 items-center gap-2">
                   <p
-                    class="min-w-0 flex-1 break-words text-[11px] leading-snug text-base-content/50 sm:text-xs"
+                    class="min-w-0 flex-1 truncate text-[11px] leading-snug text-base-content/50 sm:text-xs"
                     title={current.artistName}
                   >
                     {current.artistName}
@@ -227,8 +220,8 @@ export default function NowPlayingBar() {
               </>
             ) : (
               <>
-                <p class="text-sm font-semibold leading-snug">Play</p>
-                <p class="text-[11px] leading-snug text-base-content/50 sm:text-xs">
+                <p class="truncate text-sm font-semibold leading-snug">Play</p>
+                <p class="truncate text-[11px] leading-snug text-base-content/50 sm:text-xs">
                   Tous les titres
                 </p>
               </>
@@ -305,7 +298,7 @@ export default function NowPlayingBar() {
           )}
         </div>
 
-        <div class="hidden items-center justify-end gap-2 md:flex">
+        <div class="hidden min-w-0 items-center justify-end gap-2 md:flex">
           <a
             href="/play"
             class="btn btn-ghost btn-circle h-9 w-9 min-h-9 min-w-9 text-base-content/50"
@@ -361,7 +354,7 @@ function ProgressStrip({ wide = false, seekable = false }) {
     return (
       <div
         ref={trackRef}
-        class="h-1 w-28 cursor-pointer overflow-hidden rounded-full bg-base-content/10 lg:w-40"
+        class="h-1 min-w-0 max-w-28 flex-1 cursor-pointer overflow-hidden rounded-full bg-base-content/10 lg:max-w-40"
         role="slider"
         aria-valuemin={0}
         aria-valuemax={100}

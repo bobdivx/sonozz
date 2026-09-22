@@ -17,6 +17,30 @@ import {
 let audio = null;
 let timeWriteAt = 0;
 let ignorePause = false;
+let wantPlay = false;
+let loadToken = 0;
+let lastEndedAt = 0;
+/** Ids déjà en échec pendant cette file — évite de boucler sur un fichier mort. */
+const failedIds = new Set();
+
+function shuffleArray(list) {
+  const arr = [...list];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function syncMediaPlayback(playing) {
+  try {
+    if (typeof navigator !== "undefined" && navigator.mediaSession) {
+      navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    }
+  } catch {
+    /* ignore */
+  }
+}
 
 function bind(el) {
   el.addEventListener("timeupdate", () => {
@@ -26,21 +50,59 @@ function bind(el) {
     writePlaySession({ currentTime: el.currentTime || 0 }, { emitEvent: false });
   });
   el.addEventListener("ended", () => {
+    const now = Date.now();
+    if (ignorePause || now - lastEndedAt < 400) return;
+    lastEndedAt = now;
+    failedIds.delete(el.dataset.trackId || "");
     skipTrack(1);
   });
-  el.addEventListener("play", () => {
+  el.addEventListener("playing", () => {
+    wantPlay = false;
+    ignorePause = false;
+    failedIds.clear();
+    syncMediaPlayback(true);
     writePlaySession({ playing: true });
   });
   el.addEventListener("pause", () => {
-    if (ignorePause || el.ended) return;
+    if (el.ended || wantPlay || ignorePause) return;
+    syncMediaPlayback(false);
     writePlaySession({
       playing: false,
       currentTime: el.currentTime || 0,
     });
   });
   el.addEventListener("error", () => {
-    writePlaySession({ playing: false });
+    const code = el.error?.code || 0;
+    // 1 = abort, typique quand on change de src.
+    if (code === 1 || (ignorePause && code === 0)) return;
+    const failedId = el.dataset.trackId || "";
+    if (failedId) failedIds.add(failedId);
+    if (!skipFailedTrack(failedId)) {
+      ignorePause = false;
+      syncMediaPlayback(false);
+      writePlaySession({ playing: false });
+    }
   });
+}
+
+function skipFailedTrack(failedId) {
+  const session = readPlaySession();
+  if (!session.queue.length) return false;
+  let idx = session.index;
+  for (let n = 0; n < session.queue.length; n++) {
+    idx = nextPlayIndex({
+      index: idx,
+      queueLen: session.queue.length,
+      repeat: session.repeat === "one" ? "all" : session.repeat,
+    });
+    if (idx < 0) return false;
+    const candidate = session.queue[idx];
+    if (!candidate || candidate.id === failedId || failedIds.has(candidate.id)) continue;
+    writePlaySession({ index: idx, playing: true, currentTime: 0 });
+    loadTrack(candidate, { time: 0, play: true });
+    return true;
+  }
+  return false;
 }
 
 export function getPlayAudio() {
@@ -63,37 +125,54 @@ function loadTrack(track, { time = 0, play = false } = {}) {
   if (!el || !track) return;
   const src = srcFor(track);
   if (!src) {
-    writePlaySession({ playing: false });
+    failedIds.add(track.id);
+    if (!skipFailedTrack(track.id)) writePlaySession({ playing: false });
     return;
   }
 
-  const same = el.dataset.trackId === track.id;
+  const same = el.dataset.trackId === track.id && Boolean(el.getAttribute("src"));
   if (!same) {
+    const token = ++loadToken;
     ignorePause = true;
     el.dataset.trackId = track.id;
-    el.src = src;
-    el.load();
     const apply = () => {
+      if (token !== loadToken) return;
       if (time > 0.4 && Number.isFinite(el.duration) && time < el.duration) {
-        el.currentTime = time;
+        try {
+          el.currentTime = time;
+        } catch {
+          /* ignore */
+        }
       }
-      if (play) {
-        el.play()
-          .catch(() => writePlaySession({ playing: false }))
-          .finally(() => {
-            ignorePause = false;
-          });
-      } else {
+      if (!play) {
+        wantPlay = false;
         ignorePause = false;
+        return;
       }
+      wantPlay = true;
+      el.play().catch(() => {
+        if (token !== loadToken) return;
+        wantPlay = false;
+        ignorePause = false;
+        writePlaySession({ playing: false });
+      });
     };
-    if (el.readyState >= 1) apply();
-    else el.addEventListener("loadedmetadata", apply, { once: true });
+    // readyState peut encore décrire l’ancien morceau : attendre le nouveau.
+    el.addEventListener("loadedmetadata", apply, { once: true });
+    el.src = src;
     return;
   }
 
-  if (play) el.play().catch(() => writePlaySession({ playing: false }));
-  else el.pause();
+  if (play) {
+    if (el.ended) {
+      try {
+        el.currentTime = 0;
+      } catch {
+        /* ignore */
+      }
+    }
+    el.play().catch(() => writePlaySession({ playing: false }));
+  } else el.pause();
 }
 
 export function bootPlayEngine() {
@@ -116,6 +195,7 @@ export function startPlayback({
 } = {}) {
   const slim = queue.map(slimPlayTrack).filter(Boolean);
   if (!slim.length) return;
+  failedIds.clear();
   const i = Math.min(Math.max(0, index), slim.length - 1);
   const session = writePlaySession({
     queue: slim,
@@ -163,6 +243,8 @@ export function playCurrent() {
 }
 
 export function pauseCurrent() {
+  wantPlay = false;
+  ignorePause = false;
   getPlayAudio()?.pause();
 }
 
@@ -216,6 +298,20 @@ export function skipTrack(direction = 1) {
     return;
   }
 
+  const atEnd = session.index >= session.queue.length - 1;
+  if (session.shuffle && session.repeat === "all" && atEnd && session.queue.length > 1) {
+    const justPlayed = session.queue[session.index];
+    let queue = shuffleArray(session.queue);
+    if (queue[0]?.id === justPlayed?.id) {
+      const swap = 1 + Math.floor(Math.random() * (queue.length - 1));
+      [queue[0], queue[swap]] = [queue[swap], queue[0]];
+    }
+    queue = queue.map(slimPlayTrack).filter(Boolean);
+    writePlaySession({ queue, index: 0, playing: true, currentTime: 0, shuffle: true, repeat: "all" });
+    loadTrack(queue[0], { time: 0, play: true });
+    return;
+  }
+
   const next = nextPlayIndex({
     index: session.index,
     queueLen: session.queue.length,
@@ -223,12 +319,17 @@ export function skipTrack(direction = 1) {
   });
   if (next < 0) {
     pauseCurrent();
+    syncMediaPlayback(false);
     writePlaySession({ playing: false, currentTime: 0 });
     return;
   }
   if (session.repeat === "one") {
     if (el) {
-      el.currentTime = 0;
+      try {
+        el.currentTime = 0;
+      } catch {
+        /* ignore */
+      }
       el.play().catch(() => writePlaySession({ playing: false }));
     }
     writePlaySession({ playing: true, currentTime: 0 });
@@ -263,13 +364,7 @@ export function setPlayShuffle(on, current) {
     return;
   }
   const rest = session.queue.filter((t) => t.id !== current.id);
-  const shuffled = [...rest];
-  if (enabled) {
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-  }
+  const shuffled = enabled ? shuffleArray(rest) : [...rest];
   writePlaySession({
     shuffle: enabled,
     queue: [current, ...shuffled],
