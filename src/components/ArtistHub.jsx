@@ -1,9 +1,8 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
   AudioLines,
   BarChart3,
   CalendarDays,
-  ChevronDown,
   ExternalLink,
   Library,
   Music2,
@@ -51,6 +50,69 @@ const TABS = [
   { id: "style", label: "Style", icon: Palette },
   { id: "chiffres", label: "Chiffres", icon: BarChart3 },
 ];
+
+function SectionTabs({ tab, onSelect }) {
+  const barRef = useRef(null);
+  const labelsWidth = useRef(0);
+  const [iconsOnly, setIconsOnly] = useState(false);
+
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+
+    const fit = () => {
+      const width = el.clientWidth;
+      if (!iconsOnly) {
+        if (el.scrollWidth > width + 1) {
+          labelsWidth.current = el.scrollWidth;
+          setIconsOnly(true);
+        }
+      } else if (labelsWidth.current && width >= labelsWidth.current) {
+        setIconsOnly(false);
+      }
+    };
+
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [iconsOnly]);
+
+  return (
+    <div
+      ref={barRef}
+      class="flex gap-1 overflow-hidden rounded-full border border-base-content/10 bg-base-300/50 p-1.5"
+      role="tablist"
+      aria-label="Sections de la fiche"
+    >
+      {TABS.map((t) => {
+        const Icon = t.icon;
+        const on = tab === t.id;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            aria-label={iconsOnly ? t.label : undefined}
+            title={iconsOnly ? t.label : undefined}
+            class={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-full py-2.5 text-sm transition ${
+              iconsOnly ? "px-2" : "whitespace-nowrap px-3"
+            } ${
+              on
+                ? "bg-primary font-semibold text-primary-content shadow-md shadow-black/20"
+                : "text-base-content/55 hover:text-base-content"
+            }`}
+            onClick={() => onSelect(t.id)}
+          >
+            <Icon size={iconsOnly ? 16 : 14} class="shrink-0" />
+            <span class={iconsOnly ? "hidden" : ""}>{t.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 const VERDICT_LABEL = {
   produce: "Nouveau titre",
@@ -241,6 +303,7 @@ function CatalogTrackCard({
 function readHashState() {
   if (typeof window === "undefined") return { tab: "titres", albumId: "" };
   const hash = String(window.location.hash || "").replace(/^#/, "");
+  if (hash === "singles") return { tab: "titres", albumId: "singles" };
   if (hash.startsWith("album-")) {
     return { tab: "titres", albumId: hash.slice(6) };
   }
@@ -307,9 +370,8 @@ export default function ArtistHub({ slug, initialData = null }) {
   const [schedulePreview, setSchedulePreview] = useState(null);
   const [showTrackModal, setShowTrackModal] = useState(false);
   const [pendingTrackTheme, setPendingTrackTheme] = useState("");
-  const initialHash = readHashState();
-  const [tab, setTab] = useState(initialHash.tab);
-  const [openAlbumId, setOpenAlbumId] = useState(initialHash.albumId);
+  const [tab, setTab] = useState("titres");
+  const [openAlbumId, setOpenAlbumId] = useState("");
 
   // Helper pour savoir si une action quelconque est en cours (pour UI non-critique)
   const anyBusy =
@@ -327,13 +389,14 @@ export default function ArtistHub({ slug, initialData = null }) {
   useEffect(() => subscribePlaySession(setPlaySession), []);
 
   useEffect(() => {
-    const onHash = () => {
+    const applyHash = () => {
       const next = readHashState();
       setTab(next.tab);
       setOpenAlbumId(next.albumId);
     };
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
   }, []);
 
   function selectTab(id) {
@@ -345,11 +408,18 @@ export default function ArtistHub({ slug, initialData = null }) {
   }
 
   function selectAlbum(id) {
-    const next = openAlbumId === id ? "" : id;
     setTab("titres");
-    setOpenAlbumId(next);
+    setOpenAlbumId(id);
     if (typeof history !== "undefined") {
-      history.replaceState(null, "", next ? `#album-${next}` : "#titres");
+      history.replaceState(null, "", `#album-${id}`);
+    }
+  }
+
+  function selectSingles() {
+    setTab("titres");
+    setOpenAlbumId("singles");
+    if (typeof history !== "undefined") {
+      history.replaceState(null, "", "#singles");
     }
   }
 
@@ -763,6 +833,14 @@ export default function ArtistHub({ slug, initialData = null }) {
   const releases = data?.releases || [];
   const albumsData = data?.albums || [];
   const { albums, singles } = organizeArtistReleases(releases, albumsData);
+  const discogId =
+    openAlbumId === "singles" && singles.length
+      ? "singles"
+      : openAlbumId && albums.some((album) => album.id === openAlbumId)
+        ? openAlbumId
+        : albums[0]?.id || (singles.length ? "singles" : "");
+  const activeAlbum = albums.find((album) => album.id === discogId) || null;
+  const catalogTracks = activeAlbum ? activeAlbum.tracks : discogId === "singles" ? singles : [];
   const canCreateAlbum = releases.some(
     (r) => r.hasAudio && r.hasLyrics && !r.albumStatus && !r.albumLeadId,
   );
@@ -852,8 +930,8 @@ export default function ArtistHub({ slug, initialData = null }) {
         </a>
 
         {loading && (
-          <div class="animate-pulse overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/40">
-            <div class="grid md:grid-cols-[260px_1fr]">
+          <div class="@container animate-pulse overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/40">
+            <div class="grid @min-[40rem]:grid-cols-[minmax(11rem,16rem)_minmax(0,1fr)]">
               <div class="aspect-square bg-base-300" />
               <div class="space-y-3 p-8">
                 <div class="h-4 w-24 rounded-full bg-base-300" />
@@ -868,9 +946,9 @@ export default function ArtistHub({ slug, initialData = null }) {
 
         {data && (
           <div class="space-y-8 md:space-y-10">
-            <header class="overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/35 shadow-2xl shadow-black/20">
-              <div class="grid md:grid-cols-[minmax(220px,280px)_1fr]">
-                <figure class="relative aspect-square bg-base-300">
+            <header class="@container overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/35 shadow-2xl shadow-black/20">
+              <div class="grid @min-[40rem]:grid-cols-[minmax(11rem,16rem)_minmax(0,1fr)]">
+                <figure class="relative aspect-[4/3] bg-base-300 sm:aspect-[16/10] @min-[40rem]:aspect-square">
                   {portrait ? (
                     <img src={portrait} alt="" class="h-full w-full object-cover" />
                   ) : (
@@ -878,9 +956,9 @@ export default function ArtistHub({ slug, initialData = null }) {
                       <UserRound size={48} class="opacity-30" />
                     </div>
                   )}
-                  <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-base-200/80 via-transparent to-transparent md:hidden" />
+                  <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-base-200/80 via-transparent to-transparent @min-[40rem]:hidden" />
                 </figure>
-                <div class="flex flex-col justify-end gap-4 p-6 sm:p-8">
+                <div class="flex min-w-0 flex-col justify-end gap-4 p-5 sm:p-6 @min-[40rem]:p-8">
                   <div class="flex flex-wrap gap-1.5">
                     {style.genres.slice(0, 4).map((g) => (
                       <span
@@ -907,7 +985,7 @@ export default function ArtistHub({ slug, initialData = null }) {
                     )}
                   </div>
                   <div>
-                    <h1 class="font-display text-4xl font-extrabold tracking-tight sm:text-5xl">
+                    <h1 class="font-display break-words text-3xl font-extrabold leading-[1.05] tracking-tight sm:text-4xl @min-[40rem]:text-5xl">
                       {data.name}
                     </h1>
                     {profile.aka && (
@@ -1007,33 +1085,7 @@ export default function ArtistHub({ slug, initialData = null }) {
               </div>
             )}
 
-            <div
-              class="flex gap-1 overflow-x-auto rounded-full border border-base-content/10 bg-base-300/50 p-1.5"
-              role="tablist"
-              aria-label="Sections de la fiche"
-            >
-              {TABS.map((t) => {
-                const Icon = t.icon;
-                const on = tab === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={on}
-                    class={`flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2.5 text-sm transition ${
-                      on
-                        ? "bg-primary font-semibold text-primary-content shadow-md shadow-black/20"
-                        : "text-base-content/55 hover:text-base-content"
-                    }`}
-                    onClick={() => selectTab(t.id)}
-                  >
-                    <Icon size={14} />
-                    {t.label}
-                  </button>
-                );
-              })}
-            </div>
+            <SectionTabs tab={tab} onSelect={selectTab} />
 
             {tab === "titres" && (
               <div class="space-y-8">
@@ -1075,156 +1127,109 @@ export default function ArtistHub({ slug, initialData = null }) {
                       </span>
                     </button>
                   ) : (
-                    <div class="space-y-8">
-                      {albums.length > 0 && (
-                        <div class="space-y-3">
-                          <h3 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-base-content/45">
-                            <Library size={14} /> Albums
-                          </h3>
-                          <ul class="space-y-3">
-                            {albums.map((album) => {
-                              const open = openAlbumId === album.id;
-                              const firstPlayable = album.tracks.find(
-                                (t) => t.audioUrl || t.audioS3Key,
-                              );
-                              return (
-                                <li
-                                  key={album.id}
-                                  class="overflow-hidden rounded-3xl border border-base-content/10 bg-base-300/40"
-                                >
-                                  <div class="flex flex-wrap items-center gap-3 p-3 sm:p-4">
-                                    <button
-                                      type="button"
-                                      class="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-base-300"
-                                      onClick={() => selectAlbum(album.id)}
-                                    >
-                                      {album.coverUrl ? (
-                                        <img
-                                          src={album.coverUrl}
-                                          alt=""
-                                          class="h-full w-full object-cover"
-                                        />
-                                      ) : (
-                                        <div class="flex h-full items-center justify-center">
-                                          <Library size={22} class="opacity-35" />
-                                        </div>
-                                      )}
-                                    </button>
-                                    <div class="min-w-0 flex-1">
-                                      <p class="font-display text-lg font-bold">{album.title}</p>
-                                      <p class="text-xs text-base-content/55">
-                                        {album.tracks.length} titre
-                                        {album.tracks.length > 1 ? "s" : ""}
-                                        {album.status ? ` · ${album.status}` : ""}
-                                      </p>
-                                    </div>
-                                    <div class="flex flex-wrap gap-2">
-                                      {firstPlayable && (
-                                        <button
-                                          type="button"
-                                          class="btn btn-primary btn-sm gap-1 rounded-full"
-                                          onClick={() =>
-                                            playTracks(
-                                              toPlayTracks(album.tracks, playMeta),
-                                              firstPlayable.id,
-                                            )
-                                          }
-                                        >
-                                          <Play size={12} fill="currentColor" /> Écouter
-                                        </button>
-                                      )}
-                                      <button
-                                        type="button"
-                                        class="btn btn-ghost btn-sm gap-1 rounded-full border border-base-content/15"
-                                        onClick={() => selectAlbum(album.id)}
-                                      >
-                                        <ChevronDown
-                                          size={14}
-                                          class={`transition ${open ? "rotate-180" : ""}`}
-                                        />
-                                        {open ? "Fermer" : "Gérer"}
-                                      </button>
-                                    </div>
-                                  </div>
-                                  {open && (
-                                    <div class="space-y-4 border-t border-base-content/10 p-3 sm:p-4">
-                                      <div class="flex flex-wrap items-center justify-between gap-2">
-                                        <p class="text-xs text-base-content/50">
-                                          Gérer les titres ou supprimer l’album du catalogue.
-                                        </p>
-                                        <button
-                                          type="button"
-                                          class="btn btn-ghost btn-sm gap-1 text-error"
-                                          disabled={deleteAlbumBusy}
-                                          onClick={() => requestDeleteAlbum(album)}
-                                        >
-                                          {deleteAlbumBusy ? (
-                                            <span class="loading loading-spinner loading-xs" />
-                                          ) : (
-                                            <Trash2 size={14} />
-                                          )}
-                                          Supprimer l’album
-                                        </button>
-                                      </div>
-                                      <ul class="space-y-2">
-                                        {album.tracks.map((r, i) => {
-                                          const delivery = r.releaseId
-                                            ? deliveryMap[r.releaseId] ||
-                                              stats.releases?.find((x) => x.id === r.id)
-                                                ?.delivery
-                                            : null;
-                                          const rStreams = r.releaseId
-                                            ? releaseStreamsMap[r.releaseId] ||
-                                              stats.releases?.find((x) => x.id === r.id)?.streams
-                                            : null;
-                                          return (
-                                            <CatalogTrackCard
-                                              key={r.id}
-                                              release={r}
-                                              slug={data.slug}
-                                              delivery={delivery}
-                                              streams={rStreams}
-                                              phase={releasePhase(r, delivery)}
-                                              busy={deleteReleaseBusy}
-                                              onDelete={requestDeleteRelease}
-                                              index={r.albumIndex || i + 1}
-                                              queue={toPlayTracks(album.tracks, playMeta)}
-                                              playMeta={playMeta}
-                                              nowPlayingId={nowPlayingId}
-                                              playing={playing}
-                                            />
-                                          );
-                                        })}
-                                      </ul>
-                                      <ArtistAlbumSection
-                                        slug={data.slug}
-                                        releases={releases}
-                                        pinnedLeadId={album.lead?.id || album.id}
-                                        embedded
-                                        dbAlbumId={album.id}
-                                        availableSingles={singles}
-                                        onAlbumChanged={() => void load()}
-                                        onAlbumDeleted={() => {
-                                          setOpenAlbumId("");
-                                          void load();
-                                        }}
-                                      />
-                                    </div>
-                                  )}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </div>
-                      )}
+                    <div class="space-y-6">
+                      <nav
+                        class="flex gap-3 overflow-x-auto pb-1"
+                        aria-label="Discographie"
+                      >
+                        {albums.map((album) => {
+                          const selected = discogId === album.id;
+                          return (
+                            <button
+                              key={album.id}
+                              type="button"
+                              aria-pressed={selected}
+                              class={`flex w-56 shrink-0 cursor-pointer items-center gap-3 rounded-2xl border p-2.5 text-left transition ${
+                                selected
+                                  ? "border-primary/50 bg-primary/10 ring-1 ring-primary/40"
+                                  : "border-base-content/10 bg-base-300/40 hover:border-primary/30"
+                              }`}
+                              onClick={() => selectAlbum(album.id)}
+                            >
+                              <span class="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-base-300">
+                                {album.coverUrl ? (
+                                  <img src={album.coverUrl} alt="" class="h-full w-full object-cover" />
+                                ) : (
+                                  <span class="flex h-full items-center justify-center">
+                                    <Library size={18} class="opacity-35" />
+                                  </span>
+                                )}
+                              </span>
+                              <span class="min-w-0">
+                                <span class="block font-display text-sm font-bold leading-tight">
+                                  {album.title}
+                                </span>
+                                <span class="block text-xs text-base-content/55">
+                                  Album · {album.tracks.length} titre
+                                  {album.tracks.length > 1 ? "s" : ""}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                        {singles.length > 0 && (
+                          <button
+                            type="button"
+                            aria-pressed={discogId === "singles"}
+                            class={`flex w-56 shrink-0 cursor-pointer items-center gap-3 rounded-2xl border p-2.5 text-left transition ${
+                              discogId === "singles"
+                                ? "border-primary/50 bg-primary/10 ring-1 ring-primary/40"
+                                : "border-base-content/10 bg-base-300/40 hover:border-primary/30"
+                            }`}
+                            onClick={selectSingles}
+                          >
+                            <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-base-300">
+                              <Music2 size={18} class="opacity-50" />
+                            </span>
+                            <span class="min-w-0">
+                              <span class="block font-display text-sm font-bold">Singles</span>
+                              <span class="block text-xs text-base-content/55">
+                                Hors album · {singles.length}
+                              </span>
+                            </span>
+                          </button>
+                        )}
+                      </nav>
 
-                      {singles.length > 0 && (
-                        <div class="space-y-3">
-                          <h3 class="text-sm font-semibold uppercase tracking-wider text-base-content/45">
-                            Singles
-                          </h3>
-                          <ul class="grid gap-3 sm:grid-cols-2">
-                            {singles.map((r) => {
+                      {catalogTracks.length > 0 && (
+                        <div key={discogId} class="space-y-3">
+                          <div class="flex flex-wrap items-end justify-between gap-3">
+                            <div>
+                              <h3 class="font-display text-xl font-bold">
+                                {activeAlbum ? activeAlbum.title : "Singles"}
+                              </h3>
+                              <p class="text-xs text-base-content/55">
+                                {activeAlbum
+                                  ? `${catalogTracks.length} titre${catalogTracks.length > 1 ? "s" : ""} dans l’album`
+                                  : `${catalogTracks.length} titre${catalogTracks.length > 1 ? "s" : ""} hors album`}
+                              </p>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                              {catalogTracks.some((t) => t.audioUrl || t.audioS3Key) && (
+                                <button
+                                  type="button"
+                                  class="btn btn-primary btn-sm gap-1 rounded-full"
+                                  onClick={() => {
+                                    const queue = toPlayTracks(catalogTracks, playMeta);
+                                    if (queue[0]) playTracks(queue, queue[0].id);
+                                  }}
+                                >
+                                  <Play size={12} fill="currentColor" /> Écouter
+                                </button>
+                              )}
+                              {activeAlbum && (
+                                <button
+                                  type="button"
+                                  class="btn btn-ghost btn-sm rounded-full border border-base-content/15"
+                                  onClick={() => selectTab("album")}
+                                >
+                                  Gérer l’album
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <ul class={activeAlbum ? "space-y-2" : "grid gap-3 sm:grid-cols-2"}>
+                            {catalogTracks.map((r, i) => {
                               const delivery = r.releaseId
                                 ? deliveryMap[r.releaseId] ||
                                   stats.releases?.find((x) => x.id === r.id)?.delivery
@@ -1243,7 +1248,8 @@ export default function ArtistHub({ slug, initialData = null }) {
                                   phase={releasePhase(r, delivery)}
                                   busy={deleteReleaseBusy}
                                   onDelete={requestDeleteRelease}
-                                  queue={toPlayTracks(singles, playMeta)}
+                                  index={activeAlbum ? r.albumIndex || i + 1 : null}
+                                  queue={toPlayTracks(catalogTracks, playMeta)}
                                   playMeta={playMeta}
                                   nowPlayingId={nowPlayingId}
                                   playing={playing}

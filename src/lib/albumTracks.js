@@ -173,57 +173,80 @@ export async function ensureAlbumTrackProject(entry, { leadProject, seed, leadPr
  * Sépare le catalogue artiste : albums (lead + pistes enfants) vs singles.
  * Utilise maintenant les données albums de la table dédiée.
  */
+function releaseBelongsToDbAlbum(release, album, linkedLeadProjectId) {
+  if (!release?.id) return false;
+  if (release.albumId && release.albumId === album.id) return true;
+  if (!linkedLeadProjectId || release.albumLeadId !== linkedLeadProjectId) return false;
+  if (release.albumId && release.albumId !== album.id) return false;
+  return true;
+}
+
 export function organizeArtistReleases(releases = [], albumsData = []) {
   if (albumsData && albumsData.length > 0) {
-    const albumMap = new Map(albumsData.map((a) => [a.id, a]));
-    const singles = [];
+    const used = new Set();
     const organizedAlbums = [];
 
     for (const album of albumsData) {
-      const albumTracks = album.tracks || [];
-      const tracks = [];
+      const byId = new Map();
+      const linkedLeadProjectId = String(
+        (album.tracks || []).find((t) => t.role === "lead")?.projectId ||
+          (album.tracks || []).find((t) => t.projectId)?.projectId ||
+          "",
+      ).trim();
 
-      for (const albumTrack of albumTracks) {
+      for (const albumTrack of album.tracks || []) {
         const release = releases.find((r) => r.id === albumTrack.projectId);
-        if (release) {
-          tracks.push({
-            ...release,
-            albumId: album.id,
-            albumTitle: album.title,
-            albumStatus: album.status,
-            albumIndex: albumTrack.index,
-            albumRole: albumTrack.role,
-            albumTrackId: albumTrack.id,
-          });
-        }
+        if (!release || byId.has(release.id)) continue;
+        byId.set(release.id, {
+          ...release,
+          albumId: album.id,
+          albumTitle: album.title,
+          albumStatus: album.status,
+          albumIndex: albumTrack.index ?? release.albumIndex,
+          albumRole: albumTrack.role,
+          albumTrackId: albumTrack.id,
+        });
       }
 
-      tracks.sort((a, b) => (a.albumIndex || 999) - (b.albumIndex || 999));
+      for (const release of releases) {
+        if (used.has(release.id) || byId.has(release.id)) continue;
+        if (!releaseBelongsToDbAlbum(release, album, linkedLeadProjectId)) continue;
+        byId.set(release.id, {
+          ...release,
+          albumId: album.id,
+          albumTitle: album.title || release.albumTitle,
+          albumStatus: release.albumStatus || album.status,
+          albumIndex: release.albumIndex,
+          albumRole: release.id === linkedLeadProjectId ? "lead" : release.albumRole || "member",
+          albumTrackId: release.albumTrackId || null,
+        });
+      }
 
-      const leadTrack = tracks.find((t) => t.albumRole === "lead") || tracks[0];
-      
+      const tracks = [...byId.values()].sort(
+        (a, b) => (Number(a.albumIndex) || 999) - (Number(b.albumIndex) || 999),
+      );
+      for (const track of tracks) used.add(track.id);
+
+      const leadTrack =
+        tracks.find((t) => t.albumRole === "lead") ||
+        tracks.find((t) => t.id === linkedLeadProjectId) ||
+        tracks[0] ||
+        null;
+
       organizedAlbums.push({
         id: album.id,
         title: album.title,
         concept: album.concept || "",
         status: album.status,
         targetCount: album.targetCount,
-        doneCount: album.doneCount || 0,
+        doneCount: album.doneCount || tracks.filter((t) => t.hasAudio).length,
         coverUrl: album.coverUrl || leadTrack?.coverUrl || null,
-        lead: leadTrack || null,
+        lead: leadTrack,
         tracks,
       });
     }
 
-    for (const release of releases) {
-      const inAlbum = organizedAlbums.some((a) =>
-        a.tracks.some((t) => t.id === release.id)
-      );
-      if (!inAlbum) {
-        singles.push(release);
-      }
-    }
-
+    const singles = releases.filter((release) => !used.has(release.id));
     return { albums: organizedAlbums, singles };
   }
 

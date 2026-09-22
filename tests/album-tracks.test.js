@@ -133,6 +133,52 @@ describe("albumTracks", () => {
     assert.equal(next.album.title, "Échos");
   });
 
+  it("rattache les pistes projet même si album_tracks est incomplet", () => {
+    const { albums, singles } = organizeArtistReleases(
+      [
+        {
+          id: "lead",
+          trackTitle: "Golden",
+          albumStatus: "done",
+          albumId: "alb1",
+          albumLeadId: "lead",
+          albumTitle: "Golden",
+          albumIndex: 1,
+        },
+        {
+          id: "t2",
+          trackTitle: "Polaroid",
+          albumLeadId: "lead",
+          albumTitle: "Golden",
+          albumIndex: 2,
+        },
+        {
+          id: "t3",
+          trackTitle: "Sunrise",
+          albumLeadId: "lead",
+          albumTitle: "Golden",
+          albumIndex: 3,
+        },
+        { id: "s1", trackTitle: "Sun-Bleached" },
+      ],
+      [
+        {
+          id: "alb1",
+          title: "Golden",
+          status: "running",
+          tracks: [{ id: "at1", projectId: "lead", role: "lead", index: 1 }],
+        },
+      ],
+    );
+    assert.equal(albums.length, 1);
+    assert.deepEqual(
+      albums[0].tracks.map((t) => t.id),
+      ["lead", "t2", "t3"],
+    );
+    assert.equal(singles.length, 1);
+    assert.equal(singles[0].id, "s1");
+  });
+
   it("regroupe les pistes d’album à part des singles", () => {
     const { albums, singles } = organizeArtistReleases([
       {

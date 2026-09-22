@@ -47,6 +47,8 @@ export default function AppShell({
   playFocused = false,
   /** Cache la barre de recherche (mode voiture). */
   hideSearch = false,
+  /** Contenu ajouté dans la sidebar (sections de la page courante). */
+  sidebarExtra = null,
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const cached = typeof window !== "undefined" ? readAuthCache() : null;
@@ -312,6 +314,15 @@ export default function AppShell({
             </nav>
 
             <div class="min-h-0 flex-1 overflow-y-auto">
+              {sidebarExtra ? (
+                <div
+                  onClick={(e) => {
+                    if (e.target.closest("button, a")) setMobileOpen(false);
+                  }}
+                >
+                  {sidebarExtra}
+                </div>
+              ) : null}
               <div class="hidden md:block">
                 <JobsDock />
               </div>

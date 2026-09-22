@@ -20,14 +20,9 @@ import {
   Plus,
   ArrowRight,
 } from "lucide-preact";
-import StatsStep from "./steps/StatsStep.jsx";
-import LyricsStep from "./steps/LyricsStep.jsx";
-import TracksStep from "./steps/TracksStep.jsx";
-import CoverStep from "./steps/CoverStep.jsx";
-import DistroKidStep from "./steps/DistroKidStep.jsx";
-import ClipStep from "./steps/ClipStep.jsx";
-import SocialStep from "./steps/SocialStep.jsx";
 import HistoryPanel from "./HistoryPanel.jsx";
+import { prefetchStep, useStudioStep } from "./steps/loadStep.js";
+import { StepPanelSkeleton } from "./ui/Skeleton.jsx";
 import AppShell from "./AppShell.jsx";
 import ClipTrackPlayer from "./ClipTrackPlayer.jsx";
 import {
@@ -162,12 +157,11 @@ function applySongTitle(project, title) {
   return next;
 }
 
-export default function Dashboard() {
-  const [step, setStepState] = useState(() => {
-    if (typeof window === "undefined") return 1;
-    const s = Number(new URLSearchParams(window.location.search).get("step"));
-    return s >= 1 && s <= STEPS.length ? s : 1;
-  });
+export default function Dashboard({ initialProject = "", initialStep = "" }) {
+  const startStep = Number(initialStep);
+  const openedProject = String(initialProject || "").trim();
+  const openedStep = startStep >= 1 && startStep <= STEPS.length ? startStep : 0;
+  const [step, setStepState] = useState(openedStep || 1);
 
   function setStep(action) {
     setStepState((prev) => {
@@ -213,19 +207,12 @@ export default function Dashboard() {
   });
   const [catalogArtists, setCatalogArtists] = useState([]);
   const [published, setPublished] = useState(false);
-  const [projectId, setProjectId] = useState(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("project") || null;
-  });
+  const [projectId, setProjectId] = useState(openedProject || null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
   /** Accueil studio `/` uniquement — masqué quand un projet est ouvert via ?project= ou ?step= */
-  const [showHomePipeline, setShowHomePipeline] = useState(() => {
-    if (typeof window === "undefined") return true;
-    const p = new URLSearchParams(window.location.search);
-    return !p.get("project") && !p.get("step");
-  });
+  const [showHomePipeline, setShowHomePipeline] = useState(!openedProject && !openedStep);
   /** Projets récents pour la home studio (style catalogue). */
   const [recentProjects, setRecentProjects] = useState([]);
   /** Génération album lancée dans cet onglet (évite d’écraser l’état live par le poll). */
@@ -233,7 +220,7 @@ export default function Dashboard() {
   /** Annulation génération étape (morceau / extrait). */
   const stepAbortRef = useRef(null);
   /** Id projet vivant — évite les INSERT dupliqués (fermeture périmée pendant Auto A→Z). */
-  const projectIdRef = useRef(null);
+  const projectIdRef = useRef(openedProject || null);
   const persistChainRef = useRef(Promise.resolve());
 
   function assignProjectId(id) {
@@ -286,7 +273,10 @@ export default function Dashboard() {
     (async () => {
       try {
         const { projects: list } = await api.listProjects();
-        if (!cancelled) setRecentProjects((list || []).slice(0, 8));
+        const unfinished = (list || []).filter(
+          (p) => p.status === "lyrics" || p.status === "track",
+        );
+        if (!cancelled) setRecentProjects(unfinished.slice(0, 6));
       } catch {
         /* ignore */
       }
@@ -366,7 +356,6 @@ export default function Dashboard() {
         if (stepParam >= 1 && stepParam <= STEPS.length) setStep(stepParam);
         else if (!saved.project?.lyrics) setStep(2);
         else if (!saved.project?.track && !saved.project?.distrokid?.releaseId) setStep(3);
-        setSaveMsg(`Projet ${saved.title}`);
         if (loaded.album) mirrorAlbumJob(loaded.album, saved.id);
       } catch (e) {
         setError(e.message);
@@ -529,6 +518,15 @@ export default function Dashboard() {
   const trackUiLoading = loading || trackBusy;
   const stepKey = STEPS.find((s) => s.id === step)?.key;
   const stepIdOf = (key) => STEPS.find((s) => s.key === key)?.id;
+  const { Comp: StepView, failed: stepLoadFailed } = useStudioStep(
+    showHomePipeline ? null : stepKey,
+  );
+
+  useEffect(() => {
+    if (showHomePipeline || !step) return;
+    const next = STEPS.find((s) => s.id === step + 1);
+    if (next) prefetchStep(next.key);
+  }, [step, showHomePipeline]);
 
   const doneMap = {
     stats: Boolean(project.track || project.distrokid),
@@ -1117,7 +1115,7 @@ export default function Dashboard() {
         language: saved.seed?.language || loaded.artist?.language || s.language,
       }));
       setHistoryOpen(false);
-      setSaveMsg(`Chargé : ${saved.title}`);
+      setSaveMsg("");
       // Place l'utilisateur sur la dernière étape utile
       if (saved.project?.social?.publishedAt || saved.project?.social?.publish) setStep(stepIdOf("social"));
       else if (
@@ -1141,17 +1139,16 @@ export default function Dashboard() {
   return (
     <AppShell active="studio">
     <div class="mx-auto w-full max-w-5xl">
-      <header class={`${showHomePipeline ? "mb-10 space-y-3 md:mb-14" : "mb-6 space-y-5 md:mb-8 md:space-y-6"}`}>
+      {showHomePipeline ? (
+      <header class="mb-10 space-y-3 md:mb-14">
         <div class="flex flex-wrap items-start gap-4 sm:gap-6">
           <div class="min-w-0 flex-1 space-y-2">
             <p class="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
-              {showHomePipeline ? studioGreeting() : "Studio"}
+              {studioGreeting()}
             </p>
-            {showHomePipeline ? (
-              <p class="max-w-xl text-sm leading-relaxed text-base-content/60 sm:text-base">
-                Choisis un artiste, lance un titre. Un flux simple — paroles, audio, jaquette.
-              </p>
-            ) : null}
+            <p class="max-w-xl text-sm leading-relaxed text-base-content/60 sm:text-base">
+              Choisis un artiste, lance un titre. Un flux simple — paroles, audio, jaquette.
+            </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <a href="/parametres" class="btn btn-ghost btn-sm gap-1.5 rounded-full px-3 cursor-pointer" title="Paramètres">
@@ -1163,15 +1160,117 @@ export default function Dashboard() {
               <History size={15} />
               <span class="hidden sm:inline">Historique</span>
             </button>
-            {!showHomePipeline && artistSlug && (
-              <a href={`/artiste/${artistSlug}`} class="btn btn-ghost btn-sm gap-1.5 rounded-full px-3 text-primary cursor-pointer">
-                Fiche artiste
+          </div>
+        </div>
+      </header>
+      ) : (
+      <header class="mb-4">
+        <div class="rounded-2xl bg-base-300/40 p-3 sm:p-4">
+          <div class="flex items-start gap-3">
+            <img
+              src={
+                project.cover?.imageUrl && !/^data:image\/svg/i.test(project.cover.imageUrl)
+                  ? project.cover.imageUrl
+                  : project.artist?.imageUrl && !/^data:image\/svg/i.test(project.artist.imageUrl)
+                    ? project.artist.imageUrl
+                    : "/logo.png"
+              }
+              alt=""
+              class="h-12 w-12 shrink-0 rounded-lg object-cover"
+              width="48"
+              height="48"
+            />
+            <div class="min-w-0 flex-1">
+              <h1 class="font-display text-lg font-bold leading-tight">
+                {projectSongTitle || project.artist?.name || "Projet"}
+              </h1>
+              <p class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-sm text-base-content/55">
+                {projectSongTitle && project.artist?.name ? (
+                  <span class="max-w-full truncate">{project.artist.name}</span>
+                ) : null}
+                {albumCtx ? (
+                  <span class="inline-flex min-w-0 items-center gap-1">
+                    <span class="text-base-content/30">·</span>
+                    {albumCtx.prevHref ? (
+                      <a
+                        class="btn btn-ghost btn-xs btn-square"
+                        href={albumCtx.prevHref}
+                        title="Titre précédent"
+                        aria-label="Titre précédent de l’album"
+                      >
+                        <ChevronLeft size={14} />
+                      </a>
+                    ) : null}
+                    <span class="truncate">
+                      {albumCtx.title && albumCtx.title !== projectSongTitle
+                        ? `${albumCtx.title} · `
+                        : "Album · "}
+                      {albumCtx.index
+                        ? `piste ${albumCtx.index}${albumCtx.total ? `/${albumCtx.total}` : ""}`
+                        : "piste"}
+                    </span>
+                    {albumCtx.nextHref ? (
+                      <a
+                        class="btn btn-ghost btn-xs btn-square"
+                        href={albumCtx.nextHref}
+                        title="Titre suivant"
+                        aria-label="Titre suivant de l’album"
+                      >
+                        <ChevronRight size={14} />
+                      </a>
+                    ) : null}
+                    {albumCtx.artistHref ? (
+                      <a class="shrink-0 text-primary hover:underline" href={albumCtx.artistHref}>
+                        Album
+                      </a>
+                    ) : null}
+                  </span>
+                ) : null}
+              </p>
+              <div class="mt-2 flex items-center gap-2">
+                <div class="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-base-300">
+                  <div
+                    class="h-full rounded-full bg-primary transition-all duration-500"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <span class="font-display text-xs text-primary">{progress}%</span>
+              </div>
+            </div>
+            <div class="flex shrink-0 items-center gap-0.5">
+              <a
+                href="/parametres"
+                class="btn btn-ghost btn-sm btn-square relative cursor-pointer"
+                title="Paramètres"
+                aria-label="Paramètres"
+              >
+                <Settings2 size={16} />
+                <span class={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${ready ? "bg-success" : "bg-warning"}`} />
               </a>
-            )}
-            {!showHomePipeline && (
               <button
                 type="button"
-                class="btn btn-ghost btn-sm gap-1.5 rounded-full px-3 cursor-pointer"
+                class="btn btn-ghost btn-sm btn-square cursor-pointer"
+                title="Historique"
+                aria-label="Historique"
+                onClick={() => setHistoryOpen(true)}
+              >
+                <History size={16} />
+              </button>
+              {artistSlug ? (
+                <a
+                  href={`/artiste/${artistSlug}`}
+                  class="btn btn-ghost btn-sm btn-square cursor-pointer text-primary"
+                  title="Fiche artiste"
+                  aria-label="Fiche artiste"
+                >
+                  <Library size={16} />
+                </a>
+              ) : null}
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm btn-square cursor-pointer"
+                title="Sauver"
+                aria-label="Sauver"
                 disabled={saving}
                 onClick={() =>
                   persist(project, {
@@ -1180,88 +1279,25 @@ export default function Dashboard() {
                   })
                 }
               >
-                <Save size={15} />
-                {saving ? "…" : "Sauver"}
+                <Save size={16} />
               </button>
-            )}
-            {saveMsg && !showHomePipeline && (
-              <span class="text-xs text-base-content/45">{saveMsg}</span>
-            )}
+            </div>
           </div>
+          {saveMsg ? <p class="mt-2 text-xs text-base-content/45">{saveMsg}</p> : null}
+          {isTrackAudioFinal(project.track) ? (
+            <div class="mt-3 w-full border-t border-base-content/10 pt-3">
+              <ClipTrackPlayer
+                track={project.track}
+                artist={project.artist}
+                cover={project.cover}
+                compact
+                meta={false}
+              />
+            </div>
+          ) : null}
         </div>
-
-        {albumCtx && !showHomePipeline && (
-          <div class="flex flex-wrap items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs">
-            <Library size={12} class="text-primary" />
-            <span class="font-medium text-primary">{albumCtx.title}</span>
-            {albumCtx.index ? (
-              <span class="text-base-content/55">
-                · piste {albumCtx.index}
-                {albumCtx.total ? `/${albumCtx.total}` : ""}
-              </span>
-            ) : null}
-            {albumCtx.prevHref && (
-              <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.prevHref} title="Titre précédent">
-                <ChevronLeft size={12} />
-              </a>
-            )}
-            {albumCtx.nextHref && (
-              <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.nextHref} title="Titre suivant">
-                <ChevronRight size={12} />
-              </a>
-            )}
-            {albumCtx.artistHref && (
-              <a class="btn btn-ghost btn-xs rounded-full" href={albumCtx.artistHref}>
-                Album
-              </a>
-            )}
-          </div>
-        )}
-
-        {!showHomePipeline && (
-          <div class="grid gap-5 rounded-2xl bg-base-300/40 p-5 md:grid-cols-[auto_1fr_auto] md:items-center md:gap-8 md:p-6">
-            <img
-              src={
-                project.artist?.imageUrl && !/^data:image\/svg/i.test(project.artist.imageUrl)
-                  ? project.artist.imageUrl
-                  : "/logo.png"
-              }
-              alt={project.artist?.name || "SONOZZ"}
-              class="h-24 w-24 rounded-xl object-cover shadow-lg shadow-black/30 md:h-32 md:w-32"
-              width="128"
-              height="128"
-            />
-            <div class="min-w-0 space-y-2">
-              <h1 class="font-display text-xl font-bold tracking-tight sm:text-2xl">
-                {project.artist?.name || "Projet"}
-                {projectSongTitle ? (
-                  <span class="text-base-content/50"> — {projectSongTitle}</span>
-                ) : null}
-              </h1>
-              {isTrackAudioFinal(project.track) ? (
-                <ClipTrackPlayer
-                  track={project.track}
-                  artist={project.artist}
-                  cover={project.cover}
-                  compact
-                />
-              ) : null}
-            </div>
-            <div class="space-y-2 md:min-w-[10rem]">
-              <div class="flex items-center justify-between text-sm">
-                <span class="text-base-content/60">Pipeline</span>
-                <span class="font-display text-primary">{progress}%</span>
-              </div>
-              <div class="h-1.5 overflow-hidden rounded-full bg-base-300">
-                <div
-                  class="h-full rounded-full bg-primary transition-all duration-500"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
       </header>
+      )}
 
       {showHomePipeline && (
         <>
@@ -1578,10 +1614,12 @@ export default function Dashboard() {
 
           {recentProjects.length > 0 && (
             <section class="mb-10 md:mb-14">
-              <div class="mb-5 flex items-end justify-between gap-3">
+              <div class="mb-4 flex items-end justify-between gap-3">
                 <div>
                   <h2 class="font-display text-xl font-bold tracking-tight sm:text-2xl">Continuer</h2>
-                  <p class="mt-1 text-sm text-base-content/55">Tes derniers projets ouverts.</p>
+                  <p class="mt-1 text-sm text-base-content/55">
+                    Morceaux commencés, audio pas encore terminé.
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -1592,24 +1630,28 @@ export default function Dashboard() {
                   <ArrowRight size={14} />
                 </button>
               </div>
-              <div class="-mx-1 flex gap-4 overflow-x-auto px-1 pb-2">
+              <ul class="divide-y divide-base-content/10 overflow-hidden rounded-2xl border border-base-content/10 bg-base-300/30">
                 {recentProjects.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    class="group w-40 shrink-0 text-left sm:w-44"
-                    onClick={() => loadFromHistory(p.id)}
-                  >
-                    <div class="aspect-square overflow-hidden rounded-2xl bg-gradient-to-br from-primary/25 via-base-300 to-secondary/20 shadow-md shadow-black/15 transition group-hover:shadow-lg">
-                      <div class="flex h-full w-full items-center justify-center p-4">
-                        <Music2 size={40} class="text-primary/60 transition group-hover:scale-105" />
-                      </div>
-                    </div>
-                    <p class="mt-3 truncate font-display text-sm font-semibold sm:text-base">{p.title || "Projet"}</p>
-                    <p class="mt-0.5 truncate text-xs text-base-content/45">{p.status || "brouillon"}</p>
-                  </button>
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      class="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left hover:bg-base-300/60"
+                      onClick={() => loadFromHistory(p.id)}
+                    >
+                      <Music2 size={16} class="shrink-0 text-primary/80" />
+                      <span class="min-w-0 flex-1">
+                        <span class="block truncate font-medium">{p.title || "Projet"}</span>
+                        <span class="block text-xs text-base-content/50">
+                          {p.status === "track"
+                            ? "Audio en cours — pas encore le morceau complet"
+                            : "Paroles prêtes — l’audio manque"}
+                        </span>
+                      </span>
+                      <ArrowRight size={14} class="shrink-0 text-base-content/35" />
+                    </button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </section>
           )}
         </>
@@ -1619,7 +1661,7 @@ export default function Dashboard() {
         <div class="mb-4 rounded-xl border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">{error}</div>
       )}
 
-      {!showHomePipeline && !project.artist?.name && (
+      {!showHomePipeline && !loading && !project.artist?.name && (
         <div class="mb-4 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
           Ce morceau n’a pas d’artiste.{" "}
           <a class="link" href="/artistes">
@@ -1633,7 +1675,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {trackUiLoading && !autoRunning && (
+      {(trackBusy || (loading && project.artist?.name)) && !autoRunning && (
         <div
           class="mb-4 flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3"
           aria-live="polite"
@@ -1678,7 +1720,7 @@ export default function Dashboard() {
 
       {!showHomePipeline && (
       <nav
-        class="mb-3 grid grid-cols-7 gap-1 sm:gap-2"
+        class="@container mb-3 grid grid-cols-7 gap-1 sm:gap-2"
         aria-label="Étapes de création"
       >
         {STEPS.map((s) => {
@@ -1690,6 +1732,7 @@ export default function Dashboard() {
               key={s.id}
               type="button"
               title={s.label}
+              aria-label={done ? `${s.label}, terminée` : s.label}
               onClick={() => {
                 if (
                   s.id > stepIdOf("tracks") &&
@@ -1702,29 +1745,20 @@ export default function Dashboard() {
                 }
                 setStep(s.id);
               }}
-              class={`group flex min-w-0 flex-col gap-0.5 rounded-lg px-1 py-2 text-left transition-all duration-300 sm:gap-1 sm:rounded-xl sm:px-2 sm:py-3 md:px-3 ${
+              class={`group flex min-w-0 flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-center transition-all duration-300 sm:gap-1 sm:rounded-xl sm:px-2 sm:py-3 md:px-3 ${
                 active
                   ? "bg-primary/15 ring-1 ring-primary/40"
                   : "bg-base-300/40 hover:bg-base-300/70"
               }`}
             >
-              <span class="flex items-center justify-between gap-0.5 sm:gap-1">
-                <Icon
-                  size={14}
-                  class={`shrink-0 sm:h-4 sm:w-4 ${
-                    active ? "text-primary" : done ? "text-secondary" : "text-base-content/45"
-                  }`}
-                />
-                <span
-                  class={`text-[9px] sm:text-[10px] ${
-                    done ? "text-secondary" : "text-base-content/35"
-                  }`}
-                >
-                  {done ? "ok" : `0${s.id}`}
-                </span>
-              </span>
+              <Icon
+                size={16}
+                class={`shrink-0 ${
+                  active ? "text-primary" : done ? "text-secondary" : "text-base-content/45"
+                }`}
+              />
               <span
-                class={`truncate font-display text-[10px] font-semibold leading-tight sm:text-xs md:text-sm ${
+                class={`hidden max-w-full truncate font-display text-xs font-semibold leading-tight @min-[44rem]:block @min-[56rem]:text-sm ${
                   active ? "text-base-content" : "text-base-content/70"
                 }`}
               >
@@ -1737,7 +1771,7 @@ export default function Dashboard() {
       )}
 
       {!showHomePipeline && (
-        <div class="mb-6 flex flex-wrap items-center gap-2">
+        <div class="mb-4 flex items-center gap-2">
           <button
             type="button"
             class="btn btn-ghost btn-sm"
@@ -1746,17 +1780,7 @@ export default function Dashboard() {
           >
             Précédent
           </button>
-          <div class="ml-auto flex flex-wrap items-center gap-2">
-            <a
-              class="btn btn-ghost btn-sm"
-              href={
-                artistSlug
-                  ? `/artiste/${encodeURIComponent(artistSlug)}`
-                  : "/"
-              }
-            >
-              Annuler
-            </a>
+          <div class="ml-auto flex items-center gap-2">
             <button
               type="button"
               class="btn btn-primary btn-sm gap-1"
@@ -1784,8 +1808,14 @@ export default function Dashboard() {
       {!showHomePipeline && (
       <div class="rounded-2xl bg-base-300/30 p-5 backdrop-blur-sm md:p-8">
         <FadeIn key={stepKey || step} y={6} duration={0.22}>
+        {stepLoadFailed ? (
+          <p class="text-sm text-error">Impossible de charger cette étape. Recharge la page.</p>
+        ) : !StepView ? (
+          <StepPanelSkeleton />
+        ) : (
+        <>
         {stepKey === "stats" && (
-          <StatsStep
+          <StepView
             track={project.track}
             artist={project.artist}
             distrokid={project.distrokid}
@@ -1794,7 +1824,7 @@ export default function Dashboard() {
           />
         )}
         {stepKey === "lyrics" && (
-          <LyricsStep
+          <StepView
             lyrics={project.lyrics}
             versions={project.lyricsVersions || []}
             activeId={project.activeLyricsId}
@@ -1869,7 +1899,7 @@ export default function Dashboard() {
           />
         )}
         {stepKey === "tracks" && (
-          <TracksStep
+          <StepView
             track={project.track}
             versions={project.trackVersions || []}
             activeId={project.activeTrackId}
@@ -2136,7 +2166,7 @@ export default function Dashboard() {
           />
         )}
         {stepKey === "covers" && (
-          <CoverStep
+          <StepView
             cover={project.cover}
             versions={project.coverVersions || []}
             activeId={project.activeCoverId}
@@ -2190,7 +2220,7 @@ export default function Dashboard() {
           />
         )}
         {stepKey === "distrokid" && (
-          <DistroKidStep
+          <StepView
             distrokid={project.distrokid}
             track={project.track}
             cover={project.cover}
@@ -2281,7 +2311,7 @@ export default function Dashboard() {
           />
         )}
         {stepKey === "clip" && (
-          <ClipStep
+          <StepView
             projectId={projectId}
             social={project.social}
             clip={project.clip}
@@ -2384,7 +2414,7 @@ export default function Dashboard() {
           />
         )}
         {stepKey === "social" && (
-          <SocialStep
+          <StepView
             projectId={projectId}
             social={project.social}
             clip={project.clip}
@@ -2452,6 +2482,8 @@ export default function Dashboard() {
               });
             }}
           />
+        )}
+        </>
         )}
 
         </FadeIn>

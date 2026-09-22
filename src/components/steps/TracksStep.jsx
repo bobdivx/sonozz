@@ -14,6 +14,7 @@ import {
   XCircle,
   Trash2,
   Music2,
+  ChevronDown,
   SlidersHorizontal,
   User,
   Users,
@@ -214,6 +215,8 @@ export default function TracksStep({
   });
   const [styleTrackBusy, setStyleTrackBusy] = useState(false);
   const [modal, setModal] = useState(null); // ref | arrange | profile | feat | provider | once | suno
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [chipsOpen, setChipsOpen] = useState(false);
   const onceFileRef = useRef(null);
   const importFileRef = useRef(null);
   const probeSeq = useRef(0);
@@ -1053,94 +1056,137 @@ export default function TracksStep({
         </div>
       )}
 
-      <div class="flex flex-wrap gap-2">
+      <div class="@container overflow-hidden rounded-2xl border border-base-content/10 bg-base-300/40">
         <button
           type="button"
-          class="btn btn-outline btn-sm gap-1.5"
-          onClick={() => setModal("ref")}
+          class="flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left"
+          aria-expanded={toolsOpen}
+          onClick={() => setToolsOpen((open) => !open)}
         >
-          <Music2 size={14} />
-          Titre de référence
+          <SlidersHorizontal size={16} class="shrink-0 text-base-content/70" />
+          <span class="font-medium">Outils</span>
+          <span class="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-base-content/55">
+            <span class={`truncate ${!canGenerateAudio && keysHydrated ? "text-warning" : ""}`}>
+              {providerLabel}
+            </span>
+            {featArtist?.name ? <span class="max-w-[7rem] truncate">· {featArtist.name}</span> : null}
+            {artist && !voiceLabel ? <span class="badge badge-warning badge-xs">voix</span> : null}
+          </span>
+          <ChevronDown
+            size={16}
+            class={`shrink-0 text-base-content/45 transition ${toolsOpen ? "rotate-180" : ""}`}
+          />
         </button>
-        {(hasAceStep || hasSongGen || hasReplicate) && (
-          <button
-            type="button"
-            class="btn btn-outline btn-sm gap-1.5"
-            onClick={() => setModal("arrange")}
-          >
-            <SlidersHorizontal size={14} />
-            Arrangement
-          </button>
-        )}
-        {artist && (
-          <button
-            type="button"
-            class="btn btn-outline btn-sm gap-1.5"
-            onClick={() => setModal("profile")}
-          >
-            <User size={14} />
-            Profil utilisé
-            {!voiceLabel ? <span class="badge badge-warning badge-xs">voix</span> : null}
-          </button>
-        )}
-        {artist && (
-          <button
-            type="button"
-            class={`btn btn-sm gap-1.5 ${featArtist?.name ? "btn-primary" : "btn-outline"}`}
-            onClick={() => setModal("feat")}
-          >
-            <Users size={14} />
-            Duo / Feat.
-            {featArtist?.name ? (
-              <span class="badge badge-ghost badge-xs max-w-[7rem] truncate">
-                {featArtist.name}
-              </span>
-            ) : null}
-          </button>
-        )}
-        <button
-          type="button"
-          class={`btn btn-sm gap-1.5 ${
-            !canGenerateAudio && keysHydrated ? "btn-warning" : "btn-outline"
-          }`}
-          onClick={() => setModal("provider")}
-        >
-          <Radio size={14} />
-          Provider audio
-          <span class="opacity-70">· {providerLabel}</span>
-        </button>
-        <button
-          type="button"
-          class="btn btn-outline btn-sm gap-1.5"
-          onClick={() => setModal("suno")}
-        >
-          <ScrollText size={14} />
-          Prompt Suno
-        </button>
-        <button
-          type="button"
-          class="btn btn-outline btn-sm gap-1.5"
-          onClick={openImportModal}
-        >
-          <FileAudio size={14} />
-          Importer un morceau
-          {isOnceOriginal ? <span class="badge badge-success badge-xs">ONCE</span> : null}
-        </button>
-        {track?.audioUrl && (
-          <button
-            type="button"
-            class="btn btn-outline btn-sm gap-1.5"
-            disabled={loading || onceBusy}
-            onClick={() => void resaveAudio()}
-          >
-            {onceBusy ? (
-              <span class="loading loading-spinner loading-xs" />
-            ) : (
-              <Save size={14} />
+        {toolsOpen ? (
+          <div class="grid border-t border-base-content/10 p-1.5 @min-[32rem]:grid-cols-2">
+            <button
+              type="button"
+              class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-base-300/80"
+              onClick={() => {
+                setToolsOpen(false);
+                setModal("ref");
+              }}
+            >
+              <Music2 size={15} class="shrink-0 text-base-content/55" />
+              Titre de référence
+            </button>
+            {(hasAceStep || hasSongGen || hasReplicate) && (
+              <button
+                type="button"
+                class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-base-300/80"
+                onClick={() => {
+                  setToolsOpen(false);
+                  setModal("arrange");
+                }}
+              >
+                <SlidersHorizontal size={15} class="shrink-0 text-base-content/55" />
+                Arrangement
+              </button>
             )}
-            Re-sauver
-          </button>
-        )}
+            {artist && (
+              <button
+                type="button"
+                class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-base-300/80"
+                onClick={() => {
+                  setToolsOpen(false);
+                  setModal("profile");
+                }}
+              >
+                <User size={15} class="shrink-0 text-base-content/55" />
+                <span class="min-w-0 flex-1">Profil utilisé</span>
+                {!voiceLabel ? <span class="badge badge-warning badge-xs">voix</span> : null}
+              </button>
+            )}
+            {artist && (
+              <button
+                type="button"
+                class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-base-300/80"
+                onClick={() => {
+                  setToolsOpen(false);
+                  setModal("feat");
+                }}
+              >
+                <Users size={15} class="shrink-0 text-base-content/55" />
+                <span class="min-w-0 flex-1">Duo / Feat.</span>
+                {featArtist?.name ? (
+                  <span class="max-w-[8rem] truncate text-xs text-primary">{featArtist.name}</span>
+                ) : null}
+              </button>
+            )}
+            <button
+              type="button"
+              class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-base-300/80"
+              onClick={() => {
+                setToolsOpen(false);
+                setModal("provider");
+              }}
+            >
+              <Radio size={15} class="shrink-0 text-base-content/55" />
+              <span class="min-w-0 flex-1">Provider audio</span>
+              <span class={`truncate text-xs ${!canGenerateAudio && keysHydrated ? "text-warning" : "text-base-content/45"}`}>
+                {providerLabel}
+              </span>
+            </button>
+            <button
+              type="button"
+              class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-base-300/80"
+              onClick={() => {
+                setToolsOpen(false);
+                setModal("suno");
+              }}
+            >
+              <ScrollText size={15} class="shrink-0 text-base-content/55" />
+              Prompt Suno
+            </button>
+            <button
+              type="button"
+              class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-base-300/80"
+              onClick={() => {
+                setToolsOpen(false);
+                openImportModal();
+              }}
+            >
+              <FileAudio size={15} class="shrink-0 text-base-content/55" />
+              <span class="min-w-0 flex-1">Importer un morceau</span>
+              {isOnceOriginal ? <span class="badge badge-success badge-xs">ONCE</span> : null}
+            </button>
+            {track?.audioUrl && (
+              <button
+                type="button"
+                class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-base-300/80 disabled:opacity-50"
+                disabled={loading || onceBusy}
+                onClick={() => void resaveAudio()}
+              >
+                {onceBusy ? (
+                  <span class="loading loading-spinner loading-xs" />
+                ) : (
+                  <Save size={15} class="shrink-0 text-base-content/55" />
+                )}
+                Re-sauver
+              </button>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {!canGenerateAudio && !hasLocalStudio && keysHydrated && (
@@ -1161,7 +1207,7 @@ export default function TracksStep({
           onClick={() => onGeneratePreview?.()}
           title={
             !hasLyricsText
-              ? "Génère d’abord les paroles (étape 3) — le profil artiste ne suffit pas"
+              ? "Génère d’abord les paroles — le profil artiste ne suffit pas"
               : hasSongGen && !voiceLabel
                 ? "Voix / sexe manquant sur ce projet — ouvre Profil utilisé"
                 : modelsNotReady
@@ -1187,7 +1233,7 @@ export default function TracksStep({
           onClick={onGenerate}
           title={
             !hasLyricsText
-              ? "Génère d’abord les paroles (étape 3) — le profil artiste ne suffit pas"
+              ? "Génère d’abord les paroles — le profil artiste ne suffit pas"
               : hasSongGen && !voiceLabel
                 ? "Voix / sexe manquant sur ce projet — ouvre Profil utilisé"
                 : modelsNotReady
@@ -1237,7 +1283,7 @@ export default function TracksStep({
       )}
       {!hasLyricsText && (
         <p class="text-sm text-warning">
-          Génère d’abord les paroles à l’étape 3. Le profil artiste (style, voix, références) est
+          Génère d’abord les paroles. Le profil artiste (style, voix, références) est
           déjà persisté — il ne débloque pas l’audio tant qu’il n’y a pas de texte.
         </p>
       )}
@@ -1484,27 +1530,69 @@ export default function TracksStep({
                 </p>
               </div>
 
-              <div class="space-y-2">
-                <p class="text-xs font-medium uppercase tracking-wider text-base-content/45">
-                  Pastilles rapides
-                </p>
-                <div class="flex flex-wrap gap-1.5">
-                  {ACE_TASTE_CHIPS.map((chip) => {
-                    const on = aceTaste.tags.includes(chip.id);
-                    return (
-                      <button
-                        key={chip.id}
-                        type="button"
-                        title={chip.hint}
-                        disabled={Boolean(loading) || tasteBusy}
-                        class={`btn btn-sm ${on ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-                        onClick={() => void onToggleTasteChip(chip.id)}
-                      >
-                        {chip.label}
-                      </button>
-                    );
-                  })}
-                </div>
+              <div class="overflow-hidden rounded-2xl border border-base-content/10 bg-base-100/40">
+                <button
+                  type="button"
+                  class="flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left"
+                  aria-expanded={chipsOpen}
+                  onClick={() => setChipsOpen((open) => !open)}
+                >
+                  <span class="text-xs font-medium uppercase tracking-wider text-base-content/55">
+                    Pastilles rapides
+                  </span>
+                  <span class="ml-auto text-xs text-base-content/45">
+                    {aceTaste.tags.length
+                      ? `${aceTaste.tags.length} choisie${aceTaste.tags.length > 1 ? "s" : ""}`
+                      : "Aucune"}
+                  </span>
+                  <ChevronDown
+                    size={16}
+                    class={`shrink-0 text-base-content/45 transition ${chipsOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {aceTaste.tags.length > 0 ? (
+                  <div class="flex flex-wrap gap-1.5 border-t border-base-content/10 px-3 py-2.5">
+                    {aceTaste.tags.map((id) => {
+                      const chip = ACE_TASTE_CHIPS.find((c) => c.id === id);
+                      if (!chip) return null;
+                      return (
+                        <button
+                          key={chip.id}
+                          type="button"
+                          class="btn btn-primary btn-xs gap-1 rounded-full"
+                          title={`Retirer « ${chip.label} »`}
+                          disabled={Boolean(loading) || tasteBusy}
+                          onClick={() => void onToggleTasteChip(chip.id)}
+                        >
+                          {chip.label}
+                          <X size={12} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {chipsOpen ? (
+                  <div class="max-h-52 overflow-y-auto border-t border-base-content/10 p-1.5">
+                    {ACE_TASTE_CHIPS.map((chip) => {
+                      const on = aceTaste.tags.includes(chip.id);
+                      return (
+                        <button
+                          key={chip.id}
+                          type="button"
+                          title={chip.hint}
+                          disabled={Boolean(loading) || tasteBusy}
+                          class={`flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-base-300/80 disabled:opacity-50 ${
+                            on ? "text-primary" : ""
+                          }`}
+                          onClick={() => void onToggleTasteChip(chip.id)}
+                        >
+                          <span class="min-w-0 flex-1">{chip.label}</span>
+                          <span class="text-xs text-base-content/40">{on ? "Retirer" : "Ajouter"}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
 
               <div class="space-y-2">

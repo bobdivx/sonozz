@@ -19,4 +19,5 @@ export {
   ArtistCardSkeletons,
   TrackRowSkeletons,
   PlayHomeSkeleton,
+  StepPanelSkeleton,
 } from "./Skeleton.jsx";

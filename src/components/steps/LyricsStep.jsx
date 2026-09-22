@@ -206,29 +206,27 @@ export default function LyricsStep({
               {songGenLanguageHint(keysSnap.songGenPreferredModel || "songgeneration_large")}
             </p>
           )}
-          <div class="flex flex-wrap gap-2">
+          <select
+            class="select select-bordered w-full max-w-xs bg-base-200"
+            aria-label="Langue des paroles"
+            value={language}
+            disabled={loading}
+            onChange={(e) => setLanguage(e.currentTarget.value)}
+          >
             {langOptions.map((l) => {
-              const active = language === l.code;
               const engine = languageEngineLabel(
                 l.code,
                 keysSnap.musicProvider,
                 keysSnap.songGenPreferredModel,
               );
               return (
-                <button
-                  key={l.code}
-                  type="button"
-                  class={`btn btn-sm ${active ? "btn-primary" : "btn-ghost border border-base-content/15"}`}
-                  onClick={() => setLanguage(l.code)}
-                >
+                <option key={l.code} value={l.code}>
                   {l.label}
-                  {engine === "MiniMax" ? (
-                    <span class="ml-1 text-[10px] opacity-70">MiniMax</span>
-                  ) : null}
-                </button>
+                  {engine === "MiniMax" ? " · MiniMax" : ""}
+                </option>
               );
             })}
-          </div>
+          </select>
           {artist?.language && artist.language !== language && (
             <p class="text-xs text-warning">
               Différent de la langue artiste ({languageLabel(artist.language)}) — le chant suivra ce choix.

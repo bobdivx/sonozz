@@ -446,20 +446,13 @@ export default function SettingsPage() {
   const SectionIcon = meta?.icon || Sparkles;
 
   return (
-    <AppShell active="parametres">
-      <div class="mx-auto max-w-5xl">
-        <PageHeader
-          eyebrow="Configuration"
-          title="Paramètres"
-          description="Clés API stockées dans ton navigateur. Sépare IA, morceaux, streaming, distribution et réseaux."
-        />
-
-      <div class="flex flex-col gap-8 lg:flex-row lg:gap-10">
-        {/* Section sidebar */}
-        <nav
-          class="flex shrink-0 gap-2 overflow-x-auto lg:w-56 lg:flex-col lg:overflow-visible"
-          aria-label="Sections paramètres"
-        >
+    <AppShell
+      active="parametres"
+      sidebarExtra={
+        <nav class="flex flex-col gap-0.5 px-3 pb-2" aria-label="Sections paramètres">
+          <p class="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-base-content/40">
+            Sections
+          </p>
           {SETTINGS_NAV.map((group) => {
             const info = SECTION_META[group.group];
             const Icon = info?.icon || Sparkles;
@@ -470,21 +463,28 @@ export default function SettingsPage() {
                 key={id}
                 type="button"
                 onClick={() => selectSection(id)}
-                class={`flex min-w-[9rem] items-center gap-2 rounded-2xl border px-3.5 py-3 text-left text-sm transition lg:w-full ${
+                class={`flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition duration-200 ${
                   isActive
-                    ? "border-primary/50 bg-primary/10 font-semibold text-primary shadow-md shadow-primary/10"
-                    : "border-base-content/10 bg-base-200/40 text-base-content/70 hover:border-base-content/25"
+                    ? "bg-primary/15 font-semibold text-primary"
+                    : "text-base-content/70 hover:bg-base-content/5 hover:text-base-content"
                 }`}
               >
-                <Icon size={16} />
-                <span>{group.group}</span>
+                <Icon size={16} class="shrink-0" />
+                <span class="min-w-0 truncate">{group.group}</span>
               </button>
             );
           })}
         </nav>
+      }
+    >
+      <div class="mx-auto max-w-5xl">
+        <PageHeader
+          eyebrow="Configuration"
+          title="Paramètres"
+          description="Clés API stockées dans ton navigateur. Sépare IA, morceaux, streaming, distribution et réseaux."
+        />
 
-        {/* Content */}
-        <section class="min-w-0 flex-1 animate-rise">
+        <section class="min-w-0 animate-rise">
           <div class="mb-8 flex items-start gap-3">
             <div class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
               <SectionIcon size={20} />
@@ -912,7 +912,6 @@ export default function SettingsPage() {
           </div>
           )}
         </section>
-      </div>
       </div>
     </AppShell>
   );

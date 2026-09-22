@@ -1,8 +1,11 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import Dashboard from "../components/Dashboard.jsx";
+
+const initialProject = Astro.url.searchParams.get("project") || "";
+const initialStep = Astro.url.searchParams.get("step") || "";
 ---
 
 <Layout title="SONOZZ — Studio" description="Studio SONOZZ : crée ton artiste, génère des titres, publie.">
-  <Dashboard client:load />
+  <Dashboard client:load initialProject={initialProject} initialStep={initialStep} />
 </Layout>

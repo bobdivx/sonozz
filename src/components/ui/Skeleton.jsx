@@ -37,6 +37,20 @@ export function TrackRowSkeletons({ count = 6 }) {
   );
 }
 
+export function StepPanelSkeleton() {
+  return (
+    <div class="space-y-4" aria-busy="true" aria-label="Chargement de l’étape">
+      <Skeleton class="h-8 w-48" />
+      <Skeleton class="h-4 w-full max-w-md" />
+      <Skeleton class="h-40 w-full" />
+      <div class="flex gap-3">
+        <Skeleton class="h-10 w-28 rounded-full" />
+        <Skeleton class="h-10 w-28 rounded-full" />
+      </div>
+    </div>
+  );
+}
+
 export function PlayHomeSkeleton() {
   return (
     <div class="mx-auto w-full max-w-5xl space-y-8" aria-busy="true" aria-label="Chargement">

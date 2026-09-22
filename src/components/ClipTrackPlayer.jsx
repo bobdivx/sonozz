@@ -12,7 +12,7 @@ function formatTime(sec) {
 /**
  * Mini-lecteur studio — écoute du morceau (header, entre portrait et pipeline).
  */
-export default function ClipTrackPlayer({ track, artist, cover, compact = false }) {
+export default function ClipTrackPlayer({ track, artist, cover, compact = false, meta = true }) {
   const audioRef = useRef(null);
   const seekingRef = useRef(false);
   const [playing, setPlaying] = useState(false);
@@ -137,10 +137,15 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
 
   return (
     <div
-      class={`clip-track-player relative overflow-hidden border border-base-content/10 bg-gradient-to-br from-base-300/80 via-base-200/90 to-base-300/60 ${
-        compact ? "rounded-xl" : ""
+      class={`clip-track-player relative w-full overflow-hidden ${
+        meta
+          ? `border border-base-content/10 bg-gradient-to-br from-base-300/80 via-base-200/90 to-base-300/60 ${
+              compact ? "rounded-xl" : ""
+            }`
+          : ""
       }`}
     >
+      {meta ? (
       <div
         class="pointer-events-none absolute inset-0 opacity-[0.12]"
         style={
@@ -155,9 +160,10 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
             : undefined
         }
       />
+      ) : null}
       <div
         class={`relative flex items-center gap-3 ${
-          compact ? "p-2.5 sm:gap-3 sm:p-3" : "p-3 sm:gap-4 sm:p-3.5"
+          meta ? (compact ? "p-2.5 sm:gap-3 sm:p-3" : "p-3 sm:gap-4 sm:p-3.5") : "gap-2"
         }`}
       >
         {showThumb ? (
@@ -192,36 +198,48 @@ export default function ClipTrackPlayer({ track, artist, cover, compact = false 
         ) : null}
 
         <div class="min-w-0 flex-1 space-y-1.5">
-          <div class="flex items-center justify-between gap-2">
-            <div class="min-w-0">
-              <p class="truncate font-display text-sm font-semibold tracking-tight sm:text-base">
-                {title}
-              </p>
-              {artistName ? (
-                <p class="truncate text-xs text-base-content/55">{artistName}</p>
-              ) : (
-                <p class="text-xs text-base-content/45">Écoute le morceau</p>
-              )}
+          {meta ? (
+            <div class="flex items-center justify-between gap-2">
+              <div class="min-w-0">
+                <p class="truncate font-display text-sm font-semibold tracking-tight sm:text-base">
+                  {title}
+                </p>
+                {artistName ? (
+                  <p class="truncate text-xs text-base-content/55">{artistName}</p>
+                ) : (
+                  <p class="text-xs text-base-content/45">Écoute le morceau</p>
+                )}
+              </div>
+              <button
+                type="button"
+                class={`btn btn-primary btn-circle shrink-0 touch-manipulation ${
+                  compact
+                    ? "h-11 w-11 min-h-11"
+                    : "h-10 w-10 min-h-10 sm:h-11 sm:w-11 sm:min-h-11"
+                }`}
+                aria-label={playing ? "Pause" : "Lecture"}
+                onClick={togglePlay}
+              >
+                {playing ? (
+                  <Pause size={compact ? 20 : 18} />
+                ) : (
+                  <Play size={compact ? 20 : 18} fill="currentColor" />
+                )}
+              </button>
             </div>
-            <button
-              type="button"
-              class={`btn btn-primary btn-circle shrink-0 touch-manipulation ${
-                compact
-                  ? "h-11 w-11 min-h-11"
-                  : "h-10 w-10 min-h-10 sm:h-11 sm:w-11 sm:min-h-11"
-              }`}
-              aria-label={playing ? "Pause" : "Lecture"}
-              onClick={togglePlay}
-            >
-              {playing ? (
-                <Pause size={compact ? 20 : 18} />
-              ) : (
-                <Play size={compact ? 20 : 18} fill="currentColor" />
-              )}
-            </button>
-          </div>
+          ) : null}
 
           <div class="flex items-center gap-2">
+            {meta ? null : (
+              <button
+                type="button"
+                class="btn btn-primary btn-circle h-9 w-9 min-h-9 shrink-0 touch-manipulation"
+                aria-label={playing ? "Pause" : "Lecture"}
+                onClick={togglePlay}
+              >
+                {playing ? <Pause size={16} /> : <Play size={16} fill="currentColor" />}
+              </button>
+            )}
             <span class="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-base-content/45 sm:text-xs">
               {formatTime(currentTime)}
             </span>
