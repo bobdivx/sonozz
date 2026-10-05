@@ -18,11 +18,11 @@ const {
   canonical,
 } = Astro.props;
 
-const canonicalUrl =
-  canonical ??
-  (Astro.url.origin.includes("localhost")
-    ? `${site}${Astro.url.pathname === "/" ? "" : Astro.url.pathname}`
-    : Astro.url.href.split("?")[0].replace(/\/$/, "") || site);
+const path =
+  Astro.url.pathname === "/"
+    ? ""
+    : Astro.url.pathname.replace(/\/$/, "");
+const canonicalUrl = canonical ?? `${site}${path}`;
 
 const ogImage = image
   ? image.startsWith("http")
