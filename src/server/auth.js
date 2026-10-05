@@ -214,9 +214,15 @@ export function isPublicPath(pathname) {
   // Pricing quotas for landing (read-only)
   if (p === "/api/billing/plans") return true;
 
+  // Pages légales et contenu SEO public (CGU, privacy, guides)
+  if (p === "/legal" || p.startsWith("/legal/")) return true;
+  if (p === "/guide" || p.startsWith("/guide/")) return true;
+  if (p === "/alternatives" || p.startsWith("/alternatives/")) return true;
+
   if (p.startsWith("/_astro/") || p.startsWith("/assets/")) return true;
   if (p === "/favicon.ico" || p === "/favicon.svg" || p === "/logo.png" || p === "/apple-touch-icon.png") return true;
-  if (p === "/sonozz-tiktok-app-icon.png") return true;
+  if (p === "/sonozz-tiktok-app-icon.png" || p === "/og.png") return true;
+  if (p === "/robots.txt" || p === "/sitemap.xml") return true;
 
   return false;
 }

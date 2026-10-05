@@ -91,6 +91,14 @@ describe("Invitations / auth multi-comptes", () => {
     assert.equal(isPublicPath("/signup"), true);
     assert.equal(isPublicPath("/api/auth/signup"), true);
     assert.equal(isPublicPath("/api/invites/accept"), true);
+    assert.equal(isPublicPath("/legal/terms"), true);
+    assert.equal(isPublicPath("/legal/privacy"), true);
+    assert.equal(isPublicPath("/guide/creer-artiste-ia"), true);
+    assert.equal(isPublicPath("/robots.txt"), true);
+    assert.equal(isPublicPath("/sitemap.xml"), true);
+    assert.equal(isPublicPath("/og.png"), true);
+    assert.equal(isPublicPath("/studio"), false);
+    assert.equal(isPublicPath("/admin"), false);
     assert.equal(isPublicPath("/api/invites"), false);
 
     assert.equal(isAdminOnlyPath("/parametres"), true);

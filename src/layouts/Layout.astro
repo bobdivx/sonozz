@@ -6,12 +6,29 @@ import NowPlayingBar from "../components/NowPlayingBar.jsx";
 interface Props {
   title?: string;
   description?: string;
+  image?: string;
+  canonical?: string;
 }
 
+const site = "https://sonozz.jeser.app";
 const {
   title = "SONOZZ — Studio",
   description = "Studio SONOZZ : un morceau (paroles, audio, jaquette, stores). Les profils artistes et les albums se gèrent dans Artistes.",
+  image,
+  canonical,
 } = Astro.props;
+
+const canonicalUrl =
+  canonical ??
+  (Astro.url.origin.includes("localhost")
+    ? `${site}${Astro.url.pathname === "/" ? "" : Astro.url.pathname}`
+    : Astro.url.href.split("?")[0].replace(/\/$/, "") || site);
+
+const ogImage = image
+  ? image.startsWith("http")
+    ? image
+    : `${site}${image.startsWith("/") ? image : `/${image}`}`
+  : `${site}/og.png`;
 ---
 
 <!doctype html>
@@ -20,6 +37,19 @@ const {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="description" content={description} />
+    <meta name="theme-color" content="#120c1c" />
+    <link rel="canonical" href={canonicalUrl} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:site_name" content="SONOZZ" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
     <link rel="icon" href="/favicon.ico" sizes="32x32" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
