@@ -14,9 +14,9 @@ import {
   buildBriefBlock,
   buildVoiceBlock,
   buildWritingRulesBlock,
-  clicheScore,
+  analyzeLyricsDefects,
+  stripStageDirections,
   extractHookLine,
-  findCliches,
   pickSongBrief,
   shouldUseNews,
 } from "../../lib/songwriting/index.js";
@@ -104,7 +104,7 @@ ${
 ${duoBlock}
 ${buildVoiceBlock(artist)}
 ${buildLyricsCraftBrief(form)}
-${buildWritingRulesBlock(lang)}
+${buildWritingRulesBlock(lang, { form, artistName: artist?.name })}
 ${langBlock}
 ${buildBriefBlock(brief)}
 ${
@@ -208,19 +208,24 @@ async function resolveBrief({ clientBrief, userTheme, artist, history, album, la
   return brief;
 }
 
-function buildPolishPrompt({ lyrics, hits, lang, langName, form, artist, brief }) {
+function buildPolishPrompt({ lyrics, defects, lang, langName, form, artist, brief }) {
+  const reasons = (defects?.reasons || []).map((r, i) => `${i + 1}. ${r}`).join("\n");
   return `Tu es un·e auteur·e-compositeur·rice exigeant·e. Réécris ces paroles pour qu’elles sonnent comme un VRAI artiste, pas comme une IA.
 Artiste: ${promptJson({ name: artist?.name, genre: artist?.genre, writingVoice: artist?.writingVoice, city: artist?.city })}
 ${buildBriefBlock(brief)}
 
-Problèmes détectés : clichés ${hits.map((h) => `« ${h.phrase} »${h.count > 1 ? ` ×${h.count}` : ""}`).join(", ")}.
-${buildWritingRulesBlock(lang)}
+DÉFAUTS DÉTECTÉS À CORRIGER (tous, en priorité) :
+${reasons || "1. texte trop générique"}
+
+${buildWritingRulesBlock(lang, { form, artistName: artist?.name })}
 
 Consignes de réécriture :
 - Garde EXACTEMENT les mêmes tags de section, dans le même ordre (arc « ${form.id} »: ${form.tagsArc}), et la langue (${langName}).
-- Garde le sujet, le point de vue et l’idée du hook ; tu peux reformuler le hook s’il contient un cliché.
-- Remplace chaque cliché par une image concrète, un détail précis ou une tournure parlée inattendue.
-- Ne rallonge pas : même nombre de lignes à ±2 par section.
+- Garde le sujet, le point de vue, les détails concrets réussis et l’idée du hook.
+- Supprime toute ligne qui décrit la musique / le beat / la mélodie / le silence : remplace-la par une ligne chantable ou un ad-lib court entre parenthèses (ou rien en intro/outro).
+- Coupe chaque ligne trop longue en lignes courtes qui riment ; refrain = 2 à 4 lignes courtes et punchy.
+- Remplace chaque cliché et chaque tic de remplissage par une image concrète ou une tournure parlée inattendue.
+- L’artiste ne se nomme pas dans les paroles.
 
 Paroles actuelles (titre « ${lyrics.title || ""} ») :
 ${String(lyrics.text || "").slice(0, 4000)}
@@ -297,27 +302,41 @@ export async function runLyrics({
     normalized = normalizeAndValidateLyrics(data, form);
   }
 
-  // Passe anti-clichés : seulement si le texte en est chargé (1 appel LLM en plus).
+  // Passe de réécriture : seulement si le texte a assez de défauts (1 appel LLM en plus).
   const polishMode = String(keys?.lyricsPolish || "auto").toLowerCase();
-  let hits = findCliches(normalized.text, lang);
+  const artistNames = [artist?.name, artist?.aka].filter(Boolean);
+  const analyze = (text) => analyzeLyricsDefects(text, { lang, form, artistNames });
+  let defects = analyze(normalized.text);
   let polished = false;
   const threshold = polishMode === "always" ? 0 : 3;
-  if (polishMode !== "off" && normalized._validation?.ok && clicheScore(hits) >= threshold && (hits.length || polishMode === "always")) {
+  if (polishMode !== "off" && normalized._validation?.ok && defects.score >= threshold && (defects.reasons.length || polishMode === "always")) {
     try {
       const rewrite = await llmJson(
         keys,
-        buildPolishPrompt({ lyrics: normalized, hits, lang, langName, form, artist, brief }),
+        buildPolishPrompt({ lyrics: normalized, defects, lang, langName, form, artist, brief }),
         { temperature: 0.8 },
       );
       const candidate = normalizeAndValidateLyrics({ ...normalized, ...rewrite }, form);
-      const nextHits = findCliches(candidate.text, lang);
-      if (candidate._validation?.ok && clicheScore(nextHits) < clicheScore(hits)) {
+      const next = analyze(candidate.text);
+      if (candidate._validation?.ok && next.score < defects.score) {
         normalized = candidate;
-        hits = nextHits;
+        defects = next;
         polished = true;
       }
     } catch (e) {
       console.warn("[lyrics] polish:", e.message);
+    }
+  }
+
+  // Post-filtre : retire les didascalies restantes (« Le beat s'arrête. Silence. ») si la structure reste valide.
+  let strippedLines = 0;
+  if (defects.stageLines.length) {
+    const { text: stripped, removed } = stripStageDirections(normalized.text);
+    const candidate = normalizeAndValidateLyrics({ ...normalized, text: stripped }, form);
+    if (removed && candidate._validation?.ok) {
+      normalized = candidate;
+      strippedLines = removed;
+      defects = analyze(normalized.text);
     }
   }
 
@@ -335,7 +354,13 @@ export async function runLyrics({
       anchors: brief.anchors,
       news: Boolean(brief.news),
     },
-    quality: { cliches: hits.map((h) => h.phrase), polished },
+    quality: {
+      score: Math.round(defects.score * 10) / 10,
+      cliches: defects.cliches.map((h) => h.phrase),
+      defects: defects.reasons,
+      polished,
+      strippedLines,
+    },
     language: lang,
     ...(langRules.bilingual ? { featLanguage: langRules.featLang } : {}),
     lyricsForm: form.id,

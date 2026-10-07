@@ -2,6 +2,8 @@
  * Règles d’écriture « vrai artiste » : voix, concret, anti-clichés.
  */
 import { clicheBanBlock } from "./cliches.js";
+import { FILLER_TAGS, lineRulesFor } from "./defects.js";
+import { getLyricsFormPreset } from "../musicLane/lyricsForms.js";
 
 function clip(v, n) {
   const s = String(v ?? "").trim();
@@ -34,9 +36,41 @@ export function buildVoiceBlock(artist = {}) {
   return lines.join("\n");
 }
 
+/** Métrique / rimes / refrain selon la forme (genre). */
+export function buildMeterBlock(form = null) {
+  const preset = getLyricsFormPreset(form);
+  const rules = lineRulesFor(preset);
+  const isRap = preset.id === "rap_trap";
+  const hook = preset.hookTag || "Chorus";
+  return `MÉTRIQUE & RIMES (c’est une chanson, pas de la prose) :
+- Longueur de ligne: ${rules.label} — JAMAIS plus de ${rules.max} mots sur une ligne (hors ad-libs entre parenthèses). Une idée longue = deux lignes.
+${
+  isRap
+    ? `- Couplets de 8 ou 16 mesures (1 ligne = 1 mesure), le MÊME nombre dans chaque [Verse].
+- Rimes: chaque ligne rime en fin avec sa voisine (AABB) ; ajoute des rimes internes, multisyllabiques et des assonances ; flow régulier, syllabes comptées.`
+    : `- Rimes de fin AABB ou ABAB (assonances OK), lignes de longueur régulière dans une même section pour qu’elles se chantent sur la même mélodie.`
+}
+- [${hook}]: 2 à 4 lignes COURTES (≤ ${rules.hookMax} mots chacune), punchy, faciles à chanter en chœur ; répété à l’identique à chaque [${hook}] (c’est voulu).`;
+}
+
 /** Règles concrètes d’écriture + clichés bannis pour la langue des paroles. */
-export function buildWritingRulesBlock(lang = "fr") {
-  return `ÉCRITURE (exigence d’un vrai auteur-compositeur, pas d’un générateur) :
+export function buildWritingRulesBlock(lang = "fr", { form = null, artistName = "" } = {}) {
+  const preset = getLyricsFormPreset(form);
+  const code = String(lang || "fr").slice(0, 2);
+  const fillers = FILLER_TAGS[code] || FILLER_TAGS.fr;
+  const fillerList = [...fillers.tagEnd, ...fillers.anywhere].map((f) => `« ${f} »`).join(", ");
+  const name = String(artistName || "").trim();
+  return `${buildMeterBlock(preset)}
+TOUT EST CHANTÉ :
+- Aucune didascalie : ne décris JAMAIS le beat, l’instru, la mélodie, la prod, le son qui monte / s’arrête, le silence ou l’ambiance musicale dans les paroles (interdit : « le beat monte », « une mélodie orientale », « Silence. Presque. »). Chaque ligne sous un tag est chantée ou rappée.
+- [Intro] / [Outro] = 0 à 3 lignes chantables courtes ou ad-libs entre parenthèses (« (yeah) », « (eh-oh) »), jamais une mise en scène.
+- Tics de remplissage en fin de phrase (${fillerList}) : 1 fois MAXIMUM dans toute la chanson.
+${
+  name
+    ? `- L’artiste ne se nomme pas (« ${name} » n’apparaît pas dans les paroles)${preset.id === "rap_trap" ? ", sauf éventuellement UNE signature ad-lib entre parenthèses en intro ou outro" : ""}.`
+    : "- L’artiste ne se nomme pas dans ses propres paroles."
+}
+ÉCRITURE (exigence d’un vrai auteur-compositeur, pas d’un générateur) :
 - Montre, ne dis pas : pas « je suis triste / j’ai mal / je me sens libre » → une action, un objet, un détail qui le fait sentir.
 - Au moins une image concrète et visuelle toutes les 2 lignes (objets, lieux, gestes, couleurs précises, marques génériques, chiffres).
 - Spécifique > universel : un objet nommé, un lieu nommé, un détail matériel ou un chiffre plutôt qu’une catégorie générale (« mes souvenirs », « la ville », « les gens »). Invente TES détails — ne recopie aucun exemple de ce brief.

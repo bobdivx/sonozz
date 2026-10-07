@@ -24,6 +24,7 @@ export const LYRICS_FORM_PRESETS = {
     requiredTags: ["Intro", "Verse", "Hook", "Outro"],
     hookTag: "Hook",
     requireDistinctVerses: true,
+    verseLines: "8 ou 16 mesures (1 ligne = 1 mesure, même nombre dans chaque Verse)",
     craftNotes:
       "Rap/trap: Verses denses (punchlines, flux); Hook COURT et collant (2–4 lignes); Bridge optionnel mais utile pour casser le rythme; pas de Pre-Chorus long.",
   },
@@ -120,7 +121,7 @@ CRAFT SONGWRITER (titre réel de prod, pas une litanie linéaire) :
 - Forme imposée « ${preset.id} » (${preset.label}) — suis EXACTEMENT cet arc de tags: ${preset.tagsArc}
 - Hook: 1 ligne ultra-mémorable, répétée / paraphrasée dans chaque [${hook}]
 - Rôles: Intro = ambiance (peu ou pas de récit); sections narratives = storytelling; [${hook}] = émotion + hook; section contraste (Bridge / Breakdown / Break) = NOUVEL angle, pas un verse copié; Outro = résolution
-- Densités indicatives: Verse/Build 4–8 lignes; ${hook} 2–4; Bridge/Breakdown/Break 2–4; Intro/Outro 0–3
+- Densités indicatives: Verse/Build ${preset.verseLines || "4–8 lignes"}; ${hook} 2–4 lignes courtes; Bridge/Breakdown/Break 2–4; Intro/Outro 0–3 lignes chantables ou ad-libs
 - Les sections narratives répétées (2+ [Verse] ou 2+ [Build]) DOIVENT différer (pas de copier-coller)
 - Interdit: même rythme de phrase partout, structure hors preset, tags FR (utilise les tags EN du preset)
 - Notes lane: ${preset.craftNotes}
