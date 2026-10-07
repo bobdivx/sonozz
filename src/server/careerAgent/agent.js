@@ -83,7 +83,8 @@ JSON:
 Règles:
 - Si verdict=wait → nextSingle.theme peut être préparé mais actions[0] = wait_distribution ou refresh_stats.
 - Si verdict=publish → actions[0] = publish_unison.
-- Thème original, cohérent avec l'artiste, PAS une copie des titres existants.
+- Thème original : une SITUATION concrète (qui / où / quoi), cohérente avec la voix de l'artiste mais d'une catégorie de sujet DIFFÉRENTE des titres existants (pas « suite de », pas le même univers émotionnel).
+- La bio dit QUI chante, pas DE QUOI parle chaque chanson.
 - Max 4 actions, triées par priority.`,
     );
 

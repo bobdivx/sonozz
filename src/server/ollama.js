@@ -61,7 +61,7 @@ export async function testOllama(keys) {
   return { base, model, models };
 }
 
-async function generate(keys, prompt, { json = false } = {}) {
+async function generate(keys, prompt, { json = false, temperature } = {}) {
   const base = resolveOllamaBaseUrl(keys);
   const model = resolveOllamaModel(keys);
   const data = await ollamaFetch(base, "/api/chat", {
@@ -79,7 +79,7 @@ async function generate(keys, prompt, { json = false } = {}) {
         },
       ],
       options: {
-        temperature: json ? 0.7 : 0.9,
+        temperature: Number.isFinite(temperature) ? temperature : json ? 0.7 : 0.9,
       },
     },
   });
@@ -88,8 +88,8 @@ async function generate(keys, prompt, { json = false } = {}) {
   return { text, model };
 }
 
-export async function ollamaJson(keys, prompt) {
-  const { text, model } = await generate(keys, prompt, { json: true });
+export async function ollamaJson(keys, prompt, { temperature } = {}) {
+  const { text, model } = await generate(keys, prompt, { json: true, temperature });
   try {
     return { data: parseLlmJson(text), model };
   } catch {

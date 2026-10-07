@@ -37,7 +37,7 @@ function friendlyQuotaMessage(err, model) {
   ].join(" ");
 }
 
-async function generateWithFallback(apiKey, prompt, { preferredModel, json = false } = {}) {
+async function generateWithFallback(apiKey, prompt, { preferredModel, json = false, temperature } = {}) {
   const models = modelQueue(preferredModel);
   let lastError;
 
@@ -47,7 +47,7 @@ async function generateWithFallback(apiKey, prompt, { preferredModel, json = fal
       const m = genAI.getGenerativeModel({
         model,
         generationConfig: {
-          temperature: json ? 0.9 : 0.95,
+          temperature: Number.isFinite(temperature) ? temperature : json ? 0.9 : 0.95,
           ...(json ? { responseMimeType: "application/json" } : {}),
         },
       });
@@ -69,10 +69,11 @@ async function generateWithFallback(apiKey, prompt, { preferredModel, json = fal
   throw lastError || new Error("Gemini indisponible");
 }
 
-export async function geminiJson(apiKey, prompt, { model } = {}) {
+export async function geminiJson(apiKey, prompt, { model, temperature } = {}) {
   const { text } = await generateWithFallback(apiKey, prompt, {
     preferredModel: model,
     json: true,
+    temperature,
   });
   return parseLlmJson(text);
 }

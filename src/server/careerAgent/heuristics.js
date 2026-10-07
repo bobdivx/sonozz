@@ -63,7 +63,7 @@ export function buildCareerHeuristics({ artist, releases = [], stats = {} } = {}
   const actions = [];
   let releaseFocus = null;
   let suggestedDaysUntilNext = 10;
-  let themeSeed = "Nouveau single — même univers, angle frais";
+  let themeSeed = "Nouveau single — même identité sonore, sujet neuf (scène concrète jamais traitée)";
 
   if (enriched.length === 0) {
     verdict = "produce";
@@ -102,7 +102,7 @@ export function buildCareerHeuristics({ artist, releases = [], stats = {} } = {}
       label: "Lancer la vague de posts",
       detail: "Hooks J0 / J+2 / J+5 dès que Unison est soumis.",
     });
-    themeSeed = `Suite de « ${focus.trackTitle || focus.title} » — même univers, nouveau hook`;
+    themeSeed = `Après « ${focus.trackTitle || focus.title} » : même son, sujet totalement différent (autre lieu, autre personnage)`;
     suggestedDaysUntilNext = 12;
   } else if (pending.length > 0) {
     const focus = pending[0];
@@ -164,7 +164,7 @@ export function buildCareerHeuristics({ artist, releases = [], stats = {} } = {}
       isrc: focus.identifiers?.isrc || null,
       upc: focus.identifiers?.upc || null,
     };
-    themeSeed = `Suite émotionnelle de « ${focus.trackTitle || focus.title} » — même vibe, hook plus immédiat`;
+    themeSeed = `Contraste avec « ${focus.trackTitle || focus.title} » : même vibe sonore, hook plus immédiat, autre sujet`;
     if (focus.publishing?.status === "awaiting_isrc") {
       actions.push({
         priority: 1,
@@ -206,7 +206,7 @@ export function buildCareerHeuristics({ artist, releases = [], stats = {} } = {}
       dashboardUrl: top.dashboardUrl,
       isrc: top.identifiers?.isrc || null,
     };
-    themeSeed = `Écho de « ${top.trackTitle || top.title} » — même persona, nouveau conflit émotionnel`;
+    themeSeed = `Même énergie que « ${top.trackTitle || top.title} » mais sujet neuf — même persona, autre histoire`;
     actions.push({
       priority: 1,
       type: "produce",

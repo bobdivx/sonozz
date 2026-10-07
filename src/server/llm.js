@@ -12,13 +12,21 @@ export function resolveTextModel(keys) {
 }
 
 /** Texte structuré (JSON) — Gemini cloud ou Ollama local. */
-export async function llmJson(keys, prompt) {
+/**
+ * @param {object} keys
+ * @param {string} prompt
+ * @param {{ temperature?: number }} [opts] température optionnelle (défaut provider)
+ */
+export async function llmJson(keys, prompt, opts = {}) {
   if (isOllamaProvider(keys)) {
-    const { data } = await ollamaJson(keys, prompt);
+    const { data } = await ollamaJson(keys, prompt, opts);
     return data;
   }
   const apiKey = requireGemini(keys);
-  return geminiJson(apiKey, prompt, { model: resolveGeminiTextModel(keys?.geminiModel) });
+  return geminiJson(apiKey, prompt, {
+    model: resolveGeminiTextModel(keys?.geminiModel),
+    temperature: opts.temperature,
+  });
 }
 
 export async function llmText(keys, prompt) {

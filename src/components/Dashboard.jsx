@@ -1855,6 +1855,8 @@ export default function Dashboard({ initialProject = "", initialStep = "" }) {
                       featArtist: project.featArtist || null,
                     },
                     trends: project.trends,
+                    // Exclut ce projet de l’historique anti-répétition (nouvelle version du même titre)
+                    projectId: projectId || null,
                   }),
                 "lyrics",
                 stepIdOf("lyrics"),

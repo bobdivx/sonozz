@@ -20,6 +20,23 @@ import {
 import { probeMusicProvider, providerDownError } from "./provider.js";
 import { assignAlbumAutoFeats } from "../albumAutoFeats.js";
 
+/** Contexte album pour les paroles : titre, concept, autres pistes (écrites ou planifiées). */
+export function albumSiblingsContext(album, slotId) {
+  if (!album) return null;
+  return {
+    title: album.title || "",
+    concept: album.concept || "",
+    siblings: (album.tracks || [])
+      .filter((t) => t.id !== slotId)
+      .map((t) => ({
+        title: t.lyrics?.title || t.workingTitle || "",
+        theme: t.lyrics?.theme || t.theme || "",
+        hook: t.lyrics?.hook || "",
+        category: t.lyrics?.brief?.category || t.brief?.category || undefined,
+      })),
+  };
+}
+
 export async function runAlbumJob({
   project,
   projectId,
@@ -265,6 +282,7 @@ export async function runAlbumJob({
         theme: t.theme,
         workingTitle: t.workingTitle || `Piste ${i + 2}`,
         trackRole: t.trackRole || undefined,
+        brief: t.brief || undefined,
         lyrics: null,
         track: null,
         status: "pending",
@@ -333,6 +351,7 @@ export async function runAlbumJob({
           theme: t.theme,
           workingTitle: t.workingTitle || `Piste ${startIndex + i}`,
           trackRole: t.trackRole || undefined,
+          brief: t.brief || undefined,
           lyrics: null,
           track: null,
           status: "pending",
@@ -442,6 +461,7 @@ export async function runAlbumJob({
 
         let lyricsI;
         try {
+          const albumNow = (getWorking?.() || working).album;
           lyricsI = await api.lyrics({
             theme: `${slot.workingTitle} — ${slot.theme}`,
             artist: {
@@ -450,6 +470,9 @@ export async function runAlbumJob({
             },
             trends: project.trends,
             language: lang,
+            // Brief planifié (angle / pov / ton / ancrages) + autres pistes pour l’anti-répétition
+            brief: slot.brief || null,
+            album: albumSiblingsContext(albumNow, slot.id),
           });
         } catch (e) {
           if (abortState.aborted) break;

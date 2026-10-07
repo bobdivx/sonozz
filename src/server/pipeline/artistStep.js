@@ -44,6 +44,10 @@ export async function runArtist({
   city,
   legalName,
   voiceSample = null,
+  newsMode,
+  writingVoice,
+  favoriteTopics,
+  avoidTopics,
   onStatus,
 }) {
   requireTextLlm(keys);
@@ -207,6 +211,8 @@ JSON strict:
   "palette": ["#hex","#hex","#hex","#hex"],
   "influences": [string, string, string],
   "targetPersona": string,
+  "writingVoice": string,
+  "favoriteTopics": [string, string, string, string, string],
   "visualIdentity": {
     "look": string,
     "wardrobe": string,
@@ -217,7 +223,8 @@ JSON strict:
 }
 "genre" DOIT être: "${finalGenre}". "genres" DOIT être: ${JSON.stringify(finalGenres)}.
 "mood" proche de: "${styleLock?.mood || ""}". "voice" colle à: "${styleLock?.vocalStyle || selfGenderLock.voiceHint}".
-portraitPrompt = anglais, décrit la personne réelle (~${selfAge} ans, ${selfGenderLock.en}), pour retouche éventuelle — square photo, no text.`
+portraitPrompt = anglais, décrit la personne réelle (~${selfAge} ans, ${selfGenderLock.en}), pour retouche éventuelle — square photo, no text.
+"writingVoice" = comment cet artiste ÉCRIT (registre, longueur de phrase, argot/régionalismes, humour, tics d'écriture, ce qu'il/elle refuse d'écrire) — 1–2 phrases concrètes, pas de généralités. "favoriteTopics" = 5 sujets VARIÉS et concrets (pas 5 variantes du même sentiment ; max 1 sur l'amour).`
       : `Crée un profil d'artiste musical fictionnel mais ultra-réaliste,
 avec une identité visuelle cohérente (look, style photo, wardrobe).
 
@@ -301,6 +308,8 @@ JSON strict:
   "palette": ["#hex","#hex","#hex","#hex"],
   "influences": [string, string, string],
   "targetPersona": string,
+  "writingVoice": string,
+  "favoriteTopics": [string, string, string, string, string],
   "visualIdentity": {
     "look": string,
     "wardrobe": string,
@@ -318,7 +327,8 @@ ${
 }
 "language" doit être exactement "${lang}".
 legalName = prénom + nom de famille réalistes cohérents avec gender (obligatoire pour la distribution).
-portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." ou "adult woman..." ou androgyne), puis âge, traits, coiffure, tenue, lumière, décor${styleLock?.visualVibe ? ` ; vibe visuelle: ${styleLock.visualVibe}` : ""} ; square photo ; no text in image.`,
+portraitPrompt = anglais, DOIT commencer par le sexe explicite ("adult man..." ou "adult woman..." ou androgyne), puis âge, traits, coiffure, tenue, lumière, décor${styleLock?.visualVibe ? ` ; vibe visuelle: ${styleLock.visualVibe}` : ""} ; square photo ; no text in image.
+"writingVoice" = comment cet artiste ÉCRIT (registre, longueur de phrase, argot/régionalismes, humour, tics d'écriture, ce qu'il/elle refuse d'écrire) — 1–2 phrases concrètes, pas de généralités. "favoriteTopics" = 5 sujets VARIÉS et concrets (pas 5 variantes du même sentiment ; max 1 sur l'amour).`,
   );
 
   const lock = genderVisualLock(
@@ -461,6 +471,14 @@ JSON strict: { "names": [string, string, string, string], "name": string, "aka":
       keys?.distrokidLabel?.trim() ||
       (isSelf ? forcedName || data.name : undefined) ||
       undefined,
+    // Écriture : réglages utilisateur prioritaires, sinon proposition du LLM
+    writingVoice: String(writingVoice || data.writingVoice || "").trim().slice(0, 600) || undefined,
+    favoriteTopics:
+      (Array.isArray(favoriteTopics) ? favoriteTopics.join(", ") : String(favoriteTopics || "").trim()) ||
+      (Array.isArray(data.favoriteTopics) ? data.favoriteTopics.filter(Boolean).join(", ") : String(data.favoriteTopics || "").trim()) ||
+      undefined,
+    avoidTopics: String(avoidTopics || "").trim().slice(0, 400) || undefined,
+    newsMode: newsMode || undefined,
     visualIdentity: {
       ...(data.visualIdentity || {}),
       genderLock: lock.en,

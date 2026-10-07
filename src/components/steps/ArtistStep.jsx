@@ -53,6 +53,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
   const [styleSearchOpen, setStyleSearchOpen] = useState(false);
   const [language, setLanguage] = useState(artist?.language || "fr");
   const [bioHint, setBioHint] = useState(artist?.bioHint || "");
+  const [writingVoice, setWritingVoice] = useState(artist?.writingVoice || "");
+  const [favoriteTopics, setFavoriteTopics] = useState(artist?.favoriteTopics || "");
+  const [avoidTopics, setAvoidTopics] = useState(artist?.avoidTopics || "");
+  const [newsMode, setNewsMode] = useState(artist?.newsMode || "auto");
   const [styleArtist, setStyleArtist] = useState(artist?.styleArtist || "");
   const [styleArtistPick, setStyleArtistPick] = useState(() =>
     artist?.styleLock?.sourceId && artist?.styleLock?.source !== "multi"
@@ -158,6 +162,12 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
     }
     setCity(artist.city || "");
     setBioHint(artist.bioHint || "");
+    setWritingVoice(artist.writingVoice || "");
+    setFavoriteTopics(
+      Array.isArray(artist.favoriteTopics) ? artist.favoriteTopics.join(", ") : artist.favoriteTopics || "",
+    );
+    setAvoidTopics(artist.avoidTopics || "");
+    setNewsMode(artist.newsMode || "auto");
     setVoiceSample(artist.voiceSample || null);
     if (Array.isArray(artist.styleLock?.refs) && artist.styleLock.refs.length) {
       setStyleArtistPicks(
@@ -179,7 +189,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
         image: artist.styleLock.image || null,
       });
     }
-  }, [artist?.name, artist?.genre, artist?.genres, artist?.language, artist?.styleArtist, artist?.mode, artist?.age, artist?.city, artist?.bioHint]);
+  }, [artist?.name, artist?.genre, artist?.genres, artist?.language, artist?.styleArtist, artist?.mode, artist?.age, artist?.city, artist?.bioHint, artist?.writingVoice, artist?.favoriteTopics, artist?.avoidTopics, artist?.newsMode]);
 
   const photoSyncKey = artistPhotoSyncKey(artist);
   useEffect(() => {
@@ -275,6 +285,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
     language,
     resolvedGenres,
     bioHint,
+    writingVoice,
+    favoriteTopics,
+    avoidTopics,
+    newsMode,
     styleArtist,
     styleArtistPick,
     styleArtistPicks,
@@ -390,6 +404,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
     language,
     resolvedGenre,
     bioHint,
+    writingVoice,
+    favoriteTopics,
+    avoidTopics,
+    newsMode,
     styleArtist,
     styleArtistPick,
     styleArtistPicks,
@@ -469,6 +487,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
         genres: resolvedGenres.length ? resolvedGenres : undefined,
         language,
         bioHint: bioHint.trim(),
+        writingVoice: writingVoice.trim() || undefined,
+        favoriteTopics: favoriteTopics.trim() || undefined,
+        avoidTopics: avoidTopics.trim() || undefined,
+        newsMode,
         styleArtistPicks,
         styleTrackPick: styleTrackPick || undefined,
         styleArtist: styleArtistPicks.map((p) => p.name).join(" × "),
@@ -495,6 +517,10 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
       genres: resolvedGenres.length ? resolvedGenres : undefined,
       language,
       bioHint: bioHint.trim(),
+      writingVoice: writingVoice.trim() || undefined,
+      favoriteTopics: favoriteTopics.trim() || undefined,
+      avoidTopics: avoidTopics.trim() || undefined,
+      newsMode,
       styleArtist: styleArtistPick?.name || styleArtist.trim() || undefined,
       styleArtistPick: styleArtistPick || undefined,
       styleTrackPick: styleTrackPick || undefined,
@@ -828,6 +854,53 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
             onInput={(e) => setBioHint(e.currentTarget.value)}
           />
         </label>
+
+        <fieldset class="space-y-3 rounded-2xl border border-base-content/10 p-4">
+          <legend class="px-1 text-sm text-base-content/60">Écriture des paroles (optionnel)</legend>
+          <label class="form-control w-full">
+            <span class="label-text mb-1 text-sm text-base-content/60">Voix d’auteur</span>
+            <textarea
+              class="textarea textarea-bordered w-full bg-base-200"
+              rows={2}
+              placeholder="Ex. phrases courtes, argot lyonnais, humour pince-sans-rire, jamais de grands mots…"
+              value={writingVoice}
+              onInput={(e) => setWritingVoice(e.currentTarget.value)}
+            />
+          </label>
+          <label class="form-control w-full">
+            <span class="label-text mb-1 text-sm text-base-content/60">Sujets de prédilection</span>
+            <input
+              class="input input-bordered w-full bg-base-200"
+              type="text"
+              placeholder="Ex. boulot de nuit, sa grand-mère, foot de quartier, trains…"
+              value={favoriteTopics}
+              onInput={(e) => setFavoriteTopics(e.currentTarget.value)}
+            />
+          </label>
+          <label class="form-control w-full">
+            <span class="label-text mb-1 text-sm text-base-content/60">Sujets / mots à éviter</span>
+            <input
+              class="input input-bordered w-full bg-base-200"
+              type="text"
+              placeholder="Ex. argent facile, drogue, « bébé »…"
+              value={avoidTopics}
+              onInput={(e) => setAvoidTopics(e.currentTarget.value)}
+            />
+          </label>
+          <label class="form-control w-full max-w-xs">
+            <span class="label-text mb-1 text-sm text-base-content/60">Parle d’actualité</span>
+            <select
+              class="select select-bordered w-full bg-base-200"
+              value={newsMode}
+              onChange={(e) => setNewsMode(e.currentTarget.value)}
+            >
+              <option value="auto">Auto (selon le style)</option>
+              <option value="never">Jamais</option>
+              <option value="sometimes">Parfois (~1 titre sur 4)</option>
+              <option value="often">Souvent (~6 titres sur 10)</option>
+            </select>
+          </label>
+        </fieldset>
       </div>
 
       <div class={`min-w-0 space-y-6 p-5 sm:p-6 ${profileTab === "style" ? "" : "hidden"}`}>

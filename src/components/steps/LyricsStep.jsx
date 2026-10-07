@@ -239,7 +239,7 @@ export default function LyricsStep({
           <input
             class="input input-bordered w-full bg-base-200"
             type="text"
-            placeholder="Ex. dernier train, néon, orage doux…"
+            placeholder="Vide = sujet neuf choisi auto (≠ titres récents) · ou ex. « le dernier bus de ma mère »"
             value={theme}
             onInput={(e) => {
               const v = e.currentTarget.value;

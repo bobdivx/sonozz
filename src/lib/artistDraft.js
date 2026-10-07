@@ -105,6 +105,22 @@ export function artistPatchFromStyleLock(lock, prevArtist = {}) {
   return patch;
 }
 
+export const WRITING_FIELDS = ["writingVoice", "favoriteTopics", "avoidTopics", "newsMode"];
+const NEWS_MODE_VALUES = new Set(["auto", "never", "sometimes", "often"]);
+
+/** Champs d’écriture normalisés (absents si non fournis par l’UI). */
+export function normalizeWritingFields(fields = {}) {
+  const out = {};
+  if (fields.writingVoice !== undefined) out.writingVoice = String(fields.writingVoice || "").trim().slice(0, 600);
+  if (fields.favoriteTopics !== undefined) out.favoriteTopics = String(fields.favoriteTopics || "").trim().slice(0, 400);
+  if (fields.avoidTopics !== undefined) out.avoidTopics = String(fields.avoidTopics || "").trim().slice(0, 400);
+  if (fields.newsMode !== undefined) {
+    const m = String(fields.newsMode || "auto").trim();
+    out.newsMode = NEWS_MODE_VALUES.has(m) ? m : "auto";
+  }
+  return out;
+}
+
 /**
  * Patch brouillon du profil artiste (mode + identité + refs).
  * Fusionne le styleLock existant pour ne pas perdre le DNA déjà généré.
@@ -115,6 +131,7 @@ export function buildArtistDraftPatch(fields = {}, prevArtist = {}) {
   const age = normalizeAge(fields.age);
   const city = String(fields.city || "").trim().slice(0, 80);
   const bioHint = String(fields.bioHint || "").trim().slice(0, 2000);
+  const writing = normalizeWritingFields(fields);
   const language = String(fields.language || "").trim();
   const gender = String(fields.gender || "").trim();
   const resolvedGenres = Array.isArray(fields.resolvedGenres)
@@ -175,6 +192,8 @@ export function buildArtistDraftPatch(fields = {}, prevArtist = {}) {
     patch.city = city;
   }
   patch.bioHint = bioHint;
+  // Écriture (voix, sujets, actu) — seulement si l’UI les fournit
+  for (const [k, v] of Object.entries(writing)) patch[k] = v;
   if (resolvedGenres.length) {
     patch.genres = resolvedGenres;
     patch.genre = formatGenres(resolvedGenres);
@@ -212,6 +231,11 @@ export function isUnchangedArtistDraft(patch = {}, prevArtist = {}) {
   if (patch.city !== undefined && (patch.city || "") !== (prev.city || "")) return false;
   if (patch.language && patch.language !== (prev.language || "")) return false;
   if ((patch.bioHint || "") !== (prev.bioHint || "")) return false;
+  for (const k of WRITING_FIELDS) {
+    if (patch[k] === undefined) continue;
+    const fallback = k === "newsMode" ? "auto" : "";
+    if ((patch[k] || fallback) !== (prev[k] || fallback)) return false;
+  }
   if (patch.styleArtist && patch.styleArtist !== (prev.styleArtist || "")) return false;
   if (Array.isArray(patch.genres)) {
     const nextGenres = patch.genres;
