@@ -290,7 +290,9 @@ export function assembleAceStepStyle({
       styleLock,
       styleBase,
     });
-    styleFinal = [langBit, duoStyle || composeAceStepStyle(styleBase, styleLock), qualityFloor]
+    // Style Studio en tête (genre + raspy male) — langBit EN omis (bruit de tokens).
+    const duoLang = langCode === "en" && !duoLangs?.bilingual ? null : langBit;
+    styleFinal = [duoStyle || composeAceStepStyle(styleBase, styleLock), duoLang, qualityFloor]
       .filter(Boolean)
       .join(". ")
       .slice(0, ACE_STYLE_CAP);
