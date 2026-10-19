@@ -125,6 +125,20 @@ export function normalizeWritingFields(fields = {}) {
  * Patch brouillon du profil artiste (mode + identité + refs).
  * Fusionne le styleLock existant pour ne pas perdre le DNA déjà généré.
  */
+/** Clé stable des références d'un lock (refs[] ou source:sourceId). */
+export function styleRefsKey(lock) {
+  if (!lock || typeof lock !== "object") return "";
+  const list = Array.isArray(lock.refs) && lock.refs.length
+    ? lock.refs
+    : lock.source && lock.source !== "multi" && (lock.sourceId != null || lock.matchedName)
+      ? [lock]
+      : [];
+  return list
+    .map((r) => `${r.source || "?"}:${r.sourceId != null ? String(r.sourceId) : String(r.matchedName || "").toLowerCase()}`)
+    .sort()
+    .join("|");
+}
+
 export function buildArtistDraftPatch(fields = {}, prevArtist = {}) {
   const mode = fields.mode === "self" ? "self" : "fiction";
   const name = String(fields.name || "").trim().slice(0, 80);
@@ -148,6 +162,19 @@ export function buildArtistDraftPatch(fields = {}, prevArtist = {}) {
   const prevLock =
     prevArtist.styleLock && typeof prevArtist.styleLock === "object" ? prevArtist.styleLock : {};
   const styleLock = { ...prevLock };
+
+  // Références changées (ex. Eminem → SDM) : l'ancien DNA ne correspond plus → on l'efface
+  // (sinon le profil garde le son de l'ancienne référence jusqu'à une régénération).
+  if (refs.length && !seedTrack) {
+    const prevKey = styleRefsKey(prevLock);
+    const nextKey = refs
+      .map((r) => `${r.source || "?"}:${r.sourceId != null ? String(r.sourceId) : String(r.matchedName || "").toLowerCase()}`)
+      .sort()
+      .join("|");
+    if (prevKey && nextKey && prevKey !== nextKey) {
+      for (const key of STYLE_LOCK_DNA_KEYS) delete styleLock[key];
+    }
+  }
 
   if (refs.length) {
     styleLock.source = refs.length > 1 ? "multi" : refs[0].source;

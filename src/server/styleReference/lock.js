@@ -9,7 +9,13 @@ import {
   searchItunesArtist,
   hydrateSpotifyCatalog,
 } from "./providers.js";
-import { loadStyleArtistCatalog } from "./availability.js";
+import { loadStyleArtistCatalog, isThinCatalog } from "./availability.js";
+import {
+  mergeAudioDna,
+  isLesserKnownArtist,
+  styleDnaSource,
+  styleLockWarnings,
+} from "../../lib/styleFidelity.js";
 
 export async function enrichStyleLock(keys, catalog, query, audioDna = null) {
   requireTextLlm(keys);
@@ -20,14 +26,19 @@ export async function enrichStyleLock(keys, catalog, query, audioDna = null) {
   ].filter(Boolean);
   const uniqueGenres = [...new Set(knownGenres.map((g) => g.toLowerCase()))].map(titleCaseGenre);
 
+  const lesserKnown = isLesserKnownArtist(catalog);
+  const knowledgeRule = lesserKnown
+    ? `ARTISTE PEU CONNU (${catalog.followers ?? "?"} fans) : tu ne le connais probablement PAS. N'invente RIEN depuis ta mémoire ni depuis un homonyme célèbre — base-toi UNIQUEMENT sur l'écoute, les titres / albums (vocabulaire, thèmes) et les genres catalogue ci-dessus.`
+    : `Tu peux compléter avec ta connaissance précise de l'artiste (évite le vague).`;
   const audioBlock = audioDna
     ? `
-ÉCOUTE RÉELLE d'un extrait preview (~30s) de cet artiste (priorité absolue sur les genres catalogue) :
+ÉCOUTE RÉELLE de ${audioDna.listens > 1 ? `${audioDna.listens} extraits` : "un extrait"} preview (~30s) de cet artiste (priorité absolue sur les genres catalogue ET sur ta mémoire) :
 ${JSON.stringify(audioDna, null, 2)}
 Base-toi d'abord sur cette écoute pour : BPM, énergie, timbre vocal, groove/rythme, instruments, densité de prod.
+${knowledgeRule}
 `
     : `
-Pas d'extrait audio dispo — déduis le DNA sonore depuis titres phares, related et ta connaissance précise de l'artiste (évite le vague).
+Pas d'extrait audio dispo — déduis le DNA sonore depuis titres phares, albums et genres catalogue. ${knowledgeRule}
 `;
 
   const data = await llmJson(
@@ -89,7 +100,8 @@ JSON strict:
 Pas de vague "pop" générique si l'artiste est funk-rock / drill / neo-soul / etc.`,
   );
 
-  const bpmNum = Number(data.bpmEstimate ?? audioDna?.bpmEstimate);
+  // Ce qui a été ENTENDU prime sur ce que le LLM « sait » (BPM, timbre, groove).
+  const bpmNum = Number(audioDna?.bpmEstimate ?? data.bpmEstimate);
   const bpm =
     Number.isFinite(bpmNum) && bpmNum >= 60 && bpmNum <= 200 ? Math.round(bpmNum) : null;
 
@@ -110,18 +122,20 @@ Pas de vague "pop" générique si l'artiste est funk-rock / drill / neo-soul / e
     bpm,
     production: String(data.production || "").trim(),
     vocalStyle: String(data.vocalStyle || audioDna?.vocalStyle || "").trim(),
-    vocalRegister: String(data.vocalRegister || audioDna?.vocalRegister || "").trim(),
-    timbre: String(data.timbre || audioDna?.timbre || "").trim(),
-    rhythmFeel: String(data.rhythmFeel || audioDna?.rhythmFeel || "").trim(),
-    instruments: (
-      Array.isArray(data.instruments)
-        ? data.instruments
-        : Array.isArray(audioDna?.instruments)
-          ? audioDna.instruments
-          : []
-    )
+    vocalRegister: String(
+      (audioDna?.vocalRegister && audioDna.vocalRegister !== "unknown" ? audioDna.vocalRegister : "") ||
+        data.vocalRegister ||
+        "",
+    ).trim(),
+    timbre: String(audioDna?.timbre || data.timbre || "").trim(),
+    rhythmFeel: String(audioDna?.rhythmFeel || data.rhythmFeel || "").trim(),
+    instruments: [
+      ...(Array.isArray(audioDna?.instruments) ? audioDna.instruments : []),
+      ...(Array.isArray(data.instruments) ? data.instruments : []),
+    ]
       .map((k) => String(k || "").trim())
       .filter(Boolean)
+      .filter((v, i, a) => a.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i)
       .slice(0, 8),
     sonicKeywords: (Array.isArray(data.sonicKeywords) ? data.sonicKeywords : [])
       .map((k) => String(k || "").trim())
@@ -248,15 +262,21 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
     }
   }
   if (keys?.geminiApiKey?.trim() && previewUrls.length) {
-    for (const previewUrl of previewUrls.slice(0, 2)) {
-      audioDna = await listenArtistPreviewDna(keys.geminiApiKey, {
+    // 2 extraits DIFFÉRENTS (pas un seul 30s) → BPM médian / instruments plus fiables.
+    const heard = [];
+    for (const previewUrl of previewUrls.slice(0, 3)) {
+      const dna = await listenArtistPreviewDna(keys.geminiApiKey, {
         previewUrl,
         artistName: catalog.name,
         topTracks: catalog.topTracks,
       });
-      if (audioDna) break;
+      if (dna) heard.push(dna);
+      if (heard.length >= 2) break;
     }
+    audioDna = mergeAudioDna(heard);
   }
+  const thin = isThinCatalog(catalog);
+  const lesserKnown = isLesserKnownArtist(catalog);
 
   const lock = await enrichStyleLock(keys, catalog, catalog.name || query, audioDna);
 
@@ -279,6 +299,7 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
     .slice(0, 6);
 
   const bpm = lock.bpm || audioDna?.bpmEstimate || null;
+  const dnaSource = styleDnaSource({ audioListened: Boolean(lock.audioListened || audioDna), thin });
 
   return withKnownArtistLane({
     query: query || catalog.name,
@@ -328,11 +349,15 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
       bpm ? `~${bpm} BPM` : "",
       ...(lock.instruments || []).slice(0, 4).map((i) => `instrument: ${i}`),
       `energy ${lock.energy}`,
-      `exactly in the style of ${catalog.name}`,
+      // Un modèle musical ne connaît pas un petit artiste : le nom n'apporte rien (ou un homonyme).
+      lesserKnown ? "" : `exactly in the style of ${catalog.name}`,
       "original artist, not a cover, not an imitation of identity",
     ]
       .filter(Boolean)
       .join(", "),
+    dnaSource,
+    lesserKnown,
+    warnings: styleLockWarnings({ dnaSource, lesserKnown, name: catalog.name }),
   });
 }
 
@@ -440,11 +465,17 @@ export function mergeStyleLocks(locks = []) {
       rhythmFeel ? `groove: ${rhythmFeel}` : "",
       bpm ? `~${bpm} BPM` : "",
       ...instruments.slice(0, 4).map((i) => `instrument: ${i}`),
-      `blend of: ${names.join(", ")}`,
+      list.every((l) => l.lesserKnown) ? "" : `blend of: ${names.join(", ")}`,
       "original artist identity, not a cover",
     ]
       .filter(Boolean)
       .join(", "),
+    warnings: uniqStrings(list.flatMap((l) => l.warnings || []), 4),
+    dnaSource: list.some((l) => l.dnaSource === "audio")
+      ? "audio"
+      : list.some((l) => l.dnaSource === "catalog")
+        ? "catalog"
+        : list[0].dnaSource,
     refs: list,
   };
 }

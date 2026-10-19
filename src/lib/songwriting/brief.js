@@ -196,13 +196,15 @@ ${lines.join("\n")}`;
 }
 
 /** Bloc prompt du brief choisi. */
-export function buildBriefBlock(brief) {
+export function buildBriefBlock(brief, { strict = false } = {}) {
   if (!brief) return "";
   const lines = [
     "BRIEF DE CE MORCEAU (imposé — c’est LUI qui définit le sujet, pas la bio) :",
     `- Angle: ${brief.angle} (exemples entre parenthèses = indicatifs : invente les tiens)`,
     `- Point de vue: ${brief.pov}`,
-    `- Ton du texte: ${brief.tone} (le mood sonore de l’artiste reste, mais le texte peut contraster)`,
+    strict
+      ? `- Ton du texte: ${brief.tone} — nuance SEULEMENT : clone fidèle, le texte reste dans le registre, le flow et l’énergie de l’artiste (pas de contraste qui sort de sa lane)`
+      : `- Ton du texte: ${brief.tone} (le mood sonore de l’artiste reste, mais le texte peut contraster)`,
     `- Ancrages concrets OBLIGATOIRES (au moins 3 au total dans le texte, inventés et précis): ${(brief.anchors || []).join(" ; ")}`,
   ];
   if (brief.news) {

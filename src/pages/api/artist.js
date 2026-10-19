@@ -26,7 +26,23 @@ export async function POST({ request, cookies }) {
       }
     }
 
-    const data = await runArtist(body);
+    let cloneSource = null;
+    const cloneSlug = String(body.cloneFromSlug || "").trim().slice(0, 120);
+    if (cloneSlug) {
+      const { getArtistBySlug } = await import("../../server/artists.js");
+      const src = await getArtistBySlug(cloneSlug);
+      if (!src) return error("Artiste source introuvable", 404);
+      if (session.role !== ROLE_ADMIN && src.ownerEmail && src.ownerEmail !== session.email) {
+        return error("Tu ne peux cloner que tes propres artistes", 403);
+      }
+      if (preferredSlug && preferredSlug === src.slug) {
+        return error("Un artiste ne peut pas être cloné sur lui-même", 400);
+      }
+      cloneSource = { ...(src.profile || {}), slug: src.slug, name: src.profile?.name || src.name };
+    }
+
+    const { cloneSource: _ignored, ...safeBody } = body;
+    const data = await runArtist({ ...safeBody, cloneSource });
     let slug = preferredSlug || data.slug || null;
     if (body.persist !== false) {
       const saved = await upsertArtistFromProject(

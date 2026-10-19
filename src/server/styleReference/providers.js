@@ -309,32 +309,108 @@ async function searchItunesArtist(query) {
   return hydrateItunesCatalog(hit, hit.matchScore);
 }
 
-async function hydrateDeezerCatalog(hit, matchScore = 1000) {
-  const [artistRes, topRes, relatedRes] = await Promise.all([
-    fetch(`https://api.deezer.com/artist/${hit.id}`),
-    fetch(`https://api.deezer.com/artist/${hit.id}/top?limit=6`),
-    fetch(`https://api.deezer.com/artist/${hit.id}/related?limit=8`),
-  ]);
+async function fetchJsonSafe(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
-  const artist = artistRes.ok ? await artistRes.json() : hit;
-  const top = topRes.ok ? await topRes.json() : { data: [] };
-  const related = relatedRes.ok ? await relatedRes.json() : { data: [] };
+/** Genres Deezer (genre_id album) — fallback quand /album/{id} ne renvoie pas genres.data. */
+const DEEZER_GENRE_NAMES = {
+  85: "Alternative",
+  95: "Kids",
+  98: "Classical",
+  106: "Electro",
+  113: "Dance",
+  116: "Rap/Hip Hop",
+  129: "Jazz",
+  132: "Pop",
+  144: "Reggae",
+  152: "Rock",
+  153: "Blues",
+  165: "R&B",
+  169: "Soul & Funk",
+  173: "Films/Games",
+  464: "Metal",
+  466: "Folk",
+};
+
+/**
+ * Agrège titres / previews / genres depuis les albums Deezer.
+ * Indispensable pour les petits artistes : /artist/{id}/top est souvent VIDE
+ * (ex. artistes auto-distribués récents) alors que les albums ont des previews.
+ */
+export function aggregateDeezerAlbums(albumList = [], albumDetails = []) {
+  const albums = [];
+  const genres = [];
+  const topTracks = [];
+  const previewUrls = [];
+  const pushUniq = (arr, v, max) => {
+    const s = String(v || "").trim();
+    if (!s || arr.length >= max) return;
+    if (!arr.some((x) => x.toLowerCase() === s.toLowerCase())) arr.push(s);
+  };
+  for (const a of Array.isArray(albumList) ? albumList : []) {
+    pushUniq(albums, a?.title, 8);
+    const g = DEEZER_GENRE_NAMES[Number(a?.genre_id)];
+    if (g) pushUniq(genres, g, 6);
+  }
+  for (const d of Array.isArray(albumDetails) ? albumDetails : []) {
+    if (!d || typeof d !== "object") continue;
+    for (const g of d.genres?.data || []) pushUniq(genres, g?.name, 6);
+    for (const t of d.tracks?.data || []) {
+      pushUniq(topTracks, t?.title, 10);
+      const u = t?.preview;
+      if (typeof u === "string" && /^https?:\/\//i.test(u) && previewUrls.length < 4) {
+        if (!previewUrls.includes(u)) previewUrls.push(u);
+      }
+    }
+  }
+  return { albums, genres, topTracks, previewUrls };
+}
+
+async function hydrateDeezerCatalog(hit, matchScore = 1000) {
+  const [artistJson, top, related, albumsJson] = await Promise.all([
+    fetchJsonSafe(`https://api.deezer.com/artist/${hit.id}`),
+    fetchJsonSafe(`https://api.deezer.com/artist/${hit.id}/top?limit=6`),
+    fetchJsonSafe(`https://api.deezer.com/artist/${hit.id}/related?limit=8`),
+    fetchJsonSafe(`https://api.deezer.com/artist/${hit.id}/albums?limit=12`),
+  ]);
+  const artist = artistJson && !artistJson.error ? artistJson : hit;
+  const topData = Array.isArray(top?.data) ? top.data : [];
+  const albumList = Array.isArray(albumsJson?.data) ? albumsJson.data : [];
+  // 3 albums les plus récents : genres réels + titres + previews (quand /top est vide).
+  const albumDetails = await Promise.all(
+    albumList.slice(0, 3).map((a) =>
+      a?.id ? fetchJsonSafe(`https://api.deezer.com/album/${a.id}`) : null,
+    ),
+  );
+  const agg = aggregateDeezerAlbums(albumList, albumDetails);
+
+  const topTitles = topData.map((t) => t.title).filter(Boolean);
+  const topPreviews = topData
+    .map((t) => t.preview)
+    .filter((u) => typeof u === "string" && /^https?:\/\//i.test(u));
+  const uniq = (arr, max) =>
+    arr.filter((v, i, a) => v && a.findIndex((x) => String(x).toLowerCase() === String(v).toLowerCase()) === i).slice(0, max);
+  const pickGenres = (hit.genres || []).map(titleCaseGenre);
 
   return {
     source: "deezer",
     id: String(artist.id || hit.id),
     name: artist.name || hit.name,
-    genres: [],
+    genres: uniq([...agg.genres.map(titleCaseGenre), ...pickGenres], 6),
     inferredGenres: [],
     popularity: null,
     followers: artist.nb_fan ?? hit.followers ?? null,
-    topTracks: (top.data || []).map((t) => t.title).filter(Boolean),
-    previewUrls: (top.data || [])
-      .map((t) => t.preview)
-      .filter((u) => typeof u === "string" && /^https?:\/\//i.test(u))
-      .slice(0, 3),
-    albums: [],
-    related: (related.data || []).map((a) => a.name).filter(Boolean),
+    topTracks: uniq([...topTitles, ...agg.topTracks], 8),
+    previewUrls: uniq([...topPreviews, ...agg.previewUrls], 4),
+    albums: agg.albums,
+    related: (related?.data || []).map((a) => a.name).filter(Boolean),
     relatedGenres: [],
     url: artist.link || hit.url || null,
     image: artist.picture_xl || artist.picture_medium || hit.image || null,

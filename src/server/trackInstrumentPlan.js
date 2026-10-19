@@ -15,7 +15,9 @@ import {
   normalizeSonicRole,
   composeInstrumentArc,
   albumTrackContrastBit,
+  lanePoolsForLock,
 } from "../lib/sonicVariation.js";
+import { isStrictStyleFidelity } from "../lib/styleFidelity.js";
 
 const FEATURE_IDS = new Set(FEATURE_TAGS.map((f) => f.id));
 const LEAD_IDS = new Set(
@@ -84,11 +86,15 @@ async function llmPickTrackPlan(
     lockRole = null,
     trackIndex = null,
     trackTotal = null,
+    allowedLeads = null,
   },
 ) {
   const roles = SONIC_ROLE_IDS.join(", ");
   const feats = FEATURE_TAGS.map((f) => f.id).join(", ");
-  const leads = LEAD_INSTRUMENTS.map((x) => x.id).filter(Boolean).join(", ");
+  const leads = (Array.isArray(allowedLeads) && allowedLeads.length
+    ? allowedLeads
+    : LEAD_INSTRUMENTS.map((x) => x.id).filter(Boolean)
+  ).join(", ");
   const used = (Array.isArray(usedRoles) ? usedRoles : [])
     .map(normalizeSonicRole)
     .filter(Boolean);
@@ -103,7 +109,7 @@ Output ONLY JSON: {"role":"...","instrumentArc":"...","features":["..."],"leadIn
 ${locked ? `- role: MUST be exactly "${locked}" (album pacing).` : `- role: exactly one of [${roles}]`}
 - instrumentArc: ONE English sentence (max 180 chars) — verse → chorus → bridge → final, name instruments that enter/exit. Never "same loop". Must NOT copy previous arcs.
 - features: 0–2 ids from [${feats}]
-- leadInstrument: one of [${leads}] — prefer unused
+- leadInstrument: one of [${leads}] — prefer unused, but it MUST fit the artist's genre lane (never a jazz/latin instrument in a rock or electro lane)
 Avoid already used roles: ${used.length ? used.join(", ") : "(none)"}.
 Avoid already used leads: ${usedLeads.length ? usedLeads.join(", ") : "(none)"}.
 Avoid already used features: ${usedFeatures.length ? usedFeatures.join(", ") : "(none)"}.
@@ -170,6 +176,9 @@ export async function resolveTrackInstrumentPlan(
   const albumTotal = Number(trackTotal ?? lead.albumTrackTotal) || null;
   const albumIndex = Number(trackIndex ?? lead.albumTrackIndex) || null;
   const albumMode = Number(albumTotal) > 1;
+  const strict = isStrictStyleFidelity(lead);
+  const pools = styleLock ? lanePoolsForLock(styleLock, { strict }) : null;
+  const allowedLeads = pools?.matched && pools.leads.length ? pools.leads : null;
   const usedR = usedRoles.length
     ? usedRoles
     : Array.isArray(lead.usedSonicRoles)
@@ -221,6 +230,7 @@ export async function resolveTrackInstrumentPlan(
       usedDrums: usedD,
       usedFeatures: usedF,
       instrumentArc: lockedArc,
+      strict,
     });
     return {
       artist: decorateAlbumArtist(lead, variation, { albumIndex, albumTotal }),
@@ -242,6 +252,7 @@ export async function resolveTrackInstrumentPlan(
     !skipLlm &&
     !preview &&
     !lockedArc &&
+    !strict &&
     canUseTextLlm(keys);
 
   if (wantLlm) {
@@ -258,7 +269,15 @@ export async function resolveTrackInstrumentPlan(
         lockRole: forcedRole,
         trackIndex: albumIndex,
         trackTotal: albumTotal,
+        allowedLeads,
       });
+      if (
+        llmPlan.leadInstrument &&
+        allowedLeads &&
+        !allowedLeads.includes(llmPlan.leadInstrument)
+      ) {
+        llmPlan.leadInstrument = null;
+      }
       if (llmPlan.source === "llm") {
         console.info(
           "[track-plan] LLM",
@@ -295,6 +314,7 @@ export async function resolveTrackInstrumentPlan(
     usedDrums: usedD,
     usedFeatures: usedF,
     instrumentArc: llmPlan.instrumentArc || null,
+    strict,
   });
 
   if (variation.musicArrange?.source !== "manual") {

@@ -9,6 +9,7 @@ import {
   applySonicVariation,
   artistWithSonicVariation,
 } from "../sonicVariation.js";
+import { isStrictStyleFidelity } from "../styleFidelity.js";
 import {
   attachCoverToProject,
   albumNeedsCover,
@@ -538,6 +539,7 @@ export async function runAlbumJob({
           usedLeads,
           usedDrums,
           usedFeatures,
+          strict: isStrictStyleFidelity(project.artist),
         });
         // Pas d’instrumentArc figé ici : le serveur (LLM) affine pour anti-clone album.
         mark({

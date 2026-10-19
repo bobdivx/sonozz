@@ -129,6 +129,75 @@ export async function searchStyleArtistCandidates(keys, artistName) {
  * Charge la fiche complète d'un candidat validé par l'utilisateur.
  */
 export async function loadStyleArtistCatalog(keys, pick) {
+  const catalog = await loadStyleArtistCatalogRaw(keys, pick);
+  return fillThinCatalog(catalog, pick);
+}
+
+/** Fiche « maigre » = le LLM n'aurait que le nom pour deviner le son. */
+export function isThinCatalog(c) {
+  if (!c) return true;
+  const tracks = Array.isArray(c.topTracks) ? c.topTracks.length : 0;
+  const genres = Array.isArray(c.genres) ? c.genres.length : 0;
+  const previews = Array.isArray(c.previewUrls) ? c.previewUrls.length : 0;
+  return tracks < 3 || genres === 0 || previews === 0;
+}
+
+/** Fusionne une 2e source (même nom exact) dans une fiche maigre. */
+export function mergeCatalogs(base, extra) {
+  if (!base) return extra || null;
+  if (!extra) return base;
+  const uniq = (arr, max) =>
+    arr
+      .filter(Boolean)
+      .filter((v, i, a) => a.findIndex((x) => norm(x) === norm(v)) === i)
+      .slice(0, max);
+  const sources = uniq([base.source, ...(base.extraSources || []), extra.source], 4);
+  return {
+    ...base,
+    genres: uniq([...(base.genres || []), ...(extra.genres || [])], 6),
+    inferredGenres: uniq([...(base.inferredGenres || []), ...(extra.inferredGenres || [])], 6),
+    topTracks: uniq([...(base.topTracks || []), ...(extra.topTracks || [])], 10),
+    previewUrls: [...new Set([...(base.previewUrls || []), ...(extra.previewUrls || [])])].slice(0, 5),
+    albums: uniq([...(base.albums || []), ...(extra.albums || [])], 8),
+    related: uniq([...(base.related || []), ...(extra.related || [])], 8),
+    image: base.image || extra.image || null,
+    extraSources: sources.filter((s) => s !== base.source),
+  };
+}
+
+async function fillThinCatalog(catalog, pick) {
+  if (!catalog || !isThinCatalog(catalog)) return catalog;
+  const name = catalog.name || pick?.name;
+  if (!name) return catalog;
+  let out = { ...catalog, genres: catalog.genres?.length ? catalog.genres : (pick?.genres || []).map(titleCaseGenre) };
+  const tries = [];
+  if (catalog.source !== "itunes") {
+    tries.push(async () => {
+      const list = await listItunesCandidates(name);
+      const hit = list.find((c) => norm(c.name) === norm(name));
+      return hit ? hydrateItunesCatalog(hit, 1000) : null;
+    });
+  }
+  if (catalog.source !== "deezer") {
+    tries.push(async () => {
+      const list = await listDeezerCandidates(name);
+      const hit = list.find((c) => norm(c.name) === norm(name));
+      return hit ? hydrateDeezerCatalog(hit, 1000) : null;
+    });
+  }
+  for (const t of tries) {
+    if (!isThinCatalog(out)) break;
+    try {
+      out = mergeCatalogs(out, await t());
+    } catch {
+      /* source indisponible */
+    }
+  }
+  out.thin = isThinCatalog(out);
+  return out;
+}
+
+async function loadStyleArtistCatalogRaw(keys, pick) {
   if (!pick?.source || !pick?.id) {
     throw new Error("Sélection artiste invalide — valide un résultat de recherche.");
   }

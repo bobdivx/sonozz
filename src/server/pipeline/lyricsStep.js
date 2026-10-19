@@ -1,3 +1,4 @@
+import { isStrictStyleFidelity } from "../../lib/styleFidelity.js";
 import {
   buildLyricsCraftBrief,
   detectLyricsForm,
@@ -106,7 +107,7 @@ ${buildVoiceBlock(artist)}
 ${buildLyricsCraftBrief(form)}
 ${buildWritingRulesBlock(lang, { form, artistName: artist?.name })}
 ${langBlock}
-${buildBriefBlock(brief)}
+${buildBriefBlock(brief, { strict: isStrictStyleFidelity(artist) })}
 ${
   userTheme
     ? `Thème / titre demandé par l’utilisateur (prioritaire sur l’angle du brief ; garde point de vue, ton et ancrages): ${userTheme}`
@@ -212,7 +213,7 @@ function buildPolishPrompt({ lyrics, defects, lang, langName, form, artist, brie
   const reasons = (defects?.reasons || []).map((r, i) => `${i + 1}. ${r}`).join("\n");
   return `Tu es un·e auteur·e-compositeur·rice exigeant·e. Réécris ces paroles pour qu’elles sonnent comme un VRAI artiste, pas comme une IA.
 Artiste: ${promptJson({ name: artist?.name, genre: artist?.genre, writingVoice: artist?.writingVoice, city: artist?.city })}
-${buildBriefBlock(brief)}
+${buildBriefBlock(brief, { strict: isStrictStyleFidelity(artist) })}
 
 DÉFAUTS DÉTECTÉS À CORRIGER (tous, en priorité) :
 ${reasons || "1. texte trop générique"}

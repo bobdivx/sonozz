@@ -211,6 +211,125 @@ const ALBUM_DRUM_POOL = [
 ];
 
 /**
+ * Pools compatibles avec la LANE de l'artiste : sans ça, un artiste electro-rock viking
+ * pouvait recevoir « saxophone » + « brush jazz » sur un titre d'album (dilution du DNA).
+ */
+const LANE_POOLS = [
+  {
+    re: /metal|\brock\b|punk|grunge|viking|nordic|hardcore|industrial|post-?rock|stoner/,
+    leads: ["electric guitar", "synth lead", "strings", "organ", "piano"],
+    drums: ["live kit"],
+  },
+  {
+    re: /electro|edm|\bdance\b|house|techno|trance|synth|dubstep|drum ?(and|&|n) ?bass|hyperpop|electronic/,
+    leads: ["synth lead", "808 bass", "piano", "strings"],
+    drums: ["four-on-floor", "trap 808s", "live kit"],
+  },
+  {
+    re: /hip[\s-]?hop|\brap\b|trap|drill|grime|boom ?bap/,
+    leads: ["808 bass", "piano", "synth lead", "strings", "electric guitar"],
+    drums: ["trap 808s", "boom bap"],
+  },
+  {
+    re: /soul|gospel|r&?b|funk|motown|disco/,
+    leads: ["organ", "piano", "brass section", "electric guitar", "saxophone", "strings"],
+    drums: ["live kit", "boom bap"],
+  },
+  {
+    re: /jazz|swing|bossa|lounge|blues/,
+    leads: ["piano", "saxophone", "trumpet", "acoustic guitar", "organ", "brass section"],
+    drums: ["brush jazz", "live kit"],
+  },
+  {
+    re: /latin|reggaeton|salsa|cumbia|bachata|afro|dancehall|reggae/,
+    leads: ["acoustic guitar", "brass section", "piano", "synth lead", "808 bass"],
+    drums: ["latin percussion", "trap 808s", "live kit"],
+  },
+  {
+    re: /folk|acoustic|singer|americana|country|indie|chanson|vari[eé]t[eé]/,
+    leads: ["acoustic guitar", "piano", "strings", "electric guitar"],
+    drums: ["live kit", "brush jazz"],
+  },
+];
+
+const INSTRUMENT_TEXT_TO_LEAD = [
+  [/guitar|guitare|riff|power chord/, "electric guitar"],
+  [/acoustic|fingerpick|folk guitar/, "acoustic guitar"],
+  [/synth|arp|lead synth|supersaw|pad/, "synth lead"],
+  [/808|sub ?bass|bass ?line|\bbass\b/, "808 bass"],
+  [/piano|keys|rhodes/, "piano"],
+  [/string|violin|cello|orchestr/, "strings"],
+  [/organ|hammond/, "organ"],
+  [/brass|horn/, "brass section"],
+  [/sax/, "saxophone"],
+  [/trumpet/, "trumpet"],
+];
+
+const INSTRUMENT_TEXT_TO_DRUMS = [
+  [/four.?on.?(the.?)?floor|house kick|techno kick/, "four-on-floor"],
+  [/trap|808 drum|hi-?hat roll/, "trap 808s"],
+  [/boom.?bap/, "boom bap"],
+  [/brush/, "brush jazz"],
+  [/conga|bongo|latin perc|timbale/, "latin percussion"],
+  [/live (kit|drum)|acoustic drum|double.?kick|blast|tom|war drum|drum kit|pounding drum/, "live kit"],
+];
+
+function lockInstrumentText(lock) {
+  if (!lock || typeof lock !== "object") return "";
+  return [
+    ...(Array.isArray(lock.instruments) ? lock.instruments : []),
+    lock.rhythmFeel,
+    lock.production,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+/** Leads / batteries compatibles avec le DNA (lane genre ∪ instruments du lock). */
+export function lanePoolsForLock(styleLock, { strict = false } = {}) {
+  const blob = String(styleLockGenreBlob(styleLock, []) || "").toLowerCase();
+  const inst = lockInstrumentText(styleLock);
+  const fromLockLeads = INSTRUMENT_TEXT_TO_LEAD.filter(([re]) => re.test(inst)).map(([, id]) => id);
+  const fromLockDrums = INSTRUMENT_TEXT_TO_DRUMS.filter(([re]) => re.test(inst)).map(([, id]) => id);
+  const laneLeads = [];
+  const laneDrums = [];
+  for (const lane of LANE_POOLS) {
+    if (lane.re.test(blob) || lane.re.test(inst)) {
+      laneLeads.push(...lane.leads);
+      laneDrums.push(...lane.drums);
+    }
+  }
+  const uniq = (arr) => [...new Set(arr)].filter(Boolean);
+  if (strict) {
+    // Fidélité stricte : uniquement ce que le DNA contient (sinon la lane).
+    return {
+      leads: uniq(fromLockLeads.length ? fromLockLeads : laneLeads).filter((id) => LEAD_IDS.has(id)),
+      drums: uniq(fromLockDrums.length ? fromLockDrums : laneDrums),
+      matched: Boolean(laneLeads.length || fromLockLeads.length),
+    };
+  }
+  return {
+    leads: uniq([...fromLockLeads, ...laneLeads]).filter((id) => LEAD_IDS.has(id)),
+    drums: uniq([...fromLockDrums, ...laneDrums]),
+    matched: Boolean(laneLeads.length || fromLockLeads.length),
+  };
+}
+
+/** Rôles « hors lane » : features à ne pas injecter si le DNA ne les contient pas. */
+function featureFitsLane(feature, styleLock) {
+  const blob = `${String(styleLockGenreBlob(styleLock, []) || "")} ${lockInstrumentText(styleLock)}`.toLowerCase();
+  if (!blob.trim()) return true;
+  if (feature === "gospel choir" || feature === "call and response") {
+    return /gospel|soul|r&?b|choir|church|funk/.test(blob);
+  }
+  if (feature === "brass stabs") return /brass|horn|funk|soul|ska|latin|jazz|hip[\s-]?hop/.test(blob);
+  if (feature === "fingerpicked guitar") return /folk|acoustic|singer|country|indie/.test(blob);
+  if (feature === "organ pads") return /organ|gospel|soul|church|psych/.test(blob);
+  return true;
+}
+
+/**
  * Rôle pour un titre hors album : stable par artiste+titre,
  * en évitant les rôles déjà vus si fournis.
  */
@@ -249,14 +368,17 @@ function clampBpm(n) {
   return Math.min(180, Math.max(70, x));
 }
 
-function pickLead(bias, current, salt, usedLeads = []) {
+function pickLead(bias, current, salt, usedLeads = [], lanePool = null) {
   const used = new Set(
     (Array.isArray(usedLeads) ? usedLeads : [])
       .map((x) => String(x || "").trim().toLowerCase())
       .filter(Boolean),
   );
-  const prefer = (bias || []).filter((id) => LEAD_IDS.has(id));
-  const pool = prefer.length ? prefer : ALBUM_LEAD_POOL.filter((id) => LEAD_IDS.has(id));
+  const lane = Array.isArray(lanePool) && lanePool.length ? lanePool : null;
+  const prefer = (bias || []).filter((id) => LEAD_IDS.has(id) && (!lane || lane.includes(id)));
+  const pool = prefer.length
+    ? prefer
+    : lane || ALBUM_LEAD_POOL.filter((id) => LEAD_IDS.has(id));
   const fresh = pool.filter((id) => !used.has(id.toLowerCase()));
   const options = fresh.length ? fresh : pool;
   if (!options.length) return current || "";
@@ -266,13 +388,16 @@ function pickLead(bias, current, salt, usedLeads = []) {
   return options[hashStr(String(salt)) % options.length];
 }
 
-function pickDrums(current, salt, usedDrums = []) {
+function pickDrums(current, salt, usedDrums = [], lanePool = null) {
   const used = new Set(
     (Array.isArray(usedDrums) ? usedDrums : []).map((x) => String(x || "").trim().toLowerCase()),
   );
-  const fresh = ALBUM_DRUM_POOL.filter((id) => !used.has(id.toLowerCase()));
-  const options = fresh.length ? fresh : ALBUM_DRUM_POOL;
-  if (current && !used.has(String(current).toLowerCase())) return current;
+  const base = Array.isArray(lanePool) && lanePool.length ? lanePool : ALBUM_DRUM_POOL;
+  const fresh = base.filter((id) => !used.has(id.toLowerCase()));
+  const options = fresh.length ? fresh : base;
+  if (current && (!lanePool?.length || lanePool.includes(current)) && !used.has(String(current).toLowerCase())) {
+    return current;
+  }
   return options[hashStr(String(salt)) % options.length] || "";
 }
 
@@ -328,6 +453,8 @@ export function applySonicVariation({
   lightOnly = null,
   /** Arc imposé (ex. LLM) — sinon dérivé du rôle + arrange. */
   instrumentArc = null,
+  /** Fidélité stricte (clone) : BPM ±4, energy DNA, instruments du lock seulement. */
+  strict = false,
 } = {}) {
   const sonicRole = pickSonicRole({
     title,
@@ -365,7 +492,11 @@ export function applySonicVariation({
   const albumJitter = albumMode
     ? ((hashStr(`${artistKey}:${title}:${trackIndex}`) % 7) - 3)
     : 0;
-  const bpm = clampBpm(rootBpm + (profile.bpmDelta || 0) + albumJitter);
+  const rawDelta = (profile.bpmDelta || 0) + albumJitter;
+  // Bande étroite autour du DNA : ±4 en strict, ±10 sinon (évite -14 BPM « ballade » hors lane).
+  const band = strict ? 4 : 10;
+  const delta = Math.max(-band, Math.min(band, strict ? Math.round(rawDelta * 0.35) : rawDelta));
+  const bpm = clampBpm(rootBpm + delta);
 
   const roleNote = `sonic:${sonicRole} · ${profile.mood}`;
   const prevNotes = String(base.notes || "")
@@ -413,23 +544,36 @@ export function applySonicVariation({
   if (albumMode) {
     features = pickAlbumFeatures(profile.features, features, salt, usedFeatures);
   }
+  if (styleLock) {
+    features = features.filter(
+      (f) => (base.features || []).includes(f) || featureFitsLane(f, styleLock),
+    );
+  }
+  if (strict) {
+    features = features.filter((f) => (base.features || []).includes(f) || f === "breakdown drop" || f === "string swell");
+  }
+
+  const pools = styleLock ? lanePoolsForLock(styleLock, { strict }) : null;
+  const leadPool = pools?.matched ? pools.leads : null;
+  const drumPool = pools?.matched ? pools.drums : null;
 
   const leadInstrument = pickLead(
     profile.leadBias,
     albumMode ? "" : base.leadInstrument,
     salt,
     usedLeads,
+    leadPool,
   );
 
   const drums = albumMode
-    ? pickDrums(base.drums, salt, usedDrums)
+    ? pickDrums(base.drums, salt, usedDrums, drumPool)
     : base.drums || "";
 
   const arrangeOut = normalizeMusicArrange({
     ...base,
     leadInstrument: leadInstrument || base.leadInstrument,
     drums: drums || base.drums,
-    density: profile.density || base.density || "mid",
+    density: strict ? base.density || profile.density || "mid" : profile.density || base.density || "mid",
     bpm,
     features,
     notes,
@@ -443,7 +587,8 @@ export function applySonicVariation({
     sonicRole,
     label: profile.label,
     mood: profile.mood,
-    energy: profile.energy,
+    energy: strict && styleLock?.energy ? styleLock.energy : profile.energy,
+    strict: Boolean(strict),
     styleHint: `${profile.mood}, ${profile.density} arrangement`,
     instrumentArc: arc,
     musicArrange: arrangeOut,
@@ -465,6 +610,16 @@ export function artistWithSonicVariation(artist, variation, { musicArrange } = {
     instruments.unshift(lead);
   }
   // Garde le mood DNA artiste ; le rôle agit via energy + musicArrange (pas un overwrite mood).
+  // Strict (clone) : energy DNA conservée, lead ajouté seulement s'il vient du lock.
+  if (variation.strict && lock) {
+    return {
+      ...artist,
+      musicArrange: variation.musicArrange,
+      sonicRole: variation.sonicRole,
+      instrumentArc: variation.instrumentArc || null,
+      styleLock: { ...lock },
+    };
+  }
   return {
     ...artist,
     musicArrange: variation.musicArrange,

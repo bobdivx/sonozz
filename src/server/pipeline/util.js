@@ -287,6 +287,12 @@ export function serializeStyleLock(styleLock) {
     musicPrompt: styleLock.musicPrompt,
     topTracks: styleLock.topTracks,
     audioListened: Boolean(styleLock.audioListened),
+    influences: Array.isArray(styleLock.influences) ? styleLock.influences : undefined,
+    albums: Array.isArray(styleLock.albums) ? styleLock.albums.slice(0, 8) : undefined,
+    dnaSource: styleLock.dnaSource || undefined,
+    lesserKnown: styleLock.lesserKnown ? true : undefined,
+    warnings: Array.isArray(styleLock.warnings) && styleLock.warnings.length ? styleLock.warnings : undefined,
+    clonedFrom: styleLock.clonedFrom || undefined,
     previewUrl: styleLock.previewUrl || styleLock.seedTrack?.previewUrl || undefined,
     seedTrack: styleLock.seedTrack
       ? {

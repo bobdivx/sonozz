@@ -6,6 +6,7 @@ import { coalesceGenres } from "../../lib/musicLane.js";
 import { extrasBeyondStyleLock } from "../../lib/studio.js";
 import { adaptVocalTextToGender } from "../../lib/artistGender.js";
 import { llmJson, requireTextLlm } from "../llm.js";
+import { buildCloneSoundPatch, styleLockFromSourceProfile } from "../../lib/styleFidelity.js";
 import {
   FREE_NAME_PER_ROUND,
   formatNameCollisions,
@@ -48,11 +49,23 @@ export async function runArtist({
   writingVoice,
   favoriteTopics,
   avoidTopics,
+  /** Profil d'un artiste Sonozz à cloner (chargé + vérifié par l'API). */
+  cloneSource = null,
   onStatus,
 }) {
   requireTextLlm(keys);
   const isSelf = String(mode || "").toLowerCase() === "self";
-  const lang = resolveLanguage(language);
+  const cloneProfile =
+    cloneSource && typeof cloneSource === "object" && cloneSource.styleLock ? cloneSource : null;
+  if (cloneSource && !cloneProfile) {
+    throw new Error("L'artiste source n'a pas de DNA sonore (styleLock) — impossible de le cloner.");
+  }
+  // Clone : langue + sexe de la source (copie fidèle), sauf choix explicite du sexe.
+  const forcedGenderExplicit = Boolean(forcedGender);
+  if (cloneProfile && !forcedGender && cloneProfile.gender) {
+    forcedGender = cloneProfile.gender;
+  }
+  const lang = resolveLanguage(cloneProfile?.language || language);
   const langName = languagePromptName(lang);
   const userStyles = Array.isArray(genres)
     ? genres.map((g) => String(g || "").trim()).filter(Boolean)
@@ -93,13 +106,15 @@ export async function runArtist({
   }
 
   /** @type {Awaited<ReturnType<typeof resolveStyleReference>> | null} */
-  let styleLock = await resolveArtistStyleLock({
-    keys,
-    styleArtist,
-    styleArtistPick,
-    styleArtistPicks,
-    styleTrackPick,
-  });
+  let styleLock = cloneProfile
+    ? styleLockFromSourceProfile(cloneProfile)
+    : await resolveArtistStyleLock({
+        keys,
+        styleArtist,
+        styleArtistPick,
+        styleArtistPicks,
+        styleTrackPick,
+      });
 
   if (isSelf && !styleLock) {
     throw new Error(
@@ -486,6 +501,28 @@ JSON strict: { "names": [string, string, string, string], "name": string, "aka":
       ...(isSelf ? { fromUserPhotos: true } : {}),
     },
   };
+
+  if (cloneProfile) {
+    // Clone fidèle : le SON est copié tel quel depuis la source (pas ré-inventé par le LLM).
+    // Identité (nom, bio, visuels) = nouvelle. Réglages d'écriture saisis par l'utilisateur prioritaires.
+    const patch = buildCloneSoundPatch(cloneProfile, { keepGender: !forcedGenderExplicit });
+    profile = { ...profile, ...patch, styleLock: serializeStyleLock(styleLock) };
+    if (extrasOnly.length) {
+      profile.genre = resolvedGenre;
+      profile.genres = resolvedGenres;
+    }
+    if (forcedGenderExplicit) {
+      profile.gender = lock.code;
+      profile.voice = adaptVocalTextToGender(profile.voice, lock.code) || profile.voice;
+    }
+    if (String(writingVoice || "").trim()) profile.writingVoice = String(writingVoice).trim().slice(0, 600);
+    if (favoriteTopics && String(favoriteTopics).trim()) {
+      profile.favoriteTopics = Array.isArray(favoriteTopics) ? favoriteTopics.join(", ") : String(favoriteTopics).trim();
+    }
+    if (String(avoidTopics || "").trim()) profile.avoidTopics = String(avoidTopics).trim().slice(0, 400);
+    if (newsMode) profile.newsMode = newsMode;
+    if (isSelf && selfVoiceSample) profile.voiceSample = selfVoiceSample;
+  }
 
   // Timbre figé dès la création IA — sans obliger l’utilisateur à enregistrer sa voix.
   try {

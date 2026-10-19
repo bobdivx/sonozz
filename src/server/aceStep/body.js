@@ -1,3 +1,4 @@
+import { vocalTimbreStyleBit } from "../../lib/styleFidelity.js";
 import {
   aceStepInferenceForModel,
   ACE_SFT_GUIDANCE,
@@ -322,8 +323,11 @@ export function assembleAceStepStyle({
       aceStepSectionDynamicsShort({ duo: false, rap });
     const albumContrast = String(lead?.albumContrastBit || "").trim() || null;
     // Caption minimal — doublons / pavés → mur de bruit ACE.
+    // Couleur de voix de la référence (sinon seul « male lead vocal » part → timbre perdu).
+    const timbreBit = vocalTimbreStyleBit(lead, styleLock);
     styleFinal = [
       `${genre}. ${gender}`,
+      timbreBit || null,
       bandBed,
       langBit,
       rap ? "clear rapped lyrics every word intelligible, dry upfront vocal, not melodic singing" : null,
@@ -348,6 +352,7 @@ export function assembleAceStepStyle({
           gender: leadLock?.genderCode || lead.gender,
           genre: styleLock?.genreSummary || lead.genre,
           mood: styleLock?.mood || lead.mood,
+          timbre: vocalTimbreStyleBit(lead, styleLock) || undefined,
         }
       : null,
     feat: feat

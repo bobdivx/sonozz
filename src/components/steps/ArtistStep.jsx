@@ -106,6 +106,27 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
   const [pickError, setPickError] = useState("");
   const [styleBusy, setStyleBusy] = useState(false);
   const [profileTab, setProfileTab] = useState("identity");
+  // Clone fidèle : copie le SON (styleLock, genre, voix, BPM, arrangement, écriture) d'un artiste Sonozz.
+  const [cloneFromSlug, setCloneFromSlug] = useState("");
+  const [cloneOptions, setCloneOptions] = useState(null);
+  const [cloneListError, setCloneListError] = useState("");
+
+  async function loadCloneOptions() {
+    if (cloneOptions) return;
+    try {
+      const res = await fetch("/api/artists");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Liste artistes indisponible");
+      setCloneOptions(
+        (Array.isArray(data.artists) ? data.artists : [])
+          .filter((a) => a?.slug && a.slug !== artist?.slug)
+          .map((a) => ({ slug: a.slug, name: a.name || a.profile?.name || a.slug })),
+      );
+    } catch (e) {
+      setCloneListError(e.message || "Liste artistes indisponible");
+      setCloneOptions([]);
+    }
+  }
   const languageManualRef = useRef(false);
   const genderManualRef = useRef(Boolean(resolveArtistGender(artist)?.code));
   const skipHydrateRef = useRef(false);
@@ -460,7 +481,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
         setPickError("Ajoute au moins une photo de toi.");
         return;
       }
-      if (!styleArtistPicks.length) {
+      if (!styleArtistPicks.length && !cloneFromSlug) {
         setPickError("Ajoute et valide au moins un artiste que tu aimes.");
         return;
       }
@@ -494,13 +515,14 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
         styleArtistPicks,
         styleTrackPick: styleTrackPick || undefined,
         styleArtist: styleArtistPicks.map((p) => p.name).join(" × "),
+        cloneFromSlug: cloneFromSlug || undefined,
         allowTakenName: allowTakenName || undefined,
         trends,
       });
       return;
     }
 
-    if (styleArtist.trim() && !styleArtistPick?.id && !styleTrackPick?.id) {
+    if (!cloneFromSlug && styleArtist.trim() && !styleArtistPick?.id && !styleTrackPick?.id) {
       setPickError("Choisis et valide un artiste (ou un titre) dans la liste avant de générer.");
       return;
     }
@@ -524,6 +546,7 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
       styleArtist: styleArtistPick?.name || styleArtist.trim() || undefined,
       styleArtistPick: styleArtistPick || undefined,
       styleTrackPick: styleTrackPick || undefined,
+      cloneFromSlug: cloneFromSlug || undefined,
       allowTakenName: allowTakenName || undefined,
       trends,
     });
@@ -914,7 +937,42 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
               ? "Choisis les artistes (et éventuellement un titre précis) — c’est la source principale du style."
               : "Artiste et/ou titre de référence : le genre, le BPM et la prod viennent d’ici. Pas besoin de cocher un style à la main."}
           </p>
-          <div class="space-y-4">
+          {Array.isArray(artist?.styleLock?.warnings) && artist.styleLock.warnings.length > 0 && (
+            <div role="alert" class="alert alert-warning text-sm">
+              <span>{artist.styleLock.warnings.join(" ")}</span>
+            </div>
+          )}
+          {artist?.cloneOf?.name && (
+            <p class="text-xs text-base-content/60">
+              Son cloné depuis « {artist.cloneOf.name} » (fidélité stricte).
+            </p>
+          )}
+          <fieldset class="rounded-box border border-base-300 p-3 space-y-2">
+            <legend class="px-1 text-sm">Cloner le son d’un de mes artistes</legend>
+            <p class="text-xs text-base-content/50">
+              Copie tel quel le DNA (genre, timbre, BPM, instruments, prod, langue, écriture) — seule l’identité (nom, bio, visuels) est nouvelle. Remplace la référence ci-dessous.
+            </p>
+            <select
+              class="select select-bordered select-sm w-full"
+              value={cloneFromSlug}
+              disabled={loading}
+              onFocus={loadCloneOptions}
+              onMouseDown={loadCloneOptions}
+              onChange={(e) => {
+                setCloneFromSlug(e.currentTarget.value);
+                setPickError("");
+              }}
+            >
+              <option value="">— Aucun (utiliser une référence externe) —</option>
+              {(cloneOptions || []).map((o) => (
+                <option key={o.slug} value={o.slug}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+            {cloneListError && <p class="text-xs text-error">{cloneListError}</p>}
+          </fieldset>
+          <div class={`space-y-4 ${cloneFromSlug ? "pointer-events-none opacity-40" : ""}`}>
             {isSelf ? (
               <StyleArtistPicker
                 multiple
