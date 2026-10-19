@@ -788,6 +788,22 @@ export default function ArtistHub({ slug, initialData = null }) {
     };
   }
 
+  const [portraitBusy, setPortraitBusy] = useState(false);
+  async function generatePortrait() {
+    setPortraitBusy(true);
+    setError("");
+    try {
+      const json = await api.generateArtistPortrait(slug);
+      if (!json?.ok) throw new Error(json?.error || "Portrait impossible");
+      await load();
+      setMsg("Portrait généré.");
+    } catch (e) {
+      setError(e.message || "Portrait impossible");
+    } finally {
+      setPortraitBusy(false);
+    }
+  }
+
   async function regenerateTrack(track, options = {}) {
     setRegenerateTrackBusy(true);
     setError("");
@@ -952,8 +968,17 @@ export default function ArtistHub({ slug, initialData = null }) {
                   {portrait ? (
                     <img src={portrait} alt="" class="h-full w-full object-cover" />
                   ) : (
-                    <div class="flex h-full items-center justify-center">
+                    <div class="flex h-full flex-col items-center justify-center gap-3">
                       <UserRound size={48} class="opacity-30" />
+                      <button
+                        type="button"
+                        class="btn btn-primary btn-sm"
+                        disabled={portraitBusy}
+                        onClick={generatePortrait}
+                      >
+                        {portraitBusy ? <span class="loading loading-spinner loading-xs" /> : null}
+                        Générer le portrait
+                      </button>
                     </div>
                   )}
                   <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-base-200/80 via-transparent to-transparent @min-[40rem]:hidden" />
@@ -968,6 +993,11 @@ export default function ArtistHub({ slug, initialData = null }) {
                         {g}
                       </span>
                     ))}
+                    {profile.duo && Array.isArray(profile.duoMembers) && (
+                      <span class="rounded-full border border-secondary/30 bg-secondary/10 px-2.5 py-0.5 text-[11px] text-secondary">
+                        Duo · {profile.duoMembers.map((m) => m.name).join(" + ")}
+                      </span>
+                    )}
                     {style.language && (
                       <span class="rounded-full border border-base-content/12 bg-base-content/5 px-2.5 py-0.5 text-[11px] text-base-content/65">
                         {languageLabel(style.language)}

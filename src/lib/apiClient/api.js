@@ -29,6 +29,9 @@ export const api = {
       audioUrl: opts.audioUrl || null,
       profile: opts.profile || null,
     }),
+  /** Génère le portrait d'un artiste sans image (clés IA du navigateur / du compte). */
+  generateArtistPortrait: (slug) =>
+    request(`/api/artists/${encodeURIComponent(slug)}`, { action: "generate-portrait" }),
   /** Backfill timbre de tous les artistes hub (Gemini ecoute voice sample ou dernier morceau). */
   backfillArtistTimbres: (opts = {}) =>
     request("/api/artists", {

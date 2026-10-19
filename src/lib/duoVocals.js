@@ -75,7 +75,13 @@ export function duoChorusMode(text = "") {
 /** Ligne timbre courte (ACE / SongGen) pour UNE voix. */
 export function vocalistTimbreLine(v, max = 70) {
   if (!v) return "";
-  const parts = [v.range, v.texture, v.delivery].map((x) => clip(x, 40)).filter(Boolean);
+  const word = (x, n) => {
+    const t = clip(x, 200);
+    if (t.length <= n) return t;
+    const c = t.slice(0, n);
+    return c.slice(0, Math.max(c.lastIndexOf(","), c.lastIndexOf(" "))).replace(/[,\s]+$/, "");
+  };
+  const parts = [v.range, v.texture, v.delivery].map((x) => word(x, 40)).filter(Boolean);
   const out = parts.join(", ");
   if (out.length <= max) return out;
   const cut = out.slice(0, max);

@@ -154,6 +154,33 @@ export async function POST({ params, request, cookies }) {
       return json({ ok: true, artist: saved });
     }
 
+    if (action === "generate-portrait") {
+      const existing = await getArtistBySlug(slug);
+      if (!existing) return error("Artiste introuvable", 404);
+      const p = existing.profile || {};
+      const prompt = String(
+        p.portraitPrompt || p.visualIdentity?.portraitPrompt || "",
+      ).trim();
+      if (!prompt) return error("Pas de description de portrait sur ce profil", 400);
+      const keys = { ...((await getUserKeys()) || {}), ...(body.keys || {}) };
+      const { generateVisual } = await import("../../../server/images.js");
+      const { materializeImageForStorage, isUsableRasterImage } = await import(
+        "../../../server/imagePersist.js"
+      );
+      const portrait = await generateVisual({ keys, prompt, kind: "portrait" });
+      const stored = portrait?.imageUrl
+        ? await materializeImageForStorage(portrait.imageUrl).catch(() => portrait.imageUrl)
+        : null;
+      if (!stored || !isUsableRasterImage(stored)) {
+        return error(portrait?.warning || "Génération du portrait impossible (clé image ?)", 502);
+      }
+      const saved = await upsertArtistFromProject(
+        { ...p, slug, name: existing.name || p.name, imageUrl: stored, imageProvider: portrait.provider },
+        { preferredSlug: slug, ownerEmail: session.email },
+      );
+      return json({ ok: true, artist: saved });
+    }
+
     if (action === "ensure-timbre") {
       const existing = await getArtistBySlug(slug);
       if (!existing) return error("Artiste introuvable", 404);

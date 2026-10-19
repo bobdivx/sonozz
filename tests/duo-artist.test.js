@@ -96,7 +96,7 @@ describe("duo : profil + génération", () => {
   it("style ACE : deux timbres + instruments du DNA + interaction", () => {
     const feat = normalizeFeatArtist(withDuoPartner(duo).featArtist);
     const style = buildAceStepDuoStyle(duo, feat, { styleLock: duo.styleLock });
-    assert.match(style, /singer 1 Frostbloom \(female\): .*mezzo/i);
+    assert.match(style, /singer 1 Liv Ash \(female\): .*mezzo/i);
     assert.match(style, /singer 2 Ragn Holt \(male\): .*gritty/i);
     assert.match(style, /distorted guitars/);
     assert.ok(style.length <= 380, `trop long ${style.length}`);

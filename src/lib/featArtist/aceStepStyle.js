@@ -31,6 +31,20 @@ function shortBed(leadGenre) {
   return "drums, bass, keys, pads";
 }
 
+function firstWordsBed(x) {
+  return String(x || "").replace(/\s+(and|with|for|on)\s+.*/i, "").split(/\s+/).slice(0, 3).join(" ");
+}
+
+/** Coupe à une frontière de mot / virgule. */
+function cutWords(raw, max) {
+  const t = String(raw || "").replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const c = t.slice(0, max);
+  const at = Math.max(c.lastIndexOf(","), c.lastIndexOf(";"));
+  const cut = at > max * 0.5 ? c.slice(0, at) : c.slice(0, c.lastIndexOf(" "));
+  return cut.replace(/[,;:\s]+$/, "");
+}
+
 /** Assemble des phrases sans couper au milieu (plafond dure). */
 function joinBudget(parts, max) {
   let out = "";
@@ -84,9 +98,18 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
   const bed = featGospel
     ? `${shortBed(leadGenre)}; chorus organ+choir`
     : internalDuo && lockInstr
-      ? lockInstr.slice(0, 90)
+      ? cutWords(lock.instruments.slice(0, 4).map((x) => firstWordsBed(x)).join(", "), 72)
       : shortBed(leadGenre);
-  const duoVoice = (lockArtist) => {
+  const profiles = Array.isArray(lead?.vocalProfiles) ? lead.vocalProfiles : [];
+  const firstWords = (x, n) => String(x || "").split(/[,;]/)[0].trim().split(/\s+/).slice(0, n).join(" ");
+  const duoVoice = (lockArtist, idx) => {
+    const p = profiles[idx];
+    if (p) {
+      return cutWords(
+        [firstWords(p.range, 3), firstWords(p.texture, 3), firstWords(p.delivery, 4)].filter(Boolean).join(", "),
+        62,
+      );
+    }
     const t = String(lockArtist?.timbreHint || "").trim();
     const d = String(lockArtist?.vocalStyle || "").trim();
     const txt = [t, d && !t.toLowerCase().includes(d.toLowerCase().slice(0, 12)) ? d : ""]
@@ -95,15 +118,21 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
       .replace(/conversational|spoken-?word|vocoder/gi, "")
       .replace(/\s*,\s*,/g, ",")
       .trim();
-    return txt.slice(0, 70).replace(/[,\s]+$/, "");
+    return cutWords(txt, 62);
   };
 
-  const leadVoiceFinal = internalDuo ? duoVoice(a) || leadVoice : leadVoice;
-  const featVoiceFinal = internalDuo ? duoVoice(b) || featVoice : featVoice;
+
+  const leadVoiceFinal = internalDuo ? duoVoice(a, 0) || leadVoice : leadVoice;
+  const featVoiceFinal = internalDuo ? duoVoice(b, 1) || featVoice : featVoice;
   const interaction = internalDuo
-    ? String(lead?.duoInteraction?.summary || lead?.styleLock?.duoVocals?.interaction || "")
-        .trim()
-        .slice(0, 90)
+    ? (() => {
+        const chorus = String(lead?.duoInteraction?.chorus || "");
+        const sum = String(lead?.duoInteraction?.summary || lead?.styleLock?.duoVocals?.interaction || "").trim();
+        if (sum && sum.length <= 70) return sum;
+        if (chorus === "call-and-response") return "they trade lines, call-and-response hooks";
+        if (chorus === "female" || chorus === "male") return `${chorus} voice carries the hook, other answers`;
+        return sum ? cutWords(sum, 60) : "alternating verses, both voices on the hook";
+      })()
     : "";
 
   const moodBit = String(mood || lock?.mood || a.mood || "")
@@ -115,22 +144,34 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
       ? `distinct voices; ${aceStepSameSexDuoNegatives()}`
       : null;
 
+  // Duo interne : noms des MEMBRES (pas le nom du groupe) et les 2 voix AVANT la ligne d'arc
+  // (sinon le budget 380c coupe singer 2).
+  const name1 = internalDuo ? String(lead?.duoMembers?.[0]?.name || a.name) : a.name;
+  const name2 = internalDuo ? String(feat?.name || lead?.duoMembers?.[1]?.name || b.name) : b.name;
+  if (internalDuo) {
+    const mustDuo = [
+      `${leadGenre} male-female duo, ONE lane, clean mix`,
+      `singer 1 ${name1} (${g1}): ${leadVoiceFinal}`,
+      `singer 2 ${name2} (${g2}): ${featVoiceFinal}`,
+      `band: ${bed}`,
+      interaction ? `obey [singer 1]/[singer 2]: ${interaction}` : "obey [singer 1]/[singer 2]; voices clear",
+      "layers change: verse sparse → chorus adds layers → densest final",
+    ];
+    return joinBudget([...mustDuo, moodBit], 380);
+  }
+
   // Priorité : identité + band + singers + singers. Mood / sameSex optionnels.
   const must = [
     featGospel
       ? `${leadGenre} duet, gospel hooks, ONE clean song`
-      : internalDuo
-        ? `${leadGenre} male-female duo band, ONE lane, clean mix`
-        : `${leadGenre} duet, ONE lane, full band, clean mix`,
+      : `${leadGenre} duet, ONE lane, full band, clean mix`,
     `band: ${bed}`,
     "instrument layers change: verse sparse → chorus adds layers → thin bridge → densest final",
     `singer 1 ${a.name} (${g1}): ${leadVoiceFinal}`,
     `singer 2 ${b.name} (${g2}): ${featVoiceFinal}`,
     featGospel
       ? "verses=singer1; chorus=singer2 gospel; no two songs glued"
-      : interaction
-        ? `obey [singer 1]/[singer 2]; ${interaction}`
-        : "obey [singer 1]/[singer 2]; voices clear",
+      : "obey [singer 1]/[singer 2]; voices clear",
   ];
   const optional = [moodBit, sameSexBit];
 
