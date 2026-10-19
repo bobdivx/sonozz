@@ -96,9 +96,11 @@ describe("duo : profil + génération", () => {
   it("style ACE : Studio tags — raspy male + female + instruments DNA", () => {
     const feat = normalizeFeatArtist(withDuoPartner(duo).featArtist);
     const style = buildAceStepDuoStyle(duo, feat, { styleLock: duo.styleLock });
-    assert.match(style, /raspy male vocal|gritty high baritone|shout-sung/i);
-    assert.match(style, /female (mezzo|alto) vocal/i);
-    assert.match(style, /distorted guitars|analog synths|war drums/i);
+    assert.match(style, /raspy male (tenor|baritone), distorted shouted vocals, gravelly belting/i);
+    assert.match(style, /powerful husky female vocal/i);
+    assert.match(style, /^dark folk metal, alternative rock/i);
+    assert.match(style, /heavy distorted guitars, war drums, deep bass, epic choir/i);
+    assert.doesNotMatch(style, /dubstep|wobble/i);
     assert.doesNotMatch(style, /singer 1 Liv Ash/i);
     assert.ok(style.length <= 380, `trop long ${style.length}`);
   });
@@ -212,11 +214,21 @@ describe("duo : régression Salt on the Rails", () => {
     );
     assert.equal(cap.source, "skeleton");
     assert.match(cap.style, /male and female vocal duet/i);
-    // Studio short caption (tests ACE) : raspy male + electro, pas de pavé singer/noms.
-    assert.match(cap.style, /raspy male vocal|gritty high baritone|shout-sung/i);
-    assert.match(cap.style, /viking|electro-pop|dubstep/i);
+    // Studio short caption (tests ACE r4) : dark folk metal + male rauque, PAS de dubstep.
+    assert.match(cap.style, /high-pitched raspy male (tenor|baritone), distorted shouted vocals, gravelly belting/i);
+    assert.match(cap.style, /dark folk metal, alternative rock/i);
+    assert.doesNotMatch(cap.style, /dubstep|wobble/i);
     assert.doesNotMatch(cap.style, /woman rapper|hip-?hop\/rap|lead rap vocal/i);
     assert.doesNotMatch(cap.style, /female lead and male co-lead/i);
     assert.doesNotMatch(cap.style, /warm guitar/i);
+  });
+
+  it("genre electro pur (sans rock/folk/viking) : pas de bed metal", () => {
+    const lock = { ...artist.styleLock, genreSummary: "electro-pop", genres: ["Electro"], instruments: ["analog synths"] };
+    const lead = { ...artist, genre: "electro-pop", styleLock: lock };
+    const feat = normalizeFeatArtist(withDuoPartner(lead).featArtist);
+    const style = buildAceStepDuoStyle(lead, feat, { styleLock: lock });
+    assert.match(style, /^electro-pop/i);
+    assert.doesNotMatch(style, /folk metal|distorted guitars/i);
   });
 });
