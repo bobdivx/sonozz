@@ -14,7 +14,7 @@ export function aceStepProductionQualityFloor({ duo = false, rap = false } = {})
       : "clear rapped lyrics every word intelligible, crisp enunciation, dry upfront vocal over the beat, hip-hop flow, not melodic singing, airy mix";
   }
   return duo
-    ? "clear sung lyrics, airy mix, warm guitar"
+    ? "clear sung lyrics, airy mix"
     : "clear sung lyrics every word intelligible, airy mix, warm guitar";
 }
 
