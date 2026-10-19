@@ -1,3 +1,4 @@
+import { withDuoPartner } from "../../lib/duoVocals.js";
 import { isStrictStyleFidelity } from "../../lib/styleFidelity.js";
 import {
   buildLyricsCraftBrief,
@@ -249,7 +250,8 @@ export async function runLyrics({
   requireTextLlm(keys);
   // Réglages d’écriture à jour depuis le hub (le projet studio peut être ancien)
   const writing = await loadArtistWritingSettings(artistIn?.slug);
-  const artist = { ...(artistIn || {}), ...writing };
+  // Duo : les deux voix sont TOUJOURS là (partenaire injecté comme feat interne).
+  const artist = withDuoPartner({ ...(artistIn || {}), ...writing });
   const lock = artist?.styleLock;
   const form = detectLyricsForm(lock, artist);
   const feat = normalizeFeatArtist(artist?.featArtist);

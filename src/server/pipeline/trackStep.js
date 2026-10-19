@@ -1,3 +1,4 @@
+import { withDuoPartner } from "../../lib/duoVocals.js";
 import {
   generateMusicWithReplicate,
   startMinimaxMusic,
@@ -279,7 +280,9 @@ function assembleTrackResult({
  * Démarre la gen audio sans bloquer (évite Cloudflare 524 / proxy ~100s).
  * Le client poll via pollTrack.
  */
-export async function startTrack({ keys, lyrics, artist, preview = false, skipStyleReference = false, forceAceModelId = null }) {
+export async function startTrack({ keys, lyrics, artist: artistIn, preview = false, skipStyleReference = false, forceAceModelId = null }) {
+  // Duo : toujours les deux voix (sauf feat explicite choisi par l'utilisateur).
+  let artist = withDuoPartner(artistIn);
   const resolvedGender = resolveArtistGender(artist);
   if (!resolvedGender) {
     throw new Error(
@@ -632,7 +635,8 @@ export async function cancelTrack({ keys, generationId, musicKind }) {
 }
 
 /** Sync (pipeline A→Z). Pour l’UI étape Track, préférer startTrack + pollTrack. */
-export async function runTrack({ keys, lyrics, artist }) {
+export async function runTrack({ keys, lyrics, artist: artistIn }) {
+  const artist = withDuoPartner(artistIn);
   const { prompt, styleLock, vocal, arrangeBpm, arrange, packed } = buildTrackMusicPrompt({
     lyrics,
     artist,

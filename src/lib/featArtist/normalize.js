@@ -42,6 +42,8 @@ export function snapshotFeatArtist(entry) {
     visualIdentity: profile.visualIdentity?.genderLock
       ? { genderLock: profile.visualIdentity.genderLock }
       : undefined,
+    // Partenaire interne d'un artiste duo (pas un vrai feat).
+    duoMember: entry.duoMember || profile.duoMember ? true : undefined,
   };
 }
 
@@ -53,12 +55,14 @@ export function normalizeFeatArtist(raw) {
 }
 
 export function featuringCredit(feat) {
+  if (feat?.duoMember) return "";
   const n = String(feat?.name || "").trim();
   return n || "";
 }
 
 export function displayArtistCredit(lead, feat) {
   const leadName = String(lead?.name || "").trim() || "Unknown";
+  if (feat?.duoMember) return leadName;
   const featName = featuringCredit(feat);
   return featName ? `${leadName} feat. ${featName}` : leadName;
 }

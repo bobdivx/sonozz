@@ -16,6 +16,18 @@ import {
   styleDnaSource,
   styleLockWarnings,
 } from "../../lib/styleFidelity.js";
+import { mergeDuoVocals, normalizeVocalists, vocalistTimbreLine } from "../../lib/duoVocals.js";
+
+/** Duo suspecté (voix F + H entendues) → 3e écoute pour mieux décrire les deux ; aucune voix → réessayer. */
+function needMoreDuoListens(heard) {
+  const genders = new Set(
+    heard
+      .flatMap((d) => normalizeVocalists(d.vocalists).filter((v) => v.share !== "backing"))
+      .map((v) => v.gender)
+      .filter((g) => g === "female" || g === "male"),
+  );
+  return (genders.size === 2 && heard.length < 3) || genders.size === 0;
+}
 
 export async function enrichStyleLock(keys, catalog, query, audioDna = null) {
   requireTextLlm(keys);
@@ -35,6 +47,7 @@ export async function enrichStyleLock(keys, catalog, query, audioDna = null) {
 ÉCOUTE RÉELLE de ${audioDna.listens > 1 ? `${audioDna.listens} extraits` : "un extrait"} preview (~30s) de cet artiste (priorité absolue sur les genres catalogue ET sur ta mémoire) :
 ${JSON.stringify(audioDna, null, 2)}
 Base-toi d'abord sur cette écoute pour : BPM, énergie, timbre vocal, groove/rythme, instruments, densité de prod.
+${audioDna.duoVocals ? `DUO DÉTECTÉ (une voix femme ET une voix homme) : "timbre" / "vocalStyle" décrivent la voix FEMME (singer 1) ; la voix HOMME est décrite séparément (duoVocals.male) — writingStyle doit prévoir l'écriture à DEUX voix.` : ""}
 ${knowledgeRule}
 `
     : `
@@ -239,6 +252,7 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
   }
 
   let audioDna = null;
+  let duoVocals = null;
   let previewUrls = Array.isArray(catalog.previewUrls) ? catalog.previewUrls.filter(Boolean) : [];
   // Spotify renvoie souvent preview_url=null — Deezer/iTunes sont plus fiables pour ~30s
   if (!previewUrls.length && catalog.name) {
@@ -264,16 +278,21 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
   if (keys?.geminiApiKey?.trim() && previewUrls.length) {
     // 2 extraits DIFFÉRENTS (pas un seul 30s) → BPM médian / instruments plus fiables.
     const heard = [];
-    for (const previewUrl of previewUrls.slice(0, 3)) {
+    for (const previewUrl of previewUrls.slice(0, 5)) {
       const dna = await listenArtistPreviewDna(keys.geminiApiKey, {
         previewUrl,
         artistName: catalog.name,
         topTracks: catalog.topTracks,
       });
       if (dna) heard.push(dna);
-      if (heard.length >= 2) break;
+      // 2 écoutes suffisent… sauf si une voix d'un AUTRE sexe apparaît : on écoute plus
+      // (jusqu'à 4) pour confirmer un duo et décrire les deux timbres.
+      if (heard.length >= 2 && !needMoreDuoListens(heard)) break;
+      if (heard.length >= 4) break;
     }
     audioDna = mergeAudioDna(heard);
+    duoVocals = mergeDuoVocals(heard);
+    if (audioDna && duoVocals) audioDna.duoVocals = duoVocals;
   }
   const thin = isThinCatalog(catalog);
   const lesserKnown = isLesserKnownArtist(catalog);
@@ -325,9 +344,10 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
     tempoFeel: lock.tempoFeel,
     bpm,
     production: lock.production,
-    vocalStyle: lock.vocalStyle,
-    vocalRegister: lock.vocalRegister,
-    timbre: lock.timbre,
+    // Duo : le lock « principal » = voix FEMME (singer 1) ; la voix homme vit dans duoVocals.male.
+    vocalStyle: duoVocals ? duoVocals.female.delivery || lock.vocalStyle : lock.vocalStyle,
+    vocalRegister: duoVocals ? duoVocals.female.range || lock.vocalRegister : lock.vocalRegister,
+    timbre: duoVocals ? vocalistTimbreLine(duoVocals.female, 90) || lock.timbre : lock.timbre,
     rhythmFeel: lock.rhythmFeel,
     instruments: lock.instruments,
     sonicKeywords: lock.sonicKeywords,
@@ -341,9 +361,12 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
       genreSummary,
       lock.production,
       ...(lock.sonicKeywords || []),
-      lock.timbre ? `timbre: ${lock.timbre}` : "",
-      lock.vocalStyle ? `vocals: ${lock.vocalStyle}` : "",
-      lock.vocalRegister ? `register: ${lock.vocalRegister}` : "",
+      duoVocals
+        ? `male-female duo vocals: female ${vocalistTimbreLine(duoVocals.female, 60)}; male ${vocalistTimbreLine(duoVocals.male, 60)}; ${duoVocals.interaction}`
+        : "",
+      !duoVocals && lock.timbre ? `timbre: ${lock.timbre}` : "",
+      !duoVocals && lock.vocalStyle ? `vocals: ${lock.vocalStyle}` : "",
+      !duoVocals && lock.vocalRegister ? `register: ${lock.vocalRegister}` : "",
       lock.rhythmFeel ? `groove: ${lock.rhythmFeel}` : "",
       lock.tempoFeel ? `tempo: ${lock.tempoFeel}` : "",
       bpm ? `~${bpm} BPM` : "",
@@ -357,6 +380,7 @@ export async function resolveStyleReference(keys, artistNameOrPick) {
       .join(", "),
     dnaSource,
     lesserKnown,
+    duoVocals: duoVocals || undefined,
     warnings: styleLockWarnings({ dnaSource, lesserKnown, name: catalog.name }),
   });
 }
@@ -471,6 +495,7 @@ export function mergeStyleLocks(locks = []) {
       .filter(Boolean)
       .join(", "),
     warnings: uniqStrings(list.flatMap((l) => l.warnings || []), 4),
+    duoVocals: list.find((l) => l.duoVocals)?.duoVocals || undefined,
     dnaSource: list.some((l) => l.dnaSource === "audio")
       ? "audio"
       : list.some((l) => l.dnaSource === "catalog")

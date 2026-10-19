@@ -197,6 +197,8 @@ export function ensureAceStepDuoSingerTags(text, lead, feat) {
 
   const sameSex = Boolean(a.genderCode && b.genderCode && a.genderCode === b.genderCode);
   const featGospel = isGospelFeatLock(b);
+  // Artiste duo : qui porte le refrain (harmonisé / question-réponse / une seule voix).
+  const duoChorus = lead?.duo ? String(lead?.duoInteraction?.chorus || "both") : "both";
   const out = [];
   let verseN = 0;
   /** Lignes lyrics du chorus en cours (same-sex sans gospel feat → call & response). */
@@ -206,7 +208,7 @@ export function ensureAceStepDuoSingerTags(text, lead, feat) {
     if (!chorusBuf) return;
     const { header, lines: lyricLines } = chorusBuf;
     out.push(...header);
-    if (!sameSex || lyricLines.length < 2) {
+    if ((!sameSex && duoChorus !== "call-and-response") || lyricLines.length < 2) {
       out.push(...lyricLines);
     } else {
       // Empiler [singer 1]+[singer 2] sur un hook same-sex → mash métallique ACE.
@@ -252,7 +254,13 @@ export function ensureAceStepDuoSingerTags(text, lead, feat) {
     }
 
     if (/chorus|hook|refrain/i.test(body)) {
-      if (sameSex && featGospel) {
+      if (!sameSex && duoChorus === "call-and-response") {
+        chorusBuf = { header, lines: [] };
+      } else if (!sameSex && duoChorus === "female") {
+        out.push(...header, a.genderCode === "female" ? `[singer 1: ${g1}]` : `[singer 2: ${g2}]`);
+      } else if (!sameSex && duoChorus === "male") {
+        out.push(...header, a.genderCode === "male" ? `[singer 1: ${g1}]` : `[singer 2: ${g2}]`);
+      } else if (sameSex && featGospel) {
         // Rap × gospel : le feat POSSEDE le refrain (sinon ça sonne 2 rappers).
         out.push(...header, `[singer 2: ${g2}]`);
       } else if (sameSex) {

@@ -78,9 +78,33 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
         .replace(/dry studio take/gi, "dry")
         .slice(0, 48);
 
+  // Artiste DUO (2 voix du même projet) : vrais timbres + instruments du DNA + interaction.
+  const internalDuo = Boolean(lead?.duo && (feat?.duoMember || lead?.duoPartner));
+  const lockInstr = Array.isArray(lock?.instruments) ? lock.instruments.slice(0, 4).join(", ") : "";
   const bed = featGospel
-    ? `${shortBed(leadGenre)}; chorus + organ/choir`
-    : shortBed(leadGenre);
+    ? `${shortBed(leadGenre)}; chorus organ+choir`
+    : internalDuo && lockInstr
+      ? lockInstr.slice(0, 90)
+      : shortBed(leadGenre);
+  const duoVoice = (lockArtist) => {
+    const t = String(lockArtist?.timbreHint || "").trim();
+    const d = String(lockArtist?.vocalStyle || "").trim();
+    const txt = [t, d && !t.toLowerCase().includes(d.toLowerCase().slice(0, 12)) ? d : ""]
+      .filter(Boolean)
+      .join(", ")
+      .replace(/conversational|spoken-?word|vocoder/gi, "")
+      .replace(/\s*,\s*,/g, ",")
+      .trim();
+    return txt.slice(0, 70).replace(/[,\s]+$/, "");
+  };
+
+  const leadVoiceFinal = internalDuo ? duoVoice(a) || leadVoice : leadVoice;
+  const featVoiceFinal = internalDuo ? duoVoice(b) || featVoice : featVoice;
+  const interaction = internalDuo
+    ? String(lead?.duoInteraction?.summary || lead?.styleLock?.duoVocals?.interaction || "")
+        .trim()
+        .slice(0, 90)
+    : "";
 
   const moodBit = String(mood || lock?.mood || a.mood || "")
     .trim()
@@ -95,14 +119,18 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
   const must = [
     featGospel
       ? `${leadGenre} duet, gospel hooks, ONE clean song`
-      : `${leadGenre} duet, ONE lane, full band, clean mix`,
+      : internalDuo
+        ? `${leadGenre} male-female duo band, ONE lane, clean mix`
+        : `${leadGenre} duet, ONE lane, full band, clean mix`,
     `band: ${bed}`,
     "instrument layers change: verse sparse → chorus adds layers → thin bridge → densest final",
-    `singer 1 ${a.name} (${g1}): ${leadVoice}`,
-    `singer 2 ${b.name} (${g2}): ${featVoice}`,
+    `singer 1 ${a.name} (${g1}): ${leadVoiceFinal}`,
+    `singer 2 ${b.name} (${g2}): ${featVoiceFinal}`,
     featGospel
       ? "verses=singer1; chorus=singer2 gospel; no two songs glued"
-      : "obey [singer 1]/[singer 2]; voices clear",
+      : interaction
+        ? `obey [singer 1]/[singer 2]; ${interaction}`
+        : "obey [singer 1]/[singer 2]; voices clear",
   ];
   const optional = [moodBit, sameSexBit];
 

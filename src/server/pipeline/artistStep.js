@@ -7,6 +7,7 @@ import { extrasBeyondStyleLock } from "../../lib/studio.js";
 import { adaptVocalTextToGender } from "../../lib/artistGender.js";
 import { llmJson, requireTextLlm } from "../llm.js";
 import { buildCloneSoundPatch, styleLockFromSourceProfile } from "../../lib/styleFidelity.js";
+import { applyDuoToProfile } from "../../lib/duoVocals.js";
 import {
   FREE_NAME_PER_ROUND,
   formatNameCollisions,
@@ -121,6 +122,24 @@ export async function runArtist({
       "Choisis et valide au moins un artiste que tu aimes — le son des morceaux sera calé dessus.",
     );
   }
+
+  // Référence = DUO femme + homme (entendu à l'écoute) → artiste duo, singer 1 = voix femme.
+  const duoRef = !cloneProfile && !isSelf && styleLock?.duoVocals?.female && styleLock?.duoVocals?.male
+    ? styleLock.duoVocals
+    : null;
+  if (duoRef && !forcedGenderExplicit) forcedGender = "female";
+  const duoPromptNote = duoRef
+    ? `
+═══ ARTISTE DUO (OBLIGATOIRE) ═══
+La référence est un DUO : une chanteuse ET un chanteur, deux voix très reconnaissables.
+Crée un DUO fictionnel (nom de groupe ORIGINAL, jamais celui de la référence) :
+- singer 1 (femme) : ${JSON.stringify(duoRef.female)}
+- singer 2 (homme) : ${JSON.stringify(duoRef.male)}
+- interaction : ${duoRef.interaction}
+"gender" = "female" (singer 1). Ajoute "duoMembers": [{"name": string, "gender": "female"}, {"name": string, "gender": "male"}] (prénoms/noms de scène originaux).
+"bio" présente les DEUX membres. portraitPrompt = "adult woman and adult man, two-member music duo, ..." (deux personnes).
+═══════════════════════════════════`
+    : "";
 
   const styleArtistHint = String(
     styleArtist ||
@@ -293,6 +312,7 @@ Les tendances charts ci-dessous sont IGNORÉES si elles contredisent ce lock.
     : `Style(s) musical(aux) imposé(s): ${stylePrompt || "choisis un style cohérent avec les tendances (explicite et précis)"}`
 }
 
+${duoPromptNote}
 Langue des chansons imposée: ${langName} (code ${lang}) — le catalogue et les paroles seront dans cette langue. N'importe PAS la langue de l'artiste / titre de référence.
 Indices personnalité / univers (PAS le style musical): ${bioHint || "aucun"}
 Tendances (contexte marché${styleLock ? " — SECONDARY, ne pas écraser le lock" : ""}): ${promptJson(styleLock ? {} : trends || {})}
@@ -522,6 +542,10 @@ JSON strict: { "names": [string, string, string, string], "name": string, "aka":
     if (String(avoidTopics || "").trim()) profile.avoidTopics = String(avoidTopics).trim().slice(0, 400);
     if (newsMode) profile.newsMode = newsMode;
     if (isSelf && selfVoiceSample) profile.voiceSample = selfVoiceSample;
+  }
+
+  if (duoRef) {
+    profile = applyDuoToProfile(profile, { duoVocals: duoRef, members: data.duoMembers });
   }
 
   // Timbre figé dès la création IA — sans obliger l’utilisateur à enregistrer sa voix.

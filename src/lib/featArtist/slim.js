@@ -8,6 +8,7 @@ export function slimStyleLock(lock) {
     energy: lock.energy || null,
     vocalStyle: lock.vocalStyle || null,
     timbre: lock.timbre || null,
+    vocalRegister: lock.vocalRegister || null,
     writingStyle: lock.writingStyle || null,
     rhythmFeel: lock.rhythmFeel || null,
     bpm: lock.bpm ?? null,

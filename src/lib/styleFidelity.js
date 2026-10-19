@@ -151,6 +151,12 @@ export const CLONE_SOUND_FIELDS = [
   "avoidTopics",
   "newsMode",
   "voiceSample",
+  // Duo : les DEUX profils vocaux + interaction + partenaire (singer 2).
+  "duo",
+  "duoPartner",
+  "duoMembers",
+  "duoInteraction",
+  "vocalProfiles",
 ];
 
 const clone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));

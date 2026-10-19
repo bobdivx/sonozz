@@ -1,5 +1,6 @@
 import { DEFAULT_GEMINI_TEXT_MODEL, resolveGeminiTextModel } from "../gemini.js";
 import { parseJsonLoose, resolveTrackAudioBytes } from "./audio.js";
+import { normalizeVocalists } from "../../lib/duoVocals.js";
 
 /**
  * Écoute un preview catalogue (~30s Deezer/iTunes/Spotify) pour extraire le DNA sonore
@@ -41,7 +42,18 @@ JSON strict:
   "rhythmFeel": string,
   "instruments": [string, string, string],
   "productionDensity": "sparse" | "mid" | "dense",
-  "genreFeel": string
+  "genreFeel": string,
+  "vocalists": [
+    {
+      "gender": "female" | "male" | "unknown",
+      "range": string,
+      "texture": string,
+      "delivery": string,
+      "effects": string,
+      "share": "lead" | "co-lead" | "backing"
+    }
+  ],
+  "vocalInteraction": string
 }
 
 Règles:
@@ -49,7 +61,10 @@ Règles:
 - timbre = couleur / texture de voix (ex. "breathy soft tenor", "raspy mid baritone").
 - rhythmFeel = groove précis (ex. "four-on-floor house", "syncopated boom-bap", "halftime trap 808s").
 - instruments = 3–6 éléments clairement audibles.
-- Si instrumental ou voix peu claire, vocalRegister = "unknown" et timbre décrit la texture globale.`;
+- Si instrumental ou voix peu claire, vocalRegister = "unknown" et timbre décrit la texture globale.
+- "vocalists" = UNE entrée PAR voix lead distincte que tu ENTENDS (ex. une femme ET un homme = 2 entrées). Chœurs anonymes = "backing".
+  range = registre (ex. "mezzo-soprano, strong belt to high chest"), texture = grain (ex. "clear, bright, slightly nasal"), delivery = chanté / scandé / crié / rappé / growl, effects = reverb / distorsion / double-track / autotune ou "dry".
+- "vocalInteraction" = comment les voix se partagent le titre (ex. "female sings verses, male shouts pre-chorus, both harmonise the chorus", "call-and-response"). "" si une seule voix.`;
 
   let lastError;
   for (const m of models) {
@@ -103,6 +118,8 @@ Règles:
           ? parsed.productionDensity
           : "mid",
         genreFeel: String(parsed.genreFeel || "").trim(),
+        vocalists: normalizeVocalists(parsed.vocalists),
+        vocalInteraction: String(parsed.vocalInteraction || "").trim().slice(0, 200),
         _meta: {
           model: m,
           audioSource: audio.source,

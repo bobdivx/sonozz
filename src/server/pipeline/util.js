@@ -293,6 +293,7 @@ export function serializeStyleLock(styleLock) {
     lesserKnown: styleLock.lesserKnown ? true : undefined,
     warnings: Array.isArray(styleLock.warnings) && styleLock.warnings.length ? styleLock.warnings : undefined,
     clonedFrom: styleLock.clonedFrom || undefined,
+    duoVocals: styleLock.duoVocals || undefined,
     previewUrl: styleLock.previewUrl || styleLock.seedTrack?.previewUrl || undefined,
     seedTrack: styleLock.seedTrack
       ? {

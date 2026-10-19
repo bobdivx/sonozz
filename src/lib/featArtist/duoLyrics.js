@@ -63,6 +63,25 @@ ${langBit}`;
           : ""
       }`;
 
+  const internalDuo = Boolean(lead?.duo);
+  const inter = internalDuo ? String(lead?.duoInteraction?.summary || "").trim() : "";
+  const chorusMode = internalDuo ? String(lead?.duoInteraction?.chorus || "both") : "";
+  const duoBandBit = internalDuo
+    ? `
+- C'est UN groupe (duo ${a.genderLabel || ""} + ${b.genderLabel || ""}), pas un featuring : une seule histoire racontée à deux voix.${
+        inter ? `
+- Interaction des voix (à respecter) : ${inter}.` : ""
+      }${
+        chorusMode === "call-and-response"
+          ? `
+- [${hookTag}] en QUESTION-RÉPONSE : une ligne singer 1, une ligne singer 2.`
+          : chorusMode === "both"
+            ? `
+- [${hookTag}] chanté ENSEMBLE (harmonisé) par les deux voix.`
+            : ""
+      }`
+    : "";
+
   return `
 DUO OBLIGATOIRE — deux chanteurs distincts (ne fusionne JAMAIS en un seul narrateur) :
 - Lead « ${a.name} » (${a.genderLabel || "voix lead"}${a.genre ? `, style ${a.genre}` : ""}${a.writingStyle ? `, écriture: ${a.writingStyle}` : ""}${a.vocalStyle ? `, voix: ${a.vocalStyle}` : ""}${bilingual ? `, langue: ${leadLangName}` : ""})
@@ -72,7 +91,7 @@ Règles structure dans "text" (titre COMMERCIAL, forme « ${preset.id} », pas l
 - Inclure Intro (ambiance), section contraste si présente dans l'arc (Bridge / Breakdown / Break), Outro
 ${verseRules}
 ${hookRules}
-- Chaque artiste garde SA personnalité d'écriture et son registre — pas de pastiche croisé.
+${duoBandBit ? duoBandBit.trim() + "\n" : ""}- Chaque artiste garde SA personnalité d'écriture et son registre — pas de pastiche croisé.
 - N'écris PAS les noms d'artistes comme paroles à chanter (sauf si c'est un hook volontaire très court).
 - N'écris PAS de didascalies entre parenthèses (pas de « (Sound of…) » — ACE les chante / les mélange).
 `.trim();
