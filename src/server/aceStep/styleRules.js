@@ -242,11 +242,27 @@ export function enforceAceStyleLocks(caption, brief = {}) {
     .replace(/\s+/g, " ");
   if (!s) return s;
 
-  const rap = briefIsRap(brief);
+  const duo = Boolean(brief?.duo);
+  // Duo mixte : JAMAIS le préfixe solo « woman rapper » (écrase singer 2).
+  const rap = duo ? false : briefIsRap(brief);
   const g = brief?.lead?.gender;
-  const prefix = aceGenderHardPrefix(g, { rap });
-  s = rewriteOppositeGender(s, g);
-  s = stripGenderPhrases(s);
+  const featG = brief?.feat?.gender;
+  const mixedDuo =
+    duo && g && featG && g !== featG
+      ? `male and female vocal duet, ${g} lead and ${featG} co-lead, both clearly audible`
+      : null;
+  const prefix = mixedDuo || (duo ? null : aceGenderHardPrefix(g, { rap }));
+  if (!duo) {
+    s = rewriteOppositeGender(s, g);
+    s = stripGenderPhrases(s);
+  } else {
+    // Duo : retirer un éventuel préfixe solo « female lead rap vocal / woman rapper » injecté par LLM.
+    s = s
+      .replace(/\b(female|male) lead rap vocal(?:,?\s*(?:woman|man) rapper)?(?:,?\s*crisp enunciation(?: every word intelligible)?)?\b\.?\s*/gi, "")
+      .replace(/\bHip-?hop\/rap,\s*rapped vocals[^.]*\.?\s*/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 
   if (prefix) {
     s = `${prefix}. ${s}`.replace(/\s+/g, " ").trim();

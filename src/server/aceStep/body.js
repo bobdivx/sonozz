@@ -377,7 +377,8 @@ export function assembleAceStepStyle({
         ? `bilingual singer1=${duoLangs.leadLang} singer2=${duoLangs.featLang}`
         : null,
       trackArc: String(lead?.instrumentArc || "").trim() || null,
-      rap,
+      // Duo : le blob genre peut contenir « rap » (exemples Suno) → ne pas forcer la lane rap.
+      rap: isDuo ? false : rap,
     }),
   };
 

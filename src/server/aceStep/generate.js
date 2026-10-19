@@ -50,6 +50,19 @@ import {
   vocalLockForArtist,
 } from "../../lib/featArtist.js";
 
+/** Style seed ACE : genre court — JAMAIS le pavé Suno (qui contient des exemples « rap verses »
+ *  et faisait basculer isRapLane → caption « woman rapper / hip-hop »). */
+function aceStyleSeed({ prompt, styleLock, artist } = {}) {
+  const fromLock = String(styleLock?.genreSummary || "").trim();
+  if (fromLock) return fromLock.slice(0, 120);
+  const fromArtist = String(artist?.genre || "").trim();
+  if (fromArtist) return fromArtist.slice(0, 120);
+  // Dernier recours : 1re ligne « Style: … » du prompt Suno, coupée avant la parenthèse DNA.
+  const m = String(prompt || "").match(/^Style:\s*([^\n(]+)/i);
+  if (m) return m[1].trim().slice(0, 120);
+  return String(prompt || "").trim().slice(0, 80);
+}
+
 export async function startAceStep(keys, {
   prompt,
   lyrics,
@@ -130,8 +143,9 @@ export async function startAceStep(keys, {
   // Caption LLM AVANT l’arbiter SFT (qui stoppe LLM/Wan local).
   let styleCaption = null;
   if (!labMode) {
+    const styleSeed = aceStyleSeed({ prompt, styleLock, artist });
     styleCaption = await resolveAceStepStyleCaption(keys, {
-      style: prompt,
+      style: styleSeed,
       language,
       styleLock,
       artist,
@@ -401,7 +415,7 @@ export async function startAceStep(keys, {
     const caption =
       styleCaption ||
       (await resolveAceStepStyleCaption(keys, {
-        style: prompt,
+        style: aceStyleSeed({ prompt, styleLock, artist }),
         language,
         styleLock,
         artist,
@@ -412,7 +426,7 @@ export async function startAceStep(keys, {
       }));
     body = buildAceStepBody({
       title,
-      style: prompt,
+      style: aceStyleSeed({ prompt, styleLock, artist }),
       lyrics,
       language,
       bpm,

@@ -11,7 +11,7 @@ import {
 } from "../src/lib/duoVocals.js";
 import { buildCloneSoundPatch } from "../src/lib/styleFidelity.js";
 import { buildAceStepDuoStyle } from "../src/lib/featArtist/aceStepStyle.js";
-import { ensureAceStepDuoSingerTags } from "../src/lib/featArtist/aceStepLyrics.js";
+import { ensureAceStepDuoSingerTags, prepareAceStepLyrics } from "../src/lib/featArtist/aceStepLyrics.js";
 import { duoLyricsInstruction } from "../src/lib/featArtist/duoLyrics.js";
 import { normalizeFeatArtist, displayArtistCredit } from "../src/lib/featArtist/index.js";
 
@@ -130,5 +130,88 @@ describe("duo : profil + génération", () => {
     assert.equal(patch.vocalProfiles.length, 2);
     assert.equal(patch.duoPartner.name, "Ragn Holt");
     assert.deepEqual(patch.duoInteraction, duo.duoInteraction);
+  });
+});
+
+describe("duo : régression Salt on the Rails", () => {
+  const artist = applyDuoToProfile(
+    {
+      name: "Skarlvind",
+      genre: "Electro-pop dance, viking-themed, dubstep-tinged drops",
+      language: "en",
+      styleLock: {
+        ...LOCK,
+        genreSummary: "Electro-pop dance, viking-themed, dubstep-tinged drops",
+        genres: ["Electro", "Alternative", "Rock"],
+      },
+    },
+    {
+      duoVocals: mergeDuoVocals(HEARD),
+      members: [
+        { name: "Ylva Brann", gender: "female" },
+        { name: "Torvik Hale", gender: "male" },
+      ],
+    },
+  );
+  artist.duoInteraction = { summary: "call-and-response", chorus: "call-and-response" };
+
+  it("prepareAceStepLyrics GARDE les tags singer déjà présents (EDM Build/Drop)", () => {
+    const raw = `[Build]\n[singer 1: female]\nGray skies\n[singer 2: male]\nForty kroner\n[Drop]\n[singer 1: female]\nWe're the future\n[singer 2: male]\nFuture!`;
+    const feat = normalizeFeatArtist(withDuoPartner(artist).featArtist);
+    const out = prepareAceStepLyrics(raw, artist, feat);
+    assert.match(out, /\[singer 1: female\]/);
+    assert.match(out, /\[singer 2: male\]/);
+    assert.match(out, /Gray skies/);
+  });
+
+  it("sans tags préexistants, EDM Build/Drop n'envoie PAS tout sur singer 2", () => {
+    const raw = `[Intro]\nOh\n[Build]\nLine a\n[Drop]\nHook one\nHook two\n[Break]\nBreath\n[Build]\nLine b\n[Drop]\nHook again\n[Outro]\nEnd`;
+    const feat = normalizeFeatArtist(withDuoPartner(artist).featArtist);
+    const out = ensureAceStepDuoSingerTags(raw, artist, feat);
+    assert.match(out, /\[Build\]\n\[singer 1: female\]\nLine a/);
+    assert.match(out, /\[Drop\]\n\[singer 1: female\]\nHook one\n\[singer 2: male\]\nHook two/);
+    assert.match(out, /\[Break\]\n\[singer 2: male\]/);
+    assert.match(out, /\[Drop\]\n\[singer 1: female\]\nHook again/);
+    assert.doesNotMatch(out, /\[Build\]\n\[Drop\]/); // jamais une section sans singer
+  });
+
+  it("caption ACE duo : male+female, PAS woman rapper / hip-hop (fuite « rap verses » Suno)", async () => {
+    const { assembleAceStepStyle } = await import("../src/server/aceStep/body.js");
+    const { resolveAceStepStyleCaption } = await import("../src/server/aceStep/styleCaption.js");
+    const { isRapLane, styleLockGenreBlob } = await import("../src/lib/musicLane.js");
+    const sunoLeak =
+      "Style: Electro-pop. genre fusion is OK (e.g. rap verses + gospel featured hooks). lead vocalist Skarlvind";
+    assert.equal(
+      isRapLane(styleLockGenreBlob(artist.styleLock, [sunoLeak])),
+      true,
+      "précondition : le pavé Suno faisait basculer isRapLane",
+    );
+    assert.equal(
+      isRapLane(styleLockGenreBlob(artist.styleLock, [artist.genre])),
+      false,
+    );
+    const feat = normalizeFeatArtist(withDuoPartner(artist).featArtist);
+    const assembled = assembleAceStepStyle({
+      style: artist.genre,
+      language: "en",
+      styleLock: artist.styleLock,
+      artist: withDuoPartner(artist),
+      featArtist: feat,
+    });
+    assert.equal(assembled.brief.rap, false);
+    const cap = await resolveAceStepStyleCaption(
+      {},
+      {
+        style: artist.genre,
+        language: "en",
+        styleLock: artist.styleLock,
+        artist: withDuoPartner(artist),
+        featArtist: feat,
+      },
+    );
+    assert.equal(cap.source, "skeleton");
+    assert.match(cap.style, /male and female vocal duet/i);
+    assert.match(cap.style, /singer 2 Torvik Hale \(male\)/i);
+    assert.doesNotMatch(cap.style, /woman rapper|hip-?hop\/rap|lead rap vocal/i);
   });
 });

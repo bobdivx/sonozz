@@ -122,7 +122,13 @@ export function prepareAceStepLyrics(text, lead, feat) {
 
     const sm = trimmed.match(structureRe);
     if (sm) {
-      if (isSingerTag(sm[1])) continue;
+      // Déjà tagué [singer N: …] : on GARDE (ne pas stripper — sinon EDM Build/Drop
+      // perd singer 1 et ensureAceStepDuoSingerTags recolle tout sur singer 2).
+      if (isSingerTag(sm[1])) {
+        out.push(trimmed);
+        pendingCue = null;
+        continue;
+      }
       const body = cleanStructureBody(sm[1]);
       out.push(`[${body}]`);
       if (pendingCue) {
@@ -208,15 +214,18 @@ export function ensureAceStepDuoSingerTags(text, lead, feat) {
     if (!chorusBuf) return;
     const { header, lines: lyricLines } = chorusBuf;
     out.push(...header);
-    if ((!sameSex && duoChorus !== "call-and-response") || lyricLines.length < 2) {
-      out.push(...lyricLines);
-    } else {
-      // Empiler [singer 1]+[singer 2] sur un hook same-sex → mash métallique ACE.
-      // Call & response : une ligne / une voix.
-      for (let i = 0; i < lyricLines.length; i++) {
-        out.push(i % 2 === 0 ? `[singer 1: ${g1}]` : `[singer 2: ${g2}]`);
-        out.push(lyricLines[i]);
+    if (duoChorus === "call-and-response" || (sameSex && !featGospel && lyricLines.length >= 2)) {
+      // Call & response : une ligne / une voix (même 1 ligne → singer 1, pas de section orpheline).
+      if (!lyricLines.length) {
+        out.push(`[singer 1: ${g1}]`, `[singer 2: ${g2}]`);
+      } else {
+        for (let i = 0; i < lyricLines.length; i++) {
+          out.push(i % 2 === 0 ? `[singer 1: ${g1}]` : `[singer 2: ${g2}]`);
+          out.push(lyricLines[i]);
+        }
       }
+    } else {
+      out.push(...lyricLines);
     }
     chorusBuf = null;
   };
@@ -282,8 +291,24 @@ export function ensureAceStepDuoSingerTags(text, lead, feat) {
         ...header,
         verseN % 2 === 1 ? `[singer 1: ${g1}]` : `[singer 2: ${g2}]`,
       );
-    } else if (/bridge|pre-?chorus|build|break|drop/i.test(body)) {
-      out.push(...header, `[singer 2: ${g2}]`);
+    } else if (/^drop$|^hook$|^chorus$/i.test(body) && !sameSex) {
+      // EDM Drop = hook : les deux voix (harmonisé) ou question-réponse selon le duo.
+      if (duoChorus === "call-and-response") {
+        chorusBuf = { header, lines: [] };
+      } else if (duoChorus === "female") {
+        out.push(...header, a.genderCode === "female" ? `[singer 1: ${g1}]` : `[singer 2: ${g2}]`);
+      } else if (duoChorus === "male") {
+        out.push(...header, a.genderCode === "male" ? `[singer 1: ${g1}]` : `[singer 2: ${g2}]`);
+      } else {
+        out.push(...header, `[singer 1: ${g1}]`, `[singer 2: ${g2}]`);
+      }
+    } else if (/bridge|pre-?chorus|build|break/i.test(body)) {
+      // Build / Break / Bridge : alterner (EDM n'a pas de [Verse] — sinon tout partait sur singer 2).
+      verseN += 1;
+      out.push(
+        ...header,
+        verseN % 2 === 1 ? `[singer 1: ${g1}]` : `[singer 2: ${g2}]`,
+      );
     } else {
       out.push(...header);
     }

@@ -31,6 +31,17 @@ function shortBed(leadGenre) {
   return "drums, bass, keys, pads";
 }
 
+/** Mots qui poussent ACE vers du RAP : on les remappe en chant rythmé. */
+function softenRapPushWords(s) {
+  return String(s || "")
+    .replace(/\brapped?\b/gi, "sung")
+    .replace(/\bspoken\b/gi, "sung")
+    .replace(/\bscand[eé]\b/gi, "rhythmic")
+    .replace(/chanted-?shouted|shouted chant/gi, "shout-sung")
+    .replace(/\bshouted\b/gi, "shout-sung")
+    .replace(/\bchanted\b/gi, "rhythmic sung");
+}
+
 function firstWordsBed(x) {
   return String(x || "").replace(/\s+(and|with|for|on)\s+.*/i, "").split(/\s+/).slice(0, 3).join(" ");
 }
@@ -106,7 +117,9 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
     const p = profiles[idx];
     if (p) {
       return cutWords(
-        [firstWords(p.range, 3), firstWords(p.texture, 3), firstWords(p.delivery, 4)].filter(Boolean).join(", "),
+        softenRapPushWords(
+          [firstWords(p.range, 3), firstWords(p.texture, 3), firstWords(p.delivery, 4)].filter(Boolean).join(", "),
+        ),
         62,
       );
     }

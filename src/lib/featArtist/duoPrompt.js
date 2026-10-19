@@ -25,7 +25,7 @@ export function duoVocalPromptBits(lead, feat) {
       : null,
     `call-and-response and traded verses between ${a.name} and ${b.name}`,
     `keep both vocal identities and timbres clearly separate throughout the mix`,
-    `genre fusion is OK (e.g. rap verses + gospel featured hooks) — keep arrangement coherent, not two songs at once`,
+    `genre fusion is OK (e.g. sung verses + gospel featured hooks) — keep arrangement coherent, not two songs at once`,
     `never collapse into one male-only or one female-only performance`,
   ].filter(Boolean);
 

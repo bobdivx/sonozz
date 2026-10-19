@@ -131,6 +131,13 @@ export async function resolveAceStepStyleCaption(
     };
   }
 
+  // Duo / bilingue : le squelette (buildAceStepDuoStyle) est déjà le prompt fidèle.
+  // Le LLM compress inventait « woman rapper / hip-hop » dès qu'un mot « rap » fuyait du brief.
+  if (!forceLlm && (assembled.duo || assembled.bilingual) && skeleton.length >= 80) {
+    const locked = enforceAceStyleLocks(skeleton, { ...brief, rap: false });
+    remember(key, locked);
+    return { style: locked, source: "skeleton", brief, langCode: assembled.langCode };
+  }
   if (!forceLlm && !assembled.duo && !assembled.bilingual && skeleton.length <= ACE_STYLE_LLM_SKIP_MAX) {
     const locked = enforceAceStyleLocks(skeleton, brief);
     remember(key, locked);
