@@ -20,6 +20,61 @@ function shortGenre(raw, fallback = "hip hop") {
   return first.split(/\s+/)[0].slice(0, 18) || fallback;
 }
 
+
+/** Genre Studio (ACE tags courts) — garde viking / electro-pop / dubstep. */
+function duoStudioGenre(raw, lock) {
+  const blob = `${raw || ""} ${(Array.isArray(lock?.genres) ? lock.genres.join(" ") : "")} ${lock?.genreSummary || ""}`.toLowerCase();
+  const parts = [];
+  if (/viking|nordic|norse|fjord|scandinav/.test(blob)) parts.push("viking");
+  if (/electro-?pop|electropop/.test(blob)) parts.push("electro-pop");
+  else if (/electro|edm|electronic|synth.?pop/.test(blob)) parts.push("electro");
+  else if (/folk/.test(blob)) parts.push("folk");
+  if (/dubstep|bass.?music|brostep/.test(blob)) parts.push("dubstep");
+  if (parts.length >= 2) return parts.slice(0, 3).join(" ");
+  if (parts.length === 1) return `${parts[0]} electro-pop`;
+  return shortGenre(raw, "electro-pop");
+}
+
+/** Timbre male Studio — raspy/gritty en tête (token primacy ACE). */
+function duoStudioMalePhrase(profile, lockArtist) {
+  const blob = [
+    profile?.range,
+    profile?.texture,
+    profile?.delivery,
+    lockArtist?.timbreHint,
+    lockArtist?.vocalStyle,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const bits = ["aggressive raspy male vocal"];
+  // High baritone = Bob Dominator / Torvik measured F0 ~270–300 Hz
+  bits.push("gritty high baritone");
+  if (/shout|chant|bark|rasp|grain|rough|rhythmic/.test(blob)) bits.push("shout-sung");
+  else bits.push("shout-sung");
+  if (/rough|grain|distort/.test(blob)) bits.push("rough grain");
+  return bits.join(", ");
+}
+
+/** Timbre female Studio. */
+function duoStudioFemalePhrase(profile, lockArtist) {
+  const blob = [
+    profile?.range,
+    profile?.texture,
+    profile?.delivery,
+    lockArtist?.timbreHint,
+    lockArtist?.vocalStyle,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const range = /alto|mezzo|soprano/.test(blob)
+    ? (blob.match(/alto|mezzo|soprano/) || ["alto"])[0]
+    : "alto";
+  const bright = /bright|clear|belt|powerful/.test(blob) ? "bright " : "";
+  return `${bright}female ${range} vocal`.replace(/\s+/g, " ").trim();
+}
+
 function shortBed(leadGenre) {
   const g = leadGenre.toLowerCase();
   if (/trap|drill|hip.?hop|rap|afro/.test(g)) return "808, trap drums, pads";
@@ -162,15 +217,41 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
   const name1 = internalDuo ? String(lead?.duoMembers?.[0]?.name || a.name) : a.name;
   const name2 = internalDuo ? String(feat?.name || lead?.duoMembers?.[1]?.name || b.name) : b.name;
   if (internalDuo) {
-    const mustDuo = [
-      `${leadGenre} male-female duo, ONE lane, clean mix`,
-      `singer 1 ${name1} (${g1}): ${leadVoiceFinal}`,
-      `singer 2 ${name2} (${g2}): ${featVoiceFinal}`,
-      `band: ${bed}`,
-      interaction ? `obey [singer 1]/[singer 2]: ${interaction}` : "obey [singer 1]/[singer 2]; voices clear",
-      "layers change: verse sparse → chorus adds layers → densest final",
-    ];
-    return joinBudget([...mustDuo, moodBit], 380);
+    // Format ACE Studio (tags courts) — prouvé : male grit + electro/dubstep.
+    // Ordre : genre → male raspy → female → instruments → BPM (pas de noms / pas de pavé).
+    const studioGenre = duoStudioGenre(
+      a.genre || lock?.genreSummary || genreSummary || styleBase || leadGenre,
+      lock,
+    );
+    const femaleProf = profiles.find((p) => String(p?.gender || "").toLowerCase() === "female") || profiles[0];
+    const maleProf = profiles.find((p) => String(p?.gender || "").toLowerCase() === "male") || profiles[1];
+    const maleBit = duoStudioMalePhrase(maleProf, g1 === "male" ? a : b);
+    const femaleBit = duoStudioFemalePhrase(femaleProf, g1 === "female" ? a : b);
+    const studioLockInstr = Array.isArray(lock?.instruments)
+      ? lock.instruments
+          .slice(0, 4)
+          .map((x) => firstWordsBed(x))
+          .filter(Boolean)
+      : [];
+    const electroBed =
+      /electro|dubstep|edm|synth|viking|nordic/.test(`${studioGenre} ${bed}`.toLowerCase())
+        ? ["dubstep wobble bass", "analog synths", "heavy sub bass"]
+        : [];
+    const instr = [...new Set([...electroBed, ...studioLockInstr, ...String(bed || "").split(/,\s*/)])]
+      .map((x) => String(x || "").trim())
+      .filter((x) => x && !/^drums?$/i.test(x) && !/^pads?$/i.test(x))
+      .slice(0, 5);
+    const bpmRaw = Number(lock?.bpm || lead?.bpm || lead?.musicArrange?.bpm || 0);
+    const bpmBit = bpmRaw >= 60 && bpmRaw <= 200 ? `${Math.round(bpmRaw)} BPM` : null;
+    const parts = [
+      studioGenre,
+      maleBit,
+      femaleBit,
+      instr.length ? instr.join(", ") : bed,
+      bpmBit,
+      interaction && /call/.test(interaction) ? "call and response" : null,
+    ].filter(Boolean);
+    return cutWords(parts.join(", "), 320);
   }
 
   // Priorité : identité + band + singers + singers. Mood / sameSex optionnels.
