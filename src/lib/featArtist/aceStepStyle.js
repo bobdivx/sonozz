@@ -21,58 +21,41 @@ function shortGenre(raw, fallback = "hip hop") {
 }
 
 
-/** Genre Studio (ACE tags courts) — garde viking / electro-pop / dubstep. */
+/**
+ * Genre Studio (ACE tags courts). Bob Dominator réel (AllMusic : folk/Viking metal,
+ * alternative ; Deezer/Qobuz : electro + rap, orchestrations épiques) — PAS du dubstep.
+ * Tests ACE r4 (oct. 2026) : « dark folk metal, alternative rock » donne la voix
+ * d'homme rauque (HNR ~6 dB) ; les tags electro/trap/dubstep la rendent propre (HNR 14–21).
+ */
 function duoStudioGenre(raw, lock) {
   const blob = `${raw || ""} ${(Array.isArray(lock?.genres) ? lock.genres.join(" ") : "")} ${lock?.genreSummary || ""}`.toLowerCase();
+  if (/viking|nordic|norse|fjord|scandinav|folk|metal|rock|dark/.test(blob)) {
+    return "dark folk metal, alternative rock";
+  }
   const parts = [];
-  if (/viking|nordic|norse|fjord|scandinav/.test(blob)) parts.push("viking");
   if (/electro-?pop|electropop/.test(blob)) parts.push("electro-pop");
   else if (/electro|edm|electronic|synth.?pop/.test(blob)) parts.push("electro");
-  else if (/folk/.test(blob)) parts.push("folk");
-  if (/dubstep|bass.?music|brostep/.test(blob)) parts.push("dubstep");
-  if (parts.length >= 2) return parts.slice(0, 3).join(" ");
-  if (parts.length === 1) return `${parts[0]} electro-pop`;
+  if (/dubstep|brostep/.test(blob)) parts.push("dubstep");
+  if (parts.length) return parts.slice(0, 2).join(" ");
   return shortGenre(raw, "electro-pop");
 }
 
-/** Timbre male Studio — raspy/gritty en tête (token primacy ACE). */
+/** Bed rock/metal mesuré le plus proche de Bob Dominator (tests r4). */
+const DUO_ROCK_BED = ["heavy distorted guitars", "war drums", "deep bass", "epic choir"];
+
+/**
+ * Timbre male Studio — vocabulaire rock (rauque/distordu) en tête.
+ * Bob Dominator mesuré : F0 ~280 Hz, HNR ~5.7 dB, shimmer ~15 %, F1 ~750 Hz (crié ouvert).
+ */
 function duoStudioMalePhrase(profile, lockArtist) {
-  const blob = [
-    profile?.range,
-    profile?.texture,
-    profile?.delivery,
-    lockArtist?.timbreHint,
-    lockArtist?.vocalStyle,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const bits = ["aggressive raspy male vocal"];
-  // High baritone = Bob Dominator / Torvik measured F0 ~270–300 Hz
-  bits.push("gritty high baritone");
-  if (/shout|chant|bark|rasp|grain|rough|rhythmic/.test(blob)) bits.push("shout-sung");
-  else bits.push("shout-sung");
-  if (/rough|grain|distort/.test(blob)) bits.push("rough grain");
-  return bits.join(", ");
+  const blob = [profile?.range, lockArtist?.timbreHint].filter(Boolean).join(" ").toLowerCase();
+  const range = /baritone|bass\b/.test(blob) && !/high/.test(blob) ? "baritone" : "tenor";
+  return `high-pitched raspy male ${range}, distorted shouted vocals, gravelly belting`;
 }
 
-/** Timbre female Studio. */
-function duoStudioFemalePhrase(profile, lockArtist) {
-  const blob = [
-    profile?.range,
-    profile?.texture,
-    profile?.delivery,
-    lockArtist?.timbreHint,
-    lockArtist?.vocalStyle,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const range = /alto|mezzo|soprano/.test(blob)
-    ? (blob.match(/alto|mezzo|soprano/) || ["alto"])[0]
-    : "alto";
-  const bright = /bright|clear|belt|powerful/.test(blob) ? "bright " : "";
-  return `${bright}female ${range} vocal`.replace(/\s+/g, " ").trim();
+/** Timbre female Studio — « powerful husky » (testé r4 avec la voix d'homme rauque). */
+function duoStudioFemalePhrase() {
+  return "powerful husky female vocal";
 }
 
 function shortBed(leadGenre) {
@@ -217,7 +200,7 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
   const name1 = internalDuo ? String(lead?.duoMembers?.[0]?.name || a.name) : a.name;
   const name2 = internalDuo ? String(feat?.name || lead?.duoMembers?.[1]?.name || b.name) : b.name;
   if (internalDuo) {
-    // Format ACE Studio (tags courts) — prouvé : male grit + electro/dubstep.
+    // Format ACE Studio (tags courts) — tests r4 : dark folk metal + male rauque distordu.
     // Ordre : genre → male raspy → female → instruments → BPM (pas de noms / pas de pavé).
     const studioGenre = duoStudioGenre(
       a.genre || lock?.genreSummary || genreSummary || styleBase || leadGenre,
@@ -233,14 +216,18 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
           .map((x) => firstWordsBed(x))
           .filter(Boolean)
       : [];
-    const electroBed =
-      /electro|dubstep|edm|synth|viking|nordic/.test(`${studioGenre} ${bed}`.toLowerCase())
-        ? ["dubstep wobble bass", "analog synths", "heavy sub bass"]
-        : [];
-    const instr = [...new Set([...electroBed, ...studioLockInstr, ...String(bed || "").split(/,\s*/)])]
+    const rockLane = /metal|rock/.test(studioGenre);
+    const genreBed = rockLane
+      ? DUO_ROCK_BED
+      : /dubstep/.test(studioGenre)
+        ? ["wobble bass", "analog synths", "heavy sub bass"]
+        : /electro/.test(studioGenre)
+          ? ["analog synths", "heavy sub bass"]
+          : [];
+    const instr = [...new Set([...genreBed, ...studioLockInstr, ...String(bed || "").split(/,\s*/)])]
       .map((x) => String(x || "").trim())
-      .filter((x) => x && !/^drums?$/i.test(x) && !/^pads?$/i.test(x))
-      .slice(0, 5);
+      .filter((x) => x && !/^drums?$/i.test(x) && !/^pads?$/i.test(x) && !(rockLane && /dubstep|wobble/i.test(x)))
+      .slice(0, 4);
     const bpmRaw = Number(lock?.bpm || lead?.bpm || lead?.musicArrange?.bpm || 0);
     const bpmBit = bpmRaw >= 60 && bpmRaw <= 200 ? `${Math.round(bpmRaw)} BPM` : null;
     const parts = [
