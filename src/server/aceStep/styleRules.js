@@ -12,7 +12,7 @@ import { isRapLane } from "../../lib/musicLane.js";
 export const ACE_STYLE_CAP = 700;
 
 /** Bump si les règles changent (invalide le cache mémoire). */
-export const ACE_STYLE_RULES_VERSION = 9;
+export const ACE_STYLE_RULES_VERSION = 10;
 
 /** Cible caption — au-delà ACE sature (noise wall). */
 export const ACE_STYLE_TARGET = 360;
@@ -247,9 +247,10 @@ export function enforceAceStyleLocks(caption, brief = {}) {
   const rap = duo ? false : briefIsRap(brief);
   const g = brief?.lead?.gender;
   const featG = brief?.feat?.gender;
+  // Neutre : « female lead and male co-lead » biaisait ACE vers une voix soft (tests Skarlvind).
   const mixedDuo =
     duo && g && featG && g !== featG
-      ? `male and female vocal duet, ${g} lead and ${featG} co-lead, both clearly audible`
+      ? "male and female vocal duet, both voices clearly audible"
       : null;
   const prefix = mixedDuo || (duo ? null : aceGenderHardPrefix(g, { rap }));
   if (!duo) {
