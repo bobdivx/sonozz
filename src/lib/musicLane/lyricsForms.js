@@ -79,6 +79,32 @@ export function getLyricsFormPreset(idOrPreset) {
   return LYRICS_FORM_PRESETS[id] || LYRICS_FORM_PRESETS.radio_pop;
 }
 
+const EDM_RX = /\b(edm|house|techno|hyperpop|trance|dubstep|drum\s*and\s*bass|dnb|dance)\b/;
+
+/** Référence de style active (recette ACE) → forme chanson couplet/refrain/pont. */
+export function hasStyleReference(lock) {
+  const r = lock?.styleReference;
+  return Boolean(r && typeof r === "object" && r.enabled !== false && (r.deezerTrackId || r.url || r.source));
+}
+
+/** Genre principal EDM : genres déclarés (artiste + lock), le 1er genre doit être EDM. */
+export function coreGenres(lock, artist) {
+  const declared = [artist?.genre, ...(Array.isArray(artist?.genres) ? artist.genres : []), ...(Array.isArray(lock?.genres) ? lock.genres : [])]
+    .map((g) => norm(g))
+    .filter(Boolean);
+  // aucun genre déclaré → le résumé de genre fait foi (1er segment seulement)
+  if (!declared.length && lock?.genreSummary) return [norm(String(lock.genreSummary).split(/[,;.]/)[0])].filter(Boolean);
+  return declared;
+}
+
+export function isCoreEdm(lock, artist) {
+  const core = coreGenres(lock, artist);
+  if (!core.length) return false;
+  const first = core[0];
+  if (/\bdancehall\b/.test(first)) return false;
+  return EDM_RX.test(first);
+}
+
 /**
  * Choisit une forme paroles selon le DNA genre (lock + artiste).
  * Priorité: rap → edm → ballad → metal → indie → radio_pop.
@@ -93,12 +119,24 @@ export function detectLyricsForm(lock = null, artist = null) {
     ]),
   );
 
-  if (/\b(hip[\s-]?hop|trap|drill|\brap\b|boom\s*bap|grime|afro[\s-]?trap)\b/.test(blob)) {
+  const RAP_RX = /\b(hip[\s-]?hop|trap|drill|\brap\b|boom\s*bap|grime|afro[\s-]?trap)\b/;
+  // Avec référence de style : seul le genre PRINCIPAL décide (un « Hip Hop » secondaire ne fait pas du rap).
+  const styleRef = hasStyleReference(lock);
+  if (styleRef ? RAP_RX.test(coreGenres(lock, artist)[0] || "") : RAP_RX.test(blob)) {
     return LYRICS_FORM_PRESETS.rap_trap;
   }
-  if (/\b(edm|house|techno|hyperpop|trance|dubstep|drum\s*and\s*bass|dnb)\b/.test(blob) || /\bdance\b/.test(blob)) {
-    // dancehall / afro-dance restent hors EDM pur si déjà captés ailleurs
-    if (!/\bdancehall\b/.test(blob)) return LYRICS_FORM_PRESETS.edm;
+  if (styleRef) {
+    // Référence de style : forme chanson (couplet/refrain/pont) décidée par les genres déclarés.
+    const core = coreGenres(lock, artist);
+    // (pas de [Breakdown] metal : le son vient de la référence audio, pas des balises)
+    if (/\b(ballad|acoustic)\b/.test(core[0] || "")) return LYRICS_FORM_PRESETS.ballad;
+    if (core.some((g) => /\b(indie|alternative|alt[\s-]?rock)\b/.test(g))) return LYRICS_FORM_PRESETS.indie_alt;
+    return LYRICS_FORM_PRESETS.radio_pop;
+  }
+  // EDM ([Build]/[Drop]) SEULEMENT si le genre de l'artiste est vraiment EDM (genres déclarés, pas un
+  // mot du résumé type « dubstep-tinged drops ») ET sans référence de style : sinon couplet/refrain/pont.
+  if (isCoreEdm(lock, artist)) {
+    return LYRICS_FORM_PRESETS.edm;
   }
   if (/\b(ballad|acoustic|soft\s*rock|lullaby|piano\s*ballad|power\s*ballad)\b/.test(blob)) {
     return LYRICS_FORM_PRESETS.ballad;
