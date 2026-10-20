@@ -110,6 +110,10 @@ export async function resolveAceStepStyleCaption(
   });
   const brief = assembled.brief;
   const skeleton = assembled.style;
+  // Recette auto (styleLock.aceCaption) : tags déjà validés → ni LLM compress ni ajouts.
+  if (String(styleLock?.aceCaption || "").trim()) {
+    return { style: skeleton, source: "recipe", brief, langCode: assembled.langCode };
+  }
   const key = cacheKey(brief);
 
   if (cache.has(key)) {
