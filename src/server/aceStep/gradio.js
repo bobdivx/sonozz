@@ -7,6 +7,7 @@ import {
   isLanOrLoopbackHost,
 } from "./client.js";
 import { looksLikeAudioBuffer } from "./errors.js";
+import { isDirectStyleRefHostOk } from "./artistStyleRef.js";
 
 /** Express Studio = :8001 (ou tunnel), Gradio Python = :7865 (souvent loopback Demeter). */
 export function resolveAceStepGradioUrl(keys, studioBase) {
@@ -223,6 +224,12 @@ export async function ensureAceStepStyleReference(keys, previewUrl) {
     }
   }
 
+  // Aperçus Deezer (dzcdn.net) : Gradio les télécharge directement (testé oct. 2026),
+  // contrairement aux URL S3 / iTunes (403 HTML -> « silent/unreadable »).
+  if (isDirectStyleRefHostOk(url)) {
+    console.info("[acestep] réf. directe (hôte accepté par Gradio)");
+    return url;
+  }
   console.warn("[acestep] cover ignoré — pas d’upload Gradio (S3 rejeté comme silent/unreadable)");
   return "";
 }
