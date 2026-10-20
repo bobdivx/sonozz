@@ -35,6 +35,15 @@ import {
   withKnownArtistLane,
 } from "../../lib/musicLane.js";
 import { isStudioEnabled } from "../../lib/keys.js";
+import { resolveArtistStyleReference } from "../aceStep/artistStyleRef.js";
+import {
+  measureMaleVoice,
+  voiceCheckVerdict,
+  voiceCheckEndpoint,
+  pickRougherTake,
+  voiceCleanError,
+  VOICE_CHECK_MAX_RETRIES,
+} from "../aceStep/voiceCheck.js";
 import {
   normalizeFeatArtist,
   duoVocalPromptBits,
@@ -280,7 +289,7 @@ function assembleTrackResult({
  * Démarre la gen audio sans bloquer (évite Cloudflare 524 / proxy ~100s).
  * Le client poll via pollTrack.
  */
-export async function startTrack({ keys, lyrics, artist: artistIn, preview = false, skipStyleReference = false, forceAceModelId = null }) {
+export async function startTrack({ keys, lyrics, artist: artistIn, preview = false, skipStyleReference = false, forceAceModelId = null, voiceRetry = 0, voiceBest = null }) {
   // Duo : toujours les deux voix (sauf feat explicite choisi par l'utilisateur).
   let artist = withDuoPartner(artistIn);
   const resolvedGender = resolveArtistGender(artist);
@@ -388,6 +397,16 @@ export async function startTrack({ keys, lyrics, artist: artistIn, preview = fal
     let bpmForAce = bpmGuess;
     if (feat && Number(bpmForAce) > 118) bpmForAce = 118;
 
+    // Référence de STYLE par artiste (styleLock.styleReference) : mode « reference »
+    // (text2music + referenceAudioUrl), jamais le cover catalogue auto.
+    let styleRef = null;
+    if (!skipStyleReference) {
+      styleRef = await resolveArtistStyleReference(artist).catch((e) => {
+        console.warn("[style-ref] ignorée:", e?.message || e);
+        return null;
+      });
+    }
+
     const started = await startAceStep(keys, {
       prompt,
       lyrics: lyrics?.text || "",
@@ -395,8 +414,10 @@ export async function startTrack({ keys, lyrics, artist: artistIn, preview = fal
       language: lang,
       bpm: bpmForAce,
       preview: isPreview,
-      referenceAudioUrl: "",
-      referenceAudioTitle: "",
+      referenceAudioUrl: styleRef?.url || "",
+      referenceAudioTitle: styleRef?.title || "",
+      referenceMode: styleRef?.mode || "cover",
+      audioCoverStrength: styleRef?.strength ?? undefined,
       styleLock,
       artist,
       forceModelId: String(forceAceModelId || "").trim() || null,
@@ -423,6 +444,11 @@ export async function startTrack({ keys, lyrics, artist: artistIn, preview = fal
         aceGen: started.aceGen || null,
         pickReason: started.pickReason || null,
         usedReference: Boolean(started.usedReference),
+        styleReferenceTitle: started.usedReference ? styleRef?.title || null : null,
+        // Vérif. voix d'homme (duo interne) : n° de relance + meilleure prise précédente.
+        voiceRetry: Math.max(0, Number(voiceRetry) || 0),
+        voiceBest: voiceBest && typeof voiceBest === "object" && voiceBest.url ? voiceBest : null,
+        isInternalDuo: Boolean(artist?.duo && feat?.name),
         language: lang,
         isPreview,
         status: isPreview ? "preview-ready" : "prompt-ready",
@@ -587,8 +613,28 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
     }
   }
 
+  // Duo interne : voix d'homme trop propre -> nouvelle graine (max 2), puis la plus rauque.
+  let finalUrl = tick.url;
+  let voiceCheck = null;
+  if (kind === "acestep" && base.isInternalDuo && tick.url && voiceCheckEndpoint(keys)) {
+    const m = await measureMaleVoice(keys, tick.url);
+    const verdict = voiceCheckVerdict(m);
+    const take = { url: tick.url, hnr: m?.maleHnr ?? null };
+    const retry = Math.max(0, Number(base.voiceRetry) || 0);
+    voiceCheck = { maleHnr: take.hnr, maleSeconds: m?.maleSeconds ?? 0, verdict, retry };
+    console.info("[voice-check]", JSON.stringify(voiceCheck));
+    if (verdict === "clean") {
+      const best = pickRougherTake(base.voiceBest, take);
+      if (retry < VOICE_CHECK_MAX_RETRIES) throw voiceCleanError(retry + 1, best);
+      if (best?.url && best.url !== tick.url) {
+        finalUrl = best.url;
+        voiceCheck = { ...voiceCheck, keptPrevious: true, maleHnr: best.hnr };
+      }
+    }
+  }
+
   const persisted = await persistGeneratedAudio(
-    tick.url,
+    finalUrl,
     base.artist || "anon",
   );
   const track = {
@@ -610,6 +656,7 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
           ? "Chanson générée via SongGeneration Studio (LeVo local)."
           : "Chanson générée via MiniMax Music 2.6 (voix + paroles).",
     warning: undefined,
+    voiceCheck: voiceCheck || undefined,
   };
   return { done: true, track, generationId, musicKind: kind };
 }
