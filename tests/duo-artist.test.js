@@ -96,7 +96,7 @@ describe("duo : profil + génération", () => {
   it("style ACE : Studio tags — raspy male + female + instruments DNA", () => {
     const feat = normalizeFeatArtist(withDuoPartner(duo).featArtist);
     const style = buildAceStepDuoStyle(duo, feat, { styleLock: duo.styleLock });
-    assert.match(style, /raspy male (tenor|baritone), distorted shouted vocals, gravelly belting/i);
+    assert.match(style, /high-pitched male (tenor|baritone), raspy distorted shouted vocals, gravelly belting/i);
     assert.match(style, /powerful husky female vocal/i);
     assert.match(style, /^dark folk metal, electronic/i);
     assert.match(style, /heavy drums, deep sub bass, taiko war drums, oriental strings, epic choir, no guitars/i);
@@ -216,7 +216,7 @@ describe("duo : régression Salt on the Rails", () => {
     assert.equal(cap.source, "skeleton");
     assert.match(cap.style, /male and female vocal duet/i);
     // Studio short caption (tests ACE r4) : dark folk metal + male rauque, PAS de dubstep.
-    assert.match(cap.style, /high-pitched raspy male (tenor|baritone), distorted shouted vocals, gravelly belting/i);
+    assert.match(cap.style, /high-pitched male (tenor|baritone), raspy distorted shouted vocals, gravelly belting/i);
     assert.match(cap.style, /dark folk metal, electronic/i);
     assert.match(cap.style, /no guitars/i);
     assert.doesNotMatch(cap.style, /dubstep|wobble/i);
