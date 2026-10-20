@@ -146,6 +146,14 @@ export async function trackWithPoll(payload = {}, onProgress, opts = {}) {
       onProgress?.({ percent: 8, phase: "retry", message: "Reference audio refusee \u2014 relance sans cover\u2026" });
       return trackWithPoll({ ...payload, skipStyleReference: true }, onProgress, { ...opts, generationId: undefined, musicKind: undefined, draft: undefined });
     }
+    if (started?.musicKind === "acestep" && /ACE_VOICE_CLEAN/.test(String(e?.message || "")) && (Number(payload?.voiceRetry) || 0) < 2) {
+      const msg = String(e?.message || "");
+      let best = null;
+      try { const m = msg.match(/best=(\{.*\})\s*$/); const j = m ? JSON.parse(m[1]) : null; best = j?.url ? j : null; } catch { best = null; }
+      const next = (Number(payload?.voiceRetry) || 0) + 1;
+      onProgress?.({ percent: 8, phase: "retry", message: `Voix d'homme trop propre \u2014 nouvelle graine (${next}/2)\u2026` });
+      return trackWithPoll({ ...payload, voiceRetry: next, voiceBest: best }, onProgress, { ...opts, generationId: undefined, musicKind: undefined, draft: undefined });
+    }
     if (started?.musicKind === "acestep" && !payload?.aceLightRetry && /ACE_NAN_LATENTS|ACE_NOISE_WALL|VRAM insuffisante|NaN or Inf latents|out of memory|mur de bruit/i.test(String(e?.message || ""))) {
       onProgress?.({ percent: 8, phase: "retry", model: "marcorez8/acestep-v15-xl-turbo-bf16", modelLabel: "XL Turbo BF16", message: /ACE_NOISE_WALL|mur de bruit/i.test(String(e?.message || "")) ? "SFT mur de bruit \u2014 relance en Turbo BF16\u2026" : "GPU sature / NaN \u2014 relance en Turbo BF16 (leger)\u2026" });
       return trackWithPoll({ ...payload, skipStyleReference: true, aceLightRetry: true, forceAceModelId: "marcorez8/acestep-v15-xl-turbo-bf16" }, onProgress, { ...opts, generationId: undefined, musicKind: undefined, draft: undefined });
