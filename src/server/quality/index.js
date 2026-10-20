@@ -9,11 +9,21 @@ import { scoreTake, buildQualityProfile, QA_RETRY_BELOW, qaMaxRetries, pickBestT
 
 export { analyzeTake, analyzeStyleQuick, scoreTake, buildQualityProfile, QA_RETRY_BELOW, qaMaxRetries, pickBestTake, qaRetryError, parseQaRetryError };
 
-/** Désactivable : SONOZZ_QA=off. Activé par défaut si ffmpeg est dans l'image. */
+/**
+ * Feature flag : OFF par défaut (incident prod 20/10 13:30 : « Erreur API 502 » à la génération).
+ * Activer avec SONOZZ_QA=on. Toute erreur / dépassement de temps → « QA ignorée », jamais bloquant.
+ */
+export function qualityFlagOn(env = process.env) {
+  return /^(1|on|true|yes)$/i.test(String(env?.SONOZZ_QA || "").trim());
+}
+
 export async function qualityCheckAvailable(env = process.env) {
-  if (/^(0|off|false|no)$/i.test(String(env?.SONOZZ_QA || "").trim())) return false;
+  if (!qualityFlagOn(env)) return false;
   return hasFfmpeg();
 }
+
+/** Au-delà : la prise est livrée sans QA (« QA ignorée »). */
+export const QA_JOB_TIMEOUT_MS = 90_000;
 
 // Une analyse à la fois (CPU borné) + cache des résultats par génération.
 let chain = Promise.resolve();
@@ -47,6 +57,9 @@ export function qualityJob(key, src, { profile = null, duo = false, requestedSec
       (r) => { j.done = true; j.result = r; },
       (e) => { j.done = true; j.result = { error: String(e?.message || e) }; },
     );
+  }
+  if (!j.done && Date.now() - j.at > QA_JOB_TIMEOUT_MS) {
+    return { pending: false, result: { error: "QA ignorée (délai dépassé)" } };
   }
   return j.done ? { pending: false, result: j.result } : { pending: true, sinceMs: Date.now() - j.at };
 }
