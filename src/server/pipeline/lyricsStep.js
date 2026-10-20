@@ -1,5 +1,7 @@
 import { withDuoPartner } from "../../lib/duoVocals.js";
 import { isStrictStyleFidelity } from "../../lib/styleFidelity.js";
+import { checkDuoLanguages, duoLanguageRepairNote } from "../../lib/lyricsLanguage.js";
+import { estimateLyricsTiming } from "../../lib/lyricsTiming.js";
 import {
   buildLyricsCraftBrief,
   detectLyricsForm,
@@ -237,6 +239,9 @@ JSON strict RFC 8259:
 Dans "text", apostrophes brutes — jamais \\'. Sauts de ligne = \\n uniquement.`;
 }
 
+/** En dessous : paroles trop courtes pour un morceau complet (≈ 2 min chantées). */
+const MIN_FULL_SONG_LYRICS_SEC = 110;
+
 export async function runLyrics({
   keys,
   theme,
@@ -305,6 +310,44 @@ export async function runLyrics({
     normalized = normalizeAndValidateLyrics(data, form);
   }
 
+  // Contrôles post-écriture (1 appel LLM de réparation, seulement si besoin) :
+  //  - duo bilingue : chaque chanteur dans SA langue (singer 1 = lead, singer 2 = feat) ;
+  //  - longueur : assez de paroles pour un morceau complet (sinon fin instrumentale vide).
+  const langCheckOf = (text) =>
+    langRules.bilingual ? checkDuoLanguages(text, { singer1Lang: langRules.leadLang, singer2Lang: langRules.featLang }) : { ok: true, checked: 0, violations: [] };
+  let langCheck = langCheckOf(normalized.text);
+  let timing = estimateLyricsTiming(normalized.text);
+  const tooShort = timing.estimatedSec < MIN_FULL_SONG_LYRICS_SEC;
+  let languageRepaired = false;
+  if (normalized._validation?.ok && (!langCheck.ok || tooShort)) {
+    const notes = [];
+    if (!langCheck.ok) notes.push(duoLanguageRepairNote(langCheck, { 1: artist?.name, 2: feat?.name }));
+    if (tooShort) {
+      notes.push(
+        `PAROLES TROP COURTES (~${timing.estimatedSec} s chantées estimées) : vise au moins ${MIN_FULL_SONG_LYRICS_SEC + 30} s — ajoute un couplet et un pont complets (4 lignes chacun), garde la structure.`,
+      );
+    }
+    try {
+      const d2 = await llmJson(keys, buildLyricsPrompt({ ...promptArgs, repairNote: notes.join(" ") }), { temperature: 0.8 });
+      const cand = normalizeAndValidateLyrics(d2, form);
+      const c2 = langCheckOf(cand.text);
+      const t2 = estimateLyricsTiming(cand.text);
+      const better =
+        cand._validation?.ok &&
+        c2.violations.length <= langCheck.violations.length &&
+        (c2.violations.length < langCheck.violations.length || t2.estimatedSec > timing.estimatedSec);
+      if (better) {
+        normalized = cand;
+        langCheck = c2;
+        timing = t2;
+        languageRepaired = true;
+      }
+    } catch (e) {
+      console.warn("[lyrics] language/length repair:", e.message);
+    }
+  }
+  if (!langCheck.ok) console.warn("[lyrics] duo language violations:", JSON.stringify(langCheck.violations));
+
   // Passe de réécriture : seulement si le texte a assez de défauts (1 appel LLM en plus).
   const polishMode = String(keys?.lyricsPolish || "auto").toLowerCase();
   const artistNames = [artist?.name, artist?.aka].filter(Boolean);
@@ -321,7 +364,7 @@ export async function runLyrics({
       );
       const candidate = normalizeAndValidateLyrics({ ...normalized, ...rewrite }, form);
       const next = analyze(candidate.text);
-      if (candidate._validation?.ok && next.score < defects.score) {
+      if (candidate._validation?.ok && next.score < defects.score && langCheckOf(candidate.text).violations.length <= langCheck.violations.length) {
         normalized = candidate;
         defects = next;
         polished = true;
@@ -363,6 +406,11 @@ export async function runLyrics({
       defects: defects.reasons,
       polished,
       strippedLines,
+      repaired: languageRepaired,
+      estimatedSungSec: timing.estimatedSec,
+      ...(langRules.bilingual
+        ? { languageCheck: { ok: langCheck.ok, checked: langCheck.checked, violations: langCheck.violations.slice(0, 6) } }
+        : {}),
     },
     language: lang,
     ...(langRules.bilingual ? { featLanguage: langRules.featLang } : {}),
