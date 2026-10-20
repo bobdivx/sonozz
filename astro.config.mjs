@@ -32,6 +32,8 @@ export default defineConfig({
 
   vite: {
     plugins: [tailwindcss()],
+    // module natif (contrôle qualité audio) : chargé depuis node_modules au runtime, jamais bundlé
+    ssr: { external: ['onnxruntime-node'] },
     build: {
       rollupOptions: {
         output: {
