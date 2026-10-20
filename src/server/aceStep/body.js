@@ -513,6 +513,11 @@ export function buildAceStepBody({
     body.referenceAudioUrl = refUrl;
     const refTitle = String(referenceAudioTitle || "").trim();
     if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
+    // Force explicite seulement (profil artiste) : 1.0 = meilleur compromis mesuré (rf2 Skarlvind).
+    const refStrength = Number(audioCoverStrength);
+    if (audioCoverStrength != null && Number.isFinite(refStrength)) {
+      body.audioCoverStrength = Math.min(1, Math.max(0.05, refStrength));
+    }
     body.instruction = isDuo
       ? "Obey [singer 1]/[singer 2]; follow the style caption; change instrument layers by section."
       : "Follow the style caption; change instrument layers by section (never same loop); sing lyrics clearly.";
