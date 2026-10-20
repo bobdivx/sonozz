@@ -1,4 +1,5 @@
 import { vocalTimbreStyleBit } from "../../lib/styleFidelity.js";
+import { fitDurationToLyrics } from "../../lib/lyricsTiming.js";
 import {
   aceStepInferenceForModel,
   ACE_SFT_GUIDANCE,
@@ -95,6 +96,16 @@ export function asciiFoldAceStyle(text) {
     .replace(/[^\x20-\x7E]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Une seule valeur de BPM : celle envoyée à ACE. Tout « NN BPM » de la caption est réaligné dessus
+ * (bug 20/10 : caption « 90 BPM » mais bpm 98 envoyé).
+ */
+export function syncCaptionBpm(caption, bpm) {
+  const s = String(caption || "");
+  if (!Number.isFinite(Number(bpm))) return s;
+  return s.replace(/\b\d{2,3}\s?BPM\b/gi, `${Math.round(Number(bpm))} BPM`);
 }
 
 /** Genre solo court — « Afro-trap Electro-Oriental » → « Afro-trap ». */
@@ -283,7 +294,13 @@ export function assembleAceStepStyle({
   const leadLock = vocalLockForArtist(lead);
 
   let styleFinal;
-  if (isDuo) {
+  // Recette auto (artiste de référence) : caption en tags courts déjà construite et validée
+  // (src/lib/aceCaption.js) → envoyée telle quelle (+ langue si pas anglais). Artistes sans recette : inchangé.
+  const recipeCaption = String(styleLock?.aceCaption || "").trim();
+  if (recipeCaption) {
+    const capLang = langCode === "en" && !duoLangs?.bilingual ? null : langBit;
+    styleFinal = [recipeCaption.replace(/[.\s]+$/, ""), capLang].filter(Boolean).join(". ").slice(0, ACE_STYLE_CAP);
+  } else if (isDuo) {
     const duoStyle = buildAceStepDuoStyle(lead || { name: "Lead" }, feat, {
       genreSummary: styleLock?.genreSummary || lead?.genre,
       mood: styleLock?.mood || lead?.mood,
@@ -419,11 +436,8 @@ export function buildAceStepBody({
   referenceMode = "cover",
 }) {
   const infer = aceStepInferenceForModel(modelId);
-  const duration = pickAceStepDurationSec({
-    preview,
-    durationSec,
-    sft: Boolean(infer && !infer.isTurbo),
-  });
+  const sft = Boolean(infer && !infer.isTurbo);
+  let duration = pickAceStepDurationSec({ preview, durationSec, sft });
   let refUrl = String(referenceAudioUrl || "").trim();
   if (isAceHostedAudioUrl(studioBase, refUrl)) refUrl = "";
 
@@ -444,6 +458,13 @@ export function buildAceStepBody({
     : lyricsRaw;
   if (isDuo) {
     lyricsClean = ensureAceStepDuoSingerTags(lyricsClean, lead || { name: "Lead" }, feat);
+  }
+  // Durée proportionnée aux paroles (morceau complet) : pas de longue fin vide.
+  let durationFit = null;
+  if (!preview) {
+    durationFit = fitDurationToLyrics(lyricsClean, { requestedSec: duration, min: 60, max: sft ? ACE_SFT_DURATION_MAX : 480 });
+    if (durationFit.durationSec) duration = durationFit.durationSec;
+    if (durationFit.adjusted) console.info("[ace-duration]", JSON.stringify({ duration, estimatedSec: durationFit.estimatedSec, requested: durationSec ?? null }));
   }
 
   const strengthNum = Number(audioCoverStrength);
@@ -469,10 +490,13 @@ export function buildAceStepBody({
     lyrics: lyricsClean,
   });
   const STYLE_CAP = ACE_STYLE_CAP;
-  const styleFinal = asciiFoldAceStyle(
-    String(styleOverride || assembled.style || "")
-      .trim()
-      .slice(0, STYLE_CAP),
+  const styleFinal = syncCaptionBpm(
+    asciiFoldAceStyle(
+      String(styleOverride || assembled.style || "")
+        .trim()
+        .slice(0, STYLE_CAP),
+    ),
+    bpmOut,
   );
   const langCode = assembled.langCode;
 
