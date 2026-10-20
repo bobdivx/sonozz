@@ -72,6 +72,13 @@ describe("référence de style par artiste", () => {
     assert.notEqual(body.taskType, "cover");
     assert.equal(body.audioCoverStrength, undefined);
     assert.equal(body.duration, 180);
+    const strong = buildAceStepBody({
+      title: "T", style: "dark folk", lyrics: "[Verse]\nx", language: "en", bpm: 90,
+      modelId: "acestep-v15-xl-turbo-bf16", referenceAudioUrl: "https://cdnt-preview.dzcdn.net/api/1/1/x.mp3",
+      referenceMode: "reference", audioCoverStrength: 1,
+    });
+    assert.equal(strong.audioCoverStrength, 1);
+    assert.equal(strong.sourceAudioUrl, undefined);
   });
 
   it("body ACE sans referenceMode : cover historique inchangé", () => {
