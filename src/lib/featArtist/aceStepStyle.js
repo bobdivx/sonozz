@@ -30,7 +30,7 @@ function shortGenre(raw, fallback = "hip hop") {
 function duoStudioGenre(raw, lock) {
   const blob = `${raw || ""} ${(Array.isArray(lock?.genres) ? lock.genres.join(" ") : "")} ${lock?.genreSummary || ""}`.toLowerCase();
   if (/viking|nordic|norse|fjord|scandinav|folk|metal|rock|dark/.test(blob)) {
-    return "dark folk metal, alternative rock";
+    return "dark folk metal, electronic";
   }
   const parts = [];
   if (/electro-?pop|electropop/.test(blob)) parts.push("electro-pop");
@@ -40,8 +40,12 @@ function duoStudioGenre(raw, lock) {
   return shortGenre(raw, "electro-pop");
 }
 
-/** Bed rock/metal mesuré le plus proche de Bob Dominator (tests r4). */
-const DUO_ROCK_BED = ["heavy distorted guitars", "war drums", "deep bass", "epic choir"];
+/**
+ * Bed « électro épique » (tests r10/r11, 7 graines) : garde le mot folk metal dans le genre
+ * (il ancre le grain de la voix d'homme) mais remplace les guitares par batterie, sub, taiko,
+ * cordes orientales et chœur, plus « no guitars ». Tag metal médian 0.012 (Bob 0.009, ancien bed 0.061).
+ */
+const DUO_ROCK_BED = ["heavy drums", "deep sub bass", "taiko war drums", "oriental strings", "epic choir"];
 
 /**
  * Timbre male Studio — vocabulaire rock (rauque/distordu) en tête.
@@ -200,7 +204,7 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
   const name1 = internalDuo ? String(lead?.duoMembers?.[0]?.name || a.name) : a.name;
   const name2 = internalDuo ? String(feat?.name || lead?.duoMembers?.[1]?.name || b.name) : b.name;
   if (internalDuo) {
-    // Format ACE Studio (tags courts) — tests r4 : dark folk metal + male rauque distordu.
+    // Format ACE Studio (tags courts) — tests r10/r11 : dark folk metal, electronic + male rauque, bed sans guitares.
     // Ordre : genre → male raspy → female → instruments → BPM (pas de noms / pas de pavé).
     const studioGenre = duoStudioGenre(
       a.genre || lock?.genreSummary || genreSummary || styleBase || leadGenre,
@@ -226,8 +230,9 @@ export function buildAceStepDuoStyle(lead, feat, { genreSummary, mood, styleLock
           : [];
     const instr = [...new Set([...genreBed, ...studioLockInstr, ...String(bed || "").split(/,\s*/)])]
       .map((x) => String(x || "").trim())
-      .filter((x) => x && !/^drums?$/i.test(x) && !/^pads?$/i.test(x) && !(rockLane && /dubstep|wobble/i.test(x)))
-      .slice(0, 4);
+      .filter((x) => x && !/^drums?$/i.test(x) && !/^pads?$/i.test(x) && !(rockLane && /dubstep|wobble|guitar/i.test(x)))
+      .slice(0, rockLane ? 5 : 4);
+    if (rockLane) instr.push("no guitars");
     const bpmRaw = Number(lock?.bpm || lead?.bpm || lead?.musicArrange?.bpm || 0);
     const bpmBit = bpmRaw >= 60 && bpmRaw <= 200 ? `${Math.round(bpmRaw)} BPM` : null;
     const parts = [
