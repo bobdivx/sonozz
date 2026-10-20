@@ -1,5 +1,6 @@
 import { json, error, readBody } from "../../server/http.js";
-import { runTrack, startTrack, pollTrack, cancelTrack } from "../../server/pipeline.js";
+import { runTrack } from "../../server/pipeline.js";
+import { startTrackAsync, pollTrackAsync, cancelTrackAsync } from "../../server/pipeline/trackJobs.js";
 import {
   cancelSongGenModelDownload,
   deleteSongGenModel,
@@ -337,13 +338,13 @@ export async function POST({ request, cookies }) {
 
     if (action === "poll") {
       if (!body?.generationId) return error("generationId manquant", 400);
-      const data = await pollTrack(body);
+      const data = await pollTrackAsync(body, { owner: getSessionFromCookies(cookies)?.email || null });
       return json(data);
     }
 
     if (action === "cancel") {
       if (!body?.generationId) return error("generationId manquant", 400);
-      const data = await cancelTrack(body);
+      const data = await cancelTrackAsync(body, { owner: getSessionFromCookies(cookies)?.email || null });
       return json({ ok: true, ...data });
     }
 
@@ -355,7 +356,8 @@ export async function POST({ request, cookies }) {
 
     // start (défaut) et toute autre action de génération
     const bill = await chargeTrackIfNeeded(cookies, body);
-    const data = await startTrack(body);
+    // Jamais synchrone : réponse ≤ 8 s, la suite tourne en job (poll). Cf. incident 499/502.
+    const data = await startTrackAsync(body, { owner: bill.session?.email || null });
     return json({ ...data, credits: bill.credits });
   } catch (e) {
     const action = String(body?.action || "start").trim();
