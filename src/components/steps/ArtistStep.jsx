@@ -30,6 +30,7 @@ import {
 import { loadKeys } from "../../lib/keys.js";
 import StyleArtistPicker from "../StyleArtistPicker.jsx";
 import StyleTrackPicker from "../StyleTrackPicker.jsx";
+import StyleReferencePanel from "../StyleReferencePanel.jsx";
 import ArtistNameField, { isArtistNameBlocked } from "../ArtistNameField.jsx";
 import PhotoUpload from "../PhotoUpload.jsx";
 import VoiceSampleUpload from "../VoiceSampleUpload.jsx";
@@ -1456,6 +1457,9 @@ export default function ArtistStep({ artist, trends, loading, onGenerate, onSave
               )}
               {!dnaStale && artist.styleLock?.production && (
                 <p class="text-xs text-base-content/45">{artist.styleLock.production}</p>
+              )}
+              {!dnaStale && artist.styleLock && (
+                <StyleReferencePanel artist={artist} onPatchArtist={onPatchArtist} disabled={loading} />
               )}
 
               {vi && (
