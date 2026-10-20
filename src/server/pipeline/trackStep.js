@@ -37,7 +37,7 @@ import {
 import { isStudioEnabled } from "../../lib/keys.js";
 import { resolveArtistStyleReference } from "../aceStep/artistStyleRef.js";
 import { resolveTrackBpm } from "../../lib/trackBpm.js";
-import { referenceQualityProfile } from "../styleReference/referenceProfile.js";
+import { referenceQualityProfile, peekReferenceQualityProfile } from "../styleReference/referenceProfile.js";
 import {
   qualityCheckAvailable,
   qualityJob,
@@ -418,8 +418,10 @@ export async function startTrack({ keys, lyrics, artist: artistIn, preview = fal
     // du lancement ACE, cache mémoire, aucune écriture base).
     const storedProfile =
       styleLock?.qualityProfile && typeof styleLock.qualityProfile === "object" && !skipStyleReference ? styleLock.qualityProfile : null;
-    const profileP =
-      !storedProfile && styleRef?.url ? referenceQualityProfile(styleRef, { duo: Boolean(feat?.name) }).catch(() => null) : null;
+    // Jamais attendu dans la requête HTTP : calcul en tâche de fond (si QA activée), lu au polling.
+    if (!storedProfile && styleRef?.url && (await qualityCheckAvailable())) {
+      void referenceQualityProfile(styleRef, { duo: Boolean(feat?.name) }).catch(() => null);
+    }
 
     const started = await startAceStep(keys, {
       prompt,
@@ -464,7 +466,8 @@ export async function startTrack({ keys, lyrics, artist: artistIn, preview = fal
         qaBest: qaBest && typeof qaBest === "object" && qaBest.url ? qaBest : null,
         qaDuo: Boolean(feat?.name),
         qaLeadGender: artist?.gender === "male" || artist?.gender === "female" ? artist.gender : null,
-        qaProfile: storedProfile || (profileP ? await profileP : null),
+        qaProfile: storedProfile,
+        qaRef: !storedProfile && styleRef ? { deezerTrackId: styleRef.deezerTrackId || null, title: styleRef.title || null } : null,
         qaRequestedSec: Number(started.aceGen?.duration || started.aceGen?.durationSec) || null,
         isInternalDuo: Boolean(artist?.duo && feat?.name),
         language: lang,
@@ -637,7 +640,9 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
   if (kind === "acestep" && tick.url && (await qualityCheckAvailable())) {
     const retry = Math.max(0, Number(base.qaRetry ?? base.voiceRetry) || 0);
     const job = qualityJob(`${generationId}:${tick.url}`, tick.url, {
-      profile: base.qaProfile || null,
+      profile:
+        base.qaProfile ||
+        (base.qaRef ? peekReferenceQualityProfile(base.qaRef, { duo: Boolean(base.qaDuo ?? base.isInternalDuo) }) : null),
       duo: Boolean(base.qaDuo ?? base.isInternalDuo),
       requestedSec: isPreview ? null : base.qaRequestedSec || null,
       expectVocals: tick.hasVocals !== false,
