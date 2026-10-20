@@ -236,3 +236,11 @@ describe("caption ACE automatique (règles v3/v4)", () => {
   });
 });
 
+
+it("QA intégrée : OFF par défaut (incident 502), ON seulement avec SONOZZ_QA=on", async () => {
+  const { qualityFlagOn, qualityCheckAvailable } = await import("../src/server/quality/index.js");
+  assert.equal(qualityFlagOn({}), false);
+  assert.equal(await qualityCheckAvailable({}), false);
+  assert.equal(qualityFlagOn({ SONOZZ_QA: "on" }), true);
+  assert.equal(qualityFlagOn({ SONOZZ_QA: "off" }), false);
+});
