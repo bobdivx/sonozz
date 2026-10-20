@@ -75,6 +75,8 @@ export async function startAceStep(keys, {
   styleLock,
   artist = null,
   audioCoverStrength,
+  /** "cover" | "reference" — cf. buildAceStepBody. */
+  referenceMode = "cover",
   forceModelId = null,
   /** Lab : style/lyrics bruts, sans compose duo / DNA artiste. */
   labMode = false,
@@ -436,6 +438,7 @@ export async function startAceStep(keys, {
       referenceAudioUrl: refUrl,
       referenceAudioTitle,
       audioCoverStrength,
+      referenceMode,
       studioBase: base,
       styleLock,
       artist,
