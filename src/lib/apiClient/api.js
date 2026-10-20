@@ -1,5 +1,5 @@
 import { loadKeys } from "../keys/storage.js";
-import { request } from "./core.js";
+import { request, requestJob } from "./core.js";
 import { trackWithPoll } from "./trackPoll.js";
 
 export const api = {
@@ -46,7 +46,7 @@ export const api = {
       slug: opts.slug,
       gender: opts.gender,
     }),
-  lyrics: (payload) => request("/api/lyrics", payload),
+  lyrics: (payload) => requestJob("/api/lyrics", payload),
   track: (payload, onProgress, opts) => trackWithPoll(payload, onProgress, opts),
   /** Planifie les themes des pistes restantes d'un album (hors lead). */
   albumPlan: (payload) => request("/api/album", { action: "plan", ...payload }),
