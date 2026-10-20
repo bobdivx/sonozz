@@ -112,6 +112,9 @@ export function profileRichness(artist = {}) {
   return score;
 }
 
+/** styleLock : champs posés sur le hub artiste, absents des anciens projets. */
+export const STYLE_LOCK_HUB_FIELDS = ["styleReference", "aceCaption", "aceCaptionMeta", "qualityProfile", "aceRecipe", "catalogGenres"];
+
 export function mergeArtistProfile(prev = {}, incoming = {}) {
   const profile = omitUndefined(incoming);
   const photos = applyArtistPhotoPatch(prev, incoming);
@@ -137,6 +140,15 @@ export function mergeArtistProfile(prev = {}, incoming = {}) {
     merged.genres = prev.genres;
   }
   if (!merged.styleLock && prev.styleLock) merged.styleLock = prev.styleLock;
+  // Champs « recette » du hub (référence audio, caption ACE, profil qualité) : un styleLock plus
+  // ancien venant d'un projet ne doit JAMAIS les effacer (bug : référence Mantra perdue au « nouveau single »).
+  if (merged.styleLock && prev.styleLock && merged.styleLock !== prev.styleLock) {
+    const keep = {};
+    for (const k of STYLE_LOCK_HUB_FIELDS) {
+      if (merged.styleLock[k] === undefined && prev.styleLock[k] !== undefined) keep[k] = prev.styleLock[k];
+    }
+    if (Object.keys(keep).length) merged.styleLock = { ...merged.styleLock, ...keep };
+  }
   if (!merged.styleArtist && prev.styleArtist) merged.styleArtist = prev.styleArtist;
   if (
     !(Array.isArray(merged.styleArtists) && merged.styleArtists.length) &&
