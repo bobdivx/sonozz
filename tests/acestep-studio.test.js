@@ -33,6 +33,11 @@ import {
 } from "../src/server/aceStep.js";
 import { isStudioEnabled, keysAfterStudioToggle } from "../src/lib/keys.js";
 
+// Paroles d'un morceau complet (~4 min chantées) : la durée est désormais ajustée aux paroles.
+const FULL_SONG_LYRICS = ["[Verse 1]", "[Chorus]", "[Verse 2]", "[Chorus]", "[Bridge]", "[Verse 3]", "[Chorus]", "[Outro]"]
+  .map((tag) => [tag, ...Array.from({ length: 6 }, (_, i) => `we sing this line number ${i + 1} out loud tonight`)].join("\n"))
+  .join("\n\n");
+
 describe("ACE-Step Studio client", () => {
   it("aligne steps/CFG sur le DiT chargé (pas SFT sur Turbo)", () => {
     assert.equal(aceStepDitSame("acestep-v15-xl-sft", "org/acestep-v15-xl-sft"), true);
@@ -223,7 +228,7 @@ describe("ACE-Step Studio client", () => {
     const sft = buildAceStepBody({
       title: "Test",
       style: "pop",
-      lyrics: "hello",
+      lyrics: FULL_SONG_LYRICS,
       language: "en",
       modelId: "acestep-v15-xl-sft",
       preview: false,
@@ -242,7 +247,7 @@ describe("ACE-Step Studio client", () => {
     const fixed = buildAceStepBody({
       title: "Test",
       style: "pop",
-      lyrics: "hello",
+      lyrics: FULL_SONG_LYRICS,
       language: "en",
       modelId: "acestep-v15-xl-sft",
       durationSec: 200,
