@@ -1,3 +1,4 @@
+// Régression 20/10 : « Station Essence Minuit » généré sans la référence Mantra (styleLock du hub écrasé).
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { serializeStyleLock } from "../src/server/pipeline/util.js";
