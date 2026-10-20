@@ -7,10 +7,19 @@ const CACHE = new Map();
 const MAX = 50;
 const TIMEOUT_MS = 45000;
 
+const keyOf = (styleRef, duo) =>
+  `${styleRef?.deezerTrackId || styleRef?.title || String(styleRef?.url || "").split("?")[0]}|${duo ? "duo" : "solo"}`;
+
+/** Lecture seule du cache (jamais d'analyse) — utilisée pendant le polling. */
+export function peekReferenceQualityProfile(styleRef, { duo = false } = {}) {
+  if (!styleRef) return null;
+  return CACHE.get(keyOf(styleRef, duo)) || null;
+}
+
 export async function referenceQualityProfile(styleRef, { duo = false, fetchImpl } = {}) {
   const url = String(styleRef?.url || "");
   if (!/^https?:\/\//i.test(url)) return null;
-  const key = `${styleRef?.deezerTrackId || styleRef?.title || url.split("?")[0]}|${duo ? "duo" : "solo"}`;
+  const key = keyOf(styleRef, duo);
   if (CACHE.has(key)) return CACHE.get(key);
   let q;
   try {
