@@ -134,7 +134,7 @@ export async function trackWithPoll(payload = {}, onProgress, opts = {}) {
       let tick;
       for (let attempt = 0; attempt < 3; attempt++) {
         try { tick = await request("/api/track", { action: "poll", generationId: started.generationId, musicKind: started.musicKind, draft: started.draft }, { signal }); break; }
-        catch (e) { if (e?.name === "AbortError") throw e; const msg = String(e?.message || ""); const transient = /404|pas encore|injoignable|timeout|ECONNRESET|fetch failed|HTTP 5\d\d/i.test(msg); if (!transient || attempt === 2) throw e; await sleep(1500, signal); }
+        catch (e) { if (e?.name === "AbortError") throw e; const msg = String(e?.message || ""); const transient = /404|pas encore|injoignable|timeout|ECONNRESET|fetch failed|HTTP 5\d\d|Erreur API (499|5\d\d)/i.test(msg); if (!transient || attempt === 2) throw e; await sleep(1500, signal); }
       }
       if (tick?.done && tick.track) { onProgress?.({ percent: 100, phase: "done", model: startedModel, musicKind: started.musicKind, message: isPreview || tick.track.isPreview ? "Extrait pret" : "Audio pret" }); return tick.track; }
       onProgress?.(formatTrackProgress({ ...tick, musicKind: started.musicKind, model: tick?.model || startedModel, gpu: tick?.gpu || startedGpu, phase: "generating" }));
