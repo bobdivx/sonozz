@@ -6,15 +6,6 @@ import {
   resolveArtistStyleReference,
   isDirectStyleRefHostOk,
 } from "../src/server/aceStep/artistStyleRef.js";
-import {
-  voiceCheckEndpoint,
-  measureMaleVoice,
-  voiceCheckVerdict,
-  pickRougherTake,
-  voiceCleanError,
-  parseVoiceCleanError,
-  VOICE_CHECK_HNR_MAX_DB,
-} from "../src/server/aceStep/voiceCheck.js";
 
 const artist = {
   name: "Skarlvind",
@@ -58,7 +49,9 @@ describe("référence de style par artiste", () => {
     const body = buildAceStepBody({
       title: "T",
       style: "dark folk metal, electronic",
-      lyrics: "[Verse]\nAshes fall",
+      lyrics: ["[Verse]", "[Chorus]", "[Verse]", "[Chorus]", "[Bridge]", "[Chorus]"]
+        .map((t) => `${t}\n${"Ashes fall upon the frozen shore tonight\n".repeat(6)}`)
+        .join("\n"),
       language: "en",
       bpm: 90,
       modelId: "acestep-v15-xl-turbo-bf16",
@@ -91,36 +84,5 @@ describe("référence de style par artiste", () => {
   });
 });
 
-describe("vérification de la voix d'homme (duo)", () => {
-  it("inactive sans SONOZZ_VOICE_CHECK_URL", async () => {
-    assert.equal(voiceCheckEndpoint({}, {}), "");
-    assert.equal(await measureMaleVoice({}, "https://a/b.mp3", { env: {} }), null);
-    assert.equal(voiceCheckEndpoint({}, { SONOZZ_VOICE_CHECK_URL: "http://gpu:8765/" }), "http://gpu:8765");
-  });
-
-  it("appelle le worker et lit maleHnr", async () => {
-    let sent;
-    const fetchImpl = async (u, o) => { sent = { u, body: JSON.parse(o.body) }; return { ok: true, json: async () => ({ maleHnr: 12.34, maleSeconds: 9 }) }; };
-    const m = await measureMaleVoice({}, "https://ace/x.mp3", { fetchImpl, env: { SONOZZ_VOICE_CHECK_URL: "http://gpu:8765" } });
-    assert.equal(sent.u, "http://gpu:8765/check");
-    assert.equal(sent.body.audioUrl, "https://ace/x.mp3");
-    assert.equal(m.maleHnr, 12.3);
-  });
-
-  it("verdict : > 12 dB (échelle worker) = propre, peu de voix d'homme = inconnu", () => {
-    assert.equal(VOICE_CHECK_HNR_MAX_DB, 12);
-    assert.equal(voiceCheckVerdict({ maleHnr: 13, maleSeconds: 9 }), "clean");
-    assert.equal(voiceCheckVerdict({ maleHnr: 7, maleSeconds: 9 }), "rough");
-    assert.equal(voiceCheckVerdict({ maleHnr: 13, maleSeconds: 1 }), "unknown");
-    assert.equal(voiceCheckVerdict(null), "unknown");
-  });
-
-  it("garde la prise la plus rauque et la transporte dans l'erreur de relance", () => {
-    const best = pickRougherTake({ url: "https://a/1.mp3", hnr: 11.5 }, { url: "https://a/2.mp3", hnr: 14 });
-    assert.equal(best.url, "https://a/1.mp3");
-    const err = voiceCleanError(1, best);
-    assert.match(err.message, /ACE_VOICE_CLEAN/);
-    assert.deepEqual(parseVoiceCleanError(err.message).best, { url: "https://a/1.mp3", hnr: 11.5 });
-    assert.equal(parseVoiceCleanError("autre erreur"), null);
-  });
-});
+// L'ancien worker Python externe (tools/voice-check) est remplacé par le contrôle qualité intégré :
+// voir tests/quality-recipe.test.js.
