@@ -8,6 +8,7 @@ import { adaptVocalTextToGender } from "../../lib/artistGender.js";
 import { llmJson, requireTextLlm } from "../llm.js";
 import { buildCloneSoundPatch, styleLockFromSourceProfile } from "../../lib/styleFidelity.js";
 import { applyDuoToProfile } from "../../lib/duoVocals.js";
+import { buildAceRecipe, applyAceRecipe } from "../styleReference/aceRecipe.js";
 import {
   FREE_NAME_PER_ROUND,
   formatNameCollisions,
@@ -546,6 +547,29 @@ JSON strict: { "names": [string, string, string, string], "name": string, "aka":
 
   if (duoRef) {
     profile = applyDuoToProfile(profile, { duoVocals: duoRef, members: data.duoMembers });
+  }
+
+  // Recette ACE auto (comme Skarlvind v4) dès qu'il y a un artiste de référence : titre représentatif,
+  // caption en tags courts, profil qualité cible. Clone : la recette de la source est gardée telle quelle.
+  if (profile.styleLock && !cloneProfile) {
+    try {
+      const recipe = await buildAceRecipe({
+        styleLock: profile.styleLock,
+        duo: Boolean(profile.duo || duoRef),
+        leadGender: profile.gender || null,
+        names: [
+          profile.name,
+          profile.aka,
+          ...(Array.isArray(profile.vocalProfiles) ? profile.vocalProfiles.map((v) => v?.name) : []),
+          ...(Array.isArray(data.duoMembers) ? data.duoMembers.map((m) => m?.name) : []),
+        ].filter(Boolean),
+        keys,
+        reference: "auto",
+      });
+      profile.styleLock = applyAceRecipe(profile.styleLock, recipe);
+    } catch (e) {
+      console.warn("[ace-recipe] ignorée:", e?.message || e);
+    }
   }
 
   // Timbre figé dès la création IA — sans obliger l’utilisateur à enregistrer sa voix.
