@@ -234,3 +234,20 @@ describe("duo : régression Salt on the Rails", () => {
     assert.doesNotMatch(style, /folk metal|distorted guitars/i);
   });
 });
+
+describe("répliques duo « (…) » (prod 20/10 Ghost of the Jetty : voix d'homme supprimée)", () => {
+  it("garde les répliques courtes, les donne à l'autre voix et rétablit la voix courante", async () => {
+    const { prepareAceStepLyrics, ensureAceStepDuoSingerTags, assignDuoRetorts, normalizeFeatArtist, isDuoRetortLine } = await import("../src/lib/featArtist.js");
+    const lead = { name: "Skarlvind", gender: "female", duo: true, duoInteraction: { chorus: "female" } };
+    const feat = normalizeFeatArtist({ name: "Torvik Hale", gender: "male" });
+    const raw = "[Verse - female vocal]\nOld planks smell wet\n(Never the same!)\nDad's toolbox\n\n[Bridge]\nThis harbor\n(Long since rotten!)\n(Sound of waves crashing on the shore)";
+    let t = prepareAceStepLyrics(raw, lead, feat);
+    t = assignDuoRetorts(ensureAceStepDuoSingerTags(t, lead, feat));
+    assert.match(t, /Old planks smell wet\n\[singer 2: male\]\nNever the same!\n\[singer 1: female\]\nDad's toolbox/);
+    assert.match(t, /\[singer 2: male\]\nThis harbor\n\[singer 1: female\]\nLong since rotten!/);
+    assert.ok(!/Sound of waves/.test(t));
+    assert.equal(isDuoRetortLine("(Skarlvind)"), true); // nom seul : traité comme cue avant (prepare)
+    assert.equal(isDuoRetortLine("(beat drops)"), false);
+    assert.equal(isDuoRetortLine("(a very long stage direction about the whole band playing)"), false);
+  });
+});
