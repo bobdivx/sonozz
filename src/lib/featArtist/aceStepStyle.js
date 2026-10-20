@@ -54,7 +54,8 @@ const DUO_ROCK_BED = ["heavy drums", "deep sub bass", "taiko war drums", "orient
 function duoStudioMalePhrase(profile, lockArtist) {
   const blob = [profile?.range, lockArtist?.timbreHint].filter(Boolean).join(" ").toLowerCase();
   const range = /baritone|bass\b/.test(blob) && !/high/.test(blob) ? "baritone" : "tenor";
-  return `high-pitched raspy male ${range}, distorted shouted vocals, gravelly belting`;
+  // Registre en TÊTE (prod 20/10 : voix d'homme sortie grave, F0 128 Hz) puis le grain.
+  return `high-pitched male ${range}, raspy distorted shouted vocals, gravelly belting`;
 }
 
 /** Timbre female Studio — « powerful husky » (testé r4 avec la voix d'homme rauque). */
