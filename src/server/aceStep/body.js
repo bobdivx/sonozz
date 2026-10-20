@@ -26,6 +26,7 @@ import {
   normalizeFeatArtist,
   prepareAceStepLyrics,
   ensureAceStepDuoSingerTags,
+  assignDuoRetorts,
   buildAceStepDuoStyle,
   vocalLockForArtist,
   resolveDuoLanguages,
@@ -458,6 +459,7 @@ export function buildAceStepBody({
     : lyricsRaw;
   if (isDuo) {
     lyricsClean = ensureAceStepDuoSingerTags(lyricsClean, lead || { name: "Lead" }, feat);
+    lyricsClean = assignDuoRetorts(lyricsClean);
   }
   // Durée proportionnée aux paroles (morceau complet) : pas de longue fin vide.
   let durationFit = null;
