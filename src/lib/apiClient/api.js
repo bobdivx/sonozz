@@ -250,6 +250,8 @@ export const api = {
   },
   saveKeysRemote: (keys) => request("/api/keys", { keys }),
   searchStyleArtists: (query) => request("/api/style-artists", { query }),
+  /** Référence de style auto / changement / désactivation (patch styleLock, rien n'est écrit en base). */
+  artistStyleRef: (payload) => request("/api/artist-style-ref", payload),
   searchStyleTracks: (query) => request("/api/style-tracks", { query }),
   artistTopTracks: (artistPick) =>
     request("/api/style-tracks", { action: "top-for-artist", artistPick }),
