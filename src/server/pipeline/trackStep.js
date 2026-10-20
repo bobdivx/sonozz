@@ -36,14 +36,17 @@ import {
 } from "../../lib/musicLane.js";
 import { isStudioEnabled } from "../../lib/keys.js";
 import { resolveArtistStyleReference } from "../aceStep/artistStyleRef.js";
+import { resolveTrackBpm } from "../../lib/trackBpm.js";
+import { referenceQualityProfile } from "../styleReference/referenceProfile.js";
 import {
-  measureMaleVoice,
-  voiceCheckVerdict,
-  voiceCheckEndpoint,
-  pickRougherTake,
-  voiceCleanError,
-  VOICE_CHECK_MAX_RETRIES,
-} from "../aceStep/voiceCheck.js";
+  qualityCheckAvailable,
+  qualityJob,
+  forgetQualityJob,
+  qualitySummary,
+  pickBestTake,
+  qaRetryError,
+  qaMaxRetries,
+} from "../quality/index.js";
 import {
   normalizeFeatArtist,
   duoVocalPromptBits,
@@ -289,7 +292,10 @@ function assembleTrackResult({
  * Démarre la gen audio sans bloquer (évite Cloudflare 524 / proxy ~100s).
  * Le client poll via pollTrack.
  */
-export async function startTrack({ keys, lyrics, artist: artistIn, preview = false, skipStyleReference = false, forceAceModelId = null, voiceRetry = 0, voiceBest = null }) {
+export async function startTrack({ keys, lyrics, artist: artistIn, preview = false, skipStyleReference = false, forceAceModelId = null, qaRetry = 0, qaBest = null, voiceRetry = 0, voiceBest = null }) {
+  // compat : anciens clients (voiceRetry / voiceBest)
+  if (!qaRetry && voiceRetry) qaRetry = voiceRetry;
+  if (!qaBest && voiceBest) qaBest = voiceBest;
   // Duo : toujours les deux voix (sauf feat explicite choisi par l'utilisateur).
   let artist = withDuoPartner(artistIn);
   const resolvedGender = resolveArtistGender(artist);
@@ -372,11 +378,12 @@ export async function startTrack({ keys, lyrics, artist: artistIn, preview = fal
     lyrics,
     artist,
   });
-  const lockBpm = Number(arrangeBpm ?? styleLock?.bpm);
-  const bpmGuess =
-    Number.isFinite(lockBpm) && lockBpm >= 60 && lockBpm <= 200
-      ? Math.round(lockBpm)
-      : defaultBpmForGenre(styleLockGenreBlob(styleLock, [artist?.genre]));
+  // BPM : UNE source de vérité (profil artiste → tempo mesuré de la référence → arrangement → genre).
+  const bpmGuess = resolveTrackBpm({
+    styleLock,
+    arrangeBpm,
+    fallback: () => defaultBpmForGenre(styleLockGenreBlob(styleLock, [artist?.genre])),
+  });
   const draft = assembleTrackResult({
     lyrics,
     artist,
@@ -406,6 +413,13 @@ export async function startTrack({ keys, lyrics, artist: artistIn, preview = fal
         return null;
       });
     }
+
+    // Profil qualité cible : celui de la recette, sinon mesuré sur l'extrait de référence (en parallèle
+    // du lancement ACE, cache mémoire, aucune écriture base).
+    const storedProfile =
+      styleLock?.qualityProfile && typeof styleLock.qualityProfile === "object" && !skipStyleReference ? styleLock.qualityProfile : null;
+    const profileP =
+      !storedProfile && styleRef?.url ? referenceQualityProfile(styleRef, { duo: Boolean(feat?.name) }).catch(() => null) : null;
 
     const started = await startAceStep(keys, {
       prompt,
@@ -445,9 +459,13 @@ export async function startTrack({ keys, lyrics, artist: artistIn, preview = fal
         pickReason: started.pickReason || null,
         usedReference: Boolean(started.usedReference),
         styleReferenceTitle: started.usedReference ? styleRef?.title || null : null,
-        // Vérif. voix d'homme (duo interne) : n° de relance + meilleure prise précédente.
-        voiceRetry: Math.max(0, Number(voiceRetry) || 0),
-        voiceBest: voiceBest && typeof voiceBest === "object" && voiceBest.url ? voiceBest : null,
+        // Contrôle qualité intégré : n° de relance, meilleure prise précédente, profil cible.
+        qaRetry: Math.max(0, Number(qaRetry) || 0),
+        qaBest: qaBest && typeof qaBest === "object" && qaBest.url ? qaBest : null,
+        qaDuo: Boolean(feat?.name),
+        qaLeadGender: artist?.gender === "male" || artist?.gender === "female" ? artist.gender : null,
+        qaProfile: storedProfile || (profileP ? await profileP : null),
+        qaRequestedSec: Number(started.aceGen?.duration || started.aceGen?.durationSec) || null,
         isInternalDuo: Boolean(artist?.duo && feat?.name),
         language: lang,
         isPreview,
@@ -613,22 +631,43 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
     }
   }
 
-  // Duo interne : voix d'homme trop propre -> nouvelle graine (max 2), puis la plus rauque.
+  // Contrôle qualité intégré (voix / style / défauts vs profil cible) → relance graine si score bas.
   let finalUrl = tick.url;
-  let voiceCheck = null;
-  if (kind === "acestep" && base.isInternalDuo && tick.url && voiceCheckEndpoint(keys)) {
-    const m = await measureMaleVoice(keys, tick.url);
-    const verdict = voiceCheckVerdict(m);
-    const take = { url: tick.url, hnr: m?.maleHnr ?? null };
-    const retry = Math.max(0, Number(base.voiceRetry) || 0);
-    voiceCheck = { maleHnr: take.hnr, maleSeconds: m?.maleSeconds ?? 0, verdict, retry };
-    console.info("[voice-check]", JSON.stringify(voiceCheck));
-    if (verdict === "clean") {
-      const best = pickRougherTake(base.voiceBest, take);
-      if (retry < VOICE_CHECK_MAX_RETRIES) throw voiceCleanError(retry + 1, best);
+  let qualityCheck = null;
+  if (kind === "acestep" && tick.url && (await qualityCheckAvailable())) {
+    const retry = Math.max(0, Number(base.qaRetry ?? base.voiceRetry) || 0);
+    const job = qualityJob(`${generationId}:${tick.url}`, tick.url, {
+      profile: base.qaProfile || null,
+      duo: Boolean(base.qaDuo ?? base.isInternalDuo),
+      requestedSec: isPreview ? null : base.qaRequestedSec || null,
+      expectVocals: tick.hasVocals !== false,
+      leadGender: base.qaLeadGender || null,
+    });
+    if (job.pending) {
+      return {
+        done: false,
+        status: "running",
+        progress: 99,
+        message: "Contrôle qualité de la prise…",
+        stage: "quality-check",
+        elapsedSeconds: Math.round((job.sinceMs || 0) / 1000),
+        estimatedSeconds: 20,
+        generationId,
+        musicKind: kind,
+      };
+    }
+    forgetQualityJob(`${generationId}:${tick.url}`);
+    qualityCheck = qualitySummary(job.result, { retry });
+    console.info("[quality]", JSON.stringify({ score: qualityCheck.score, status: qualityCheck.status, defects: qualityCheck.defects, retry, ms: qualityCheck.measures?.ms }));
+    if (qualityCheck.score != null) {
+      const take = { url: tick.url, score: qualityCheck.score };
+      const best = pickBestTake(base.qaBest || base.voiceBest, take);
+      if (qualityCheck.status === "low" && retry < qaMaxRetries({ preview: isPreview })) {
+        throw qaRetryError(retry + 1, best, qualityCheck.score);
+      }
       if (best?.url && best.url !== tick.url) {
         finalUrl = best.url;
-        voiceCheck = { ...voiceCheck, keptPrevious: true, maleHnr: best.hnr };
+        qualityCheck = { ...qualityCheck, keptPrevious: true, keptScore: best.score };
       }
     }
   }
@@ -656,7 +695,7 @@ export async function pollTrack({ keys, generationId, musicKind, draft }) {
           ? "Chanson générée via SongGeneration Studio (LeVo local)."
           : "Chanson générée via MiniMax Music 2.6 (voix + paroles).",
     warning: undefined,
-    voiceCheck: voiceCheck || undefined,
+    qualityCheck: qualityCheck || undefined,
   };
   return { done: true, track, generationId, musicKind: kind };
 }
