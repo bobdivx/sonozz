@@ -295,6 +295,13 @@ export function serializeStyleLock(styleLock) {
     clonedFrom: styleLock.clonedFrom || undefined,
     duoVocals: styleLock.duoVocals || undefined,
     previewUrl: styleLock.previewUrl || styleLock.seedTrack?.previewUrl || undefined,
+    // Recette ACE auto (artiste de référence) : titre de référence, caption, profil qualité cible.
+    styleReference: styleLock.styleReference || undefined,
+    aceCaption: styleLock.aceCaption || undefined,
+    aceCaptionMeta: styleLock.aceCaptionMeta || undefined,
+    qualityProfile: styleLock.qualityProfile || undefined,
+    aceRecipe: styleLock.aceRecipe || undefined,
+    catalogGenres: Array.isArray(styleLock.catalogGenres) ? styleLock.catalogGenres.slice(0, 8) : undefined,
     seedTrack: styleLock.seedTrack
       ? {
           title: styleLock.seedTrack.title,
