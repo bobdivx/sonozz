@@ -5,6 +5,82 @@ import { vocalLockForArtist, contrastSameSexVocalHints, isGospelFeatLock } from 
  * `[singer 1: male]` / `[singer 2: female]` (format recommandé upstream).
  * Évite que le modèle chante les noms d’artistes.
  */
+/** Ligne entre parenthèses courte (≤ 6 mots) = réplique / ad-lib chanté, pas une mise en scène. */
+const RETORT_STAGE_RE = /\b(sound|sfx|fx|music|instrumental|beat|silence|fade|static|pause|whisper(?:ed|s)?|spoken|laugh(?:s|ing)?|breath(?:es|ing)?|echo(?:es)?|intro|outro|drop|guitar|drums?|synth|piano|choir|bruit|musique|silence|rire|souffle|chuchot\w*)\b/i;
+export function isDuoRetortLine(line) {
+  const m = String(line || "").trim().match(/^\((.+)\)$/);
+  if (!m) return false;
+  const inner = m[1].trim();
+  if (!inner || inner.length > 40) return false;
+  if (inner.split(/\s+/).length > 6) return false;
+  if (RETORT_STAGE_RE.test(inner)) return false;
+  return /\p{L}/u.test(inner);
+}
+
+/**
+ * Duo : les répliques « (…) » (2–4 mots criés) vont à l'AUTRE voix que la ligne précédente,
+ * sans parenthèses (sinon ACE en fait un chœur de fond, ou elles étaient supprimées : prod 20/10
+ * « Ghost of the Jetty » — voix d'homme quasi absente). La voix courante est rétablie ensuite.
+ * À appliquer APRÈS ensureAceStepDuoSingerTags.
+ */
+export function assignDuoRetorts(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const singerRe = /^\[singer\s*(\d+)\s*:[^\]]*\]\s*$/i;
+  const structRe = /^\[[^\]]+\]\s*$/;
+  const tags = {};
+  for (const l of lines) {
+    const m = l.trim().match(singerRe);
+    if (m && !tags[m[1]]) tags[m[1]] = l.trim();
+  }
+  if (!tags["1"] || !tags["2"]) return String(text || "");
+  const out = [];
+  let current = null;
+  let restore = null;
+  let prevWasTag = false;
+  for (const line of lines) {
+    const t = line.trim();
+    const sm = t.match(singerRe);
+    if (sm) {
+      current = sm[1];
+      restore = null;
+      prevWasTag = true;
+      out.push(line);
+      continue;
+    }
+    if (structRe.test(t)) {
+      restore = null;
+      prevWasTag = false;
+      out.push(line);
+      continue;
+    }
+    if (!t) {
+      out.push(line);
+      continue;
+    }
+    if (isDuoRetortLine(t)) {
+      const words = t.slice(1, -1).trim();
+      if (prevWasTag || !current) {
+        out.push(words);
+      } else {
+        const other = current === "1" ? "2" : "1";
+        if (!restore) restore = current;
+        out.push(tags[other], words);
+        current = other;
+      }
+      prevWasTag = false;
+      continue;
+    }
+    if (restore && restore !== current) {
+      out.push(tags[restore]);
+      current = restore;
+    }
+    restore = null;
+    prevWasTag = false;
+    out.push(line);
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function prepareAceStepLyrics(text, lead, feat) {
   const raw = String(text || "");
   if (!raw.trim()) return "";
@@ -59,6 +135,8 @@ export function prepareAceStepLyrics(text, lead, feat) {
       const hasFeat = featNames.some((fn) => n.includes(fn));
       if (hasLead && hasFeat) return "duet";
     }
+    // Réplique courte « (Never the same!) » = ad-lib chanté (répliques criées du duo), PAS une didascalie.
+    if (isDuoRetortLine(line)) return null;
     return "drop";
   };
 
