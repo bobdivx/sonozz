@@ -412,6 +412,11 @@ export function buildAceStepBody({
   featArtist = null,
   /** Caption déjà résolu (LLM ou squelette) — saute le ré-assemblage. */
   styleOverride = null,
+  /**
+   * "cover" (défaut historique : source + référence, durée calée sur la source) ou
+   * "reference" (text2music + referenceAudioUrl seul : style/production, durée demandée, pas de copie).
+   */
+  referenceMode = "cover",
 }) {
   const infer = aceStepInferenceForModel(modelId);
   const duration = pickAceStepDurationSec({
@@ -502,6 +507,17 @@ export function buildAceStepBody({
     pollinations: { enabled: false },
   };
   const rap = Boolean(assembled.rap || assembled.brief?.rap);
+  if (/^https?:\/\//i.test(refUrl) && referenceMode === "reference") {
+    // Référence de STYLE seule (pas de sourceAudioUrl / taskType cover) : ACE garde la durée
+    // demandée et reprend la production de la référence sans recopier sa mélodie (tests Skarlvind).
+    body.referenceAudioUrl = refUrl;
+    const refTitle = String(referenceAudioTitle || "").trim();
+    if (refTitle) body.referenceAudioTitle = refTitle.slice(0, 160);
+    body.instruction = isDuo
+      ? "Obey [singer 1]/[singer 2]; follow the style caption; change instrument layers by section."
+      : "Follow the style caption; change instrument layers by section (never same loop); sing lyrics clearly.";
+    return applyAceTasteToBody(body, lead?.aceTaste);
+  }
   if (/^https?:\/\//i.test(refUrl)) {
     body.referenceAudioUrl = refUrl;
     body.sourceAudioUrl = refUrl;
